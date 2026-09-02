@@ -9,3 +9,4 @@ dist/
 importer-pro.zip
 coverage/
 playwright-report/
+.vscode/
