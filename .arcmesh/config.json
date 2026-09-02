@@ -1,0 +1,31 @@
+{
+  "knowledgeBase": ".arcmesh/system-repo/",
+  "indexOnStart": true,
+  "autoSync": true,
+  "aiProvider": "deepseek-v4",
+  "maxContextTokens": 8192,
+
+  "contextFiles": [
+    ".arcmesh/system-repo/project.md",
+    ".arcmesh/system-repo/architecture.md",
+    ".arcmesh/system-repo/STANDARDS.md",
+    ".arcmesh/ui/layout.md",
+    ".arcmesh/dev/AI_CONTEXT.md"
+  ],
+
+  "codeContext": {
+    "include": ["../src/**/*.ts"],
+    "exclude": ["../src/**/*.test.ts", "../node_modules/**"],
+    "symbols": true,
+    "dependencies": true
+  },
+
+  "relationships": {
+    "include": [".arcmesh/**/*.md"],
+    "exclude": []
+  },
+
+  "git": {
+    "ignore": ["index.db"]
+  }
+}
