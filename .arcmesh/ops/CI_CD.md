@@ -110,7 +110,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zip
       - name: Build & Package
-        run: pnpm run ci:release
+        run: pnpm run ci:package
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -133,7 +133,6 @@ jobs:
     "ci:test": "vitest run --coverage",
     "ci:build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "ci:package": "pnpm run ci:build && node scripts/package.mjs",
-    "ci:release": "pnpm run ci:package && gh release create",
     "lint": "echo '⚠️ Lint 将在 CI 中执行，请勿本地运行' && exit 1",
     "test": "echo '⚠️ Test 将在 CI 中执行，请勿本地运行' && exit 1",
     "build": "echo '⚠️ Build 将在 CI 中执行，请勿本地运行' && exit 1",

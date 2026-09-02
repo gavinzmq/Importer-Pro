@@ -12,7 +12,6 @@
     "ci:test": "vitest run --coverage",
     "ci:build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "ci:package": "pnpm run ci:build && node scripts/package.mjs",
-    "ci:release": "pnpm run ci:package && gh release create",
     "lint": "node -e \"console.error('⚠️ Lint 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "test": "node -e \"console.error('⚠️ Test 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "build": "node -e \"console.error('⚠️ Build 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
