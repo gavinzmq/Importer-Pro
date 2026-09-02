@@ -18,7 +18,7 @@ Handlebars 双阶段模板渲染（预处理 + 内容）。
 export interface ITemplateEngine {
   render(template: string, data: any): Promise<string>;
   renderPreprocess(template: string, data: any): Promise<any>;
-  registerHelper(name: string, fn: Function): void;
+  registerHelper(name: string, fn: (...args: any[]) => any): void;
   registerPartial(name: string, content: string): void;
   validate(template: string): { valid: boolean; errors: string[] };
 }

@@ -102,7 +102,7 @@ export interface IDataParser {
 export interface ITemplateEngine {
   render(template: string, data: any): Promise<string>;
   renderPreprocess(template: string, data: any): Promise<any>;
-  registerHelper(name: string, fn: Function): void;
+  registerHelper(name: string, fn: (...args: any[]) => any): void;
   registerPartial(name: string, content: string): void;
   validate(template: string): { valid: boolean; errors: string[] };
 }
@@ -569,4 +569,4 @@ interface PluginSettings {
 
 ---
 
-_版本: 1.6.0 | 最后更新: 2026-09-03_
+_版本: 1.6.1 | 最后更新: 2026-09-03_

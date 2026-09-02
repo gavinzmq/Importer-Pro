@@ -1,15 +1,17 @@
 /** 事件总线（architecture §1 基础设施层）：异步广播，只读观察 */
-export class EventBus {
-  private listeners = new Map<string, Set<Function>>();
+type EventCallback = (payload: any) => void;
 
-  on(event: string, callback: Function): () => void {
-    const set = this.listeners.get(event) ?? new Set<Function>();
+export class EventBus {
+  private listeners = new Map<string, Set<EventCallback>>();
+
+  on(event: string, callback: EventCallback): () => void {
+    const set = this.listeners.get(event) ?? new Set<EventCallback>();
     set.add(callback);
     this.listeners.set(event, set);
     return () => this.off(event, callback);
   }
 
-  off(event: string, callback: Function): void {
+  off(event: string, callback: EventCallback): void {
     this.listeners.get(event)?.delete(callback);
   }
 

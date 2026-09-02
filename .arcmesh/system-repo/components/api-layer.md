@@ -505,8 +505,8 @@ registerCache(name: string, cache: ICacheProvider): void;
 registerNamer(name: string, namer: IFileNamer): void;
 registerConflictResolver(name: string, resolver: IConflictResolver): void;
 registerExporter(name: string, exporter: IExporter): void;
-registerHelper(name: string, fn: Function): void;
-registerHook(name: string, callback: Function): void;
+registerHelper(name: string, fn: (...args: any[]) => any): void;
+registerHook(name: string, callback: (ctx: any) => any): void;
 listExtensions(): ExtensionList;
 ```
 
@@ -541,7 +541,7 @@ clearLogs(): Promise<void>;
 onImport(event: ImportEventType, callback: (payload: any) => void): () => void;
 onTemplate(event: TemplateEventType, callback: (payload: any) => void): () => void;
 onProgress(callback: (progress: ProgressPayload) => void): () => void;
-off(event: string, callback: Function): void;
+off(event: string, callback: (payload: any) => void): void;
 publish(event: string, payload: any): void;
 ```
 

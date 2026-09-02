@@ -223,7 +223,7 @@ export class ApiFacade {
   }
 
   // ── Helper API（37 个内置 + 运行时） ──────────────
-  get helpers(): Record<string, Function> {
+  get helpers(): Record<string, (...args: any[]) => any> {
     return makeHelperProxy(this.engine.handlebars.helpers);
   }
 
@@ -295,12 +295,12 @@ export class ApiFacade {
   registerExporter(name: string, _exporter: unknown): void {
     this.extensions.exporters.push(name);
   }
-  registerHelper(name: string, fn: Function): void {
+  registerHelper(name: string, fn: (...args: any[]) => any): void {
     this.engine.registerHelper(name, fn);
     this.extensions.helpers.push(name);
   }
-  registerHook(name: string, callback: Function): void {
-    this.hooks.register(name, callback as any);
+  registerHook(name: string, callback: (ctx: any) => any): void {
+    this.hooks.register(name, callback);
     this.extensions.hooks.push(name);
   }
   listExtensions(): ExtensionList {
@@ -356,7 +356,7 @@ export class ApiFacade {
   onProgress(callback: (progress: any) => void): () => void {
     return this.events.on('import:progress', callback);
   }
-  off(event: string, callback: Function): void {
+  off(event: string, callback: (payload: any) => void): void {
     this.events.off(event, callback);
   }
   publish(event: string, payload: any): void {
@@ -365,8 +365,8 @@ export class ApiFacade {
 }
 
 /** Helper Proxy：把 Handlebars helper 包装为可直接调用的 API */
-function makeHelperProxy(helpers: Record<string, Function>): Record<string, Function> {
-  const target: Record<string, Function> = {};
+function makeHelperProxy(helpers: Record<string, (...args: any[]) => any>): Record<string, (...args: any[]) => any> {
+  const target: Record<string, (...args: any[]) => any> = {};
   for (const [name, fn] of Object.entries(helpers)) {
     target[name] = (...args: unknown[]) => {
       const last = args[args.length - 1];

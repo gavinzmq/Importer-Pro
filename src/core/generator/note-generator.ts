@@ -13,7 +13,7 @@ import { IMergeEngine, MergeEngine } from '../merge/merge-engine';
 import { ILogger } from '../log/logger';
 import { md5Hash } from '../../utils/crypto';
 import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
-import { ERROR_CODES, ImporterProError } from '../../utils/errors';
+import { ERROR_CODES } from '../../utils/errors';
 
 /** 笔记生成器（architecture §2.3 / components/note-generator.md） */
 export interface INoteGenerator {

@@ -6,7 +6,7 @@ import { LinkIndex } from '../cache/provider';
 export interface ITemplateEngine {
   render(template: string, data: any): Promise<string>;
   renderPreprocess(template: string, data: any): Promise<any>;
-  registerHelper(name: string, fn: Function): void;
+  registerHelper(name: string, fn: Handlebars.HelperDelegate): void;
   registerPartial(name: string, content: string): void;
   validate(template: string): { valid: boolean; errors: string[] };
 }
@@ -36,8 +36,8 @@ export class TemplateEngine implements ITemplateEngine {
     return root;
   }
 
-  registerHelper(name: string, fn: Function): void {
-    this.hb.registerHelper(name, fn as any);
+  registerHelper(name: string, fn: Handlebars.HelperDelegate): void {
+    this.hb.registerHelper(name, fn);
   }
 
   registerPartial(name: string, content: string): void {
