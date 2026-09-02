@@ -63,6 +63,9 @@ jobs:
           files: ./coverage/lcov.info
       - name: Build
         run: pnpm run ci:build
+      - name: Install zip (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip
       - name: Package
         run: pnpm run ci:package
       - name: Upload artifacts
@@ -103,6 +106,9 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
+      - name: Install zip (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip
       - name: Build & Package
         run: pnpm run ci:release
       - name: Create Release
