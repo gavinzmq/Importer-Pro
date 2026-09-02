@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.5.0"
+version: "1.6.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -85,6 +85,18 @@ src/
 ├── main.ts                # 插件入口
 └── settings.ts            # 设置定义
 ```
+
+### 1.3 跨平台脚本与子进程调用
+
+| 场景 | 标准 | 说明 |
+| :--- | :--- | :--- |
+| Node 内复制/移动/删除文件 | 使用 `node:fs` 原生 API（`copyFileSync` 等） | 脚本本身是 Node 时勿用 `execSync('node -e "...")` 启动子进程再执行内联代码，引号嵌套跨 shell 不可靠 |
+| 确需调用外部命令 | `execFileSync`/`spawnSync` 传**参数数组** | 避免把路径/参数拼进 shell 命令字符串 |
+| 打包/压缩 | Windows `Compress-Archive` / Unix `zip` 显式分支 | 平台分支显式判断；Unix `zip` 由 CI 安装步骤保证（见 §8） |
+
+**历史教训（2026-09-03，D58）**：`scripts/package.mjs` 曾通过
+`node -e "require('fs').copyFileSync("main.js", "dist/main.js")"` 复制产物，内层 `JSON.stringify` 双引号在 Ubuntu runner 的 bash 下被提前截断，eval 收到 `copyFileSync(main.js, ...)` → `ReferenceError: main is not defined`；本机 Windows/PowerShell 引号规则不同故未暴露。已改用原生 `fs.copyFileSync` 消除 shell 依赖。
+
 ## 2. 测试标准
 
 |类型|覆盖率要求|工具|
@@ -165,6 +177,14 @@ async resolve(hash: string, targetFolder: string, fallbackFolder: string): Promi
 
 - 错误说明
 
+### 3.3 文档与蓝图同步
+
+任何代码修改（功能 / 修复 / 重构）在提交时须同步更新：
+
+- **蓝图版本/状态**：`architecture.md`、`project.md` 的版本号、状态及受影响的流程描述。
+- **决策记录**：在 `decisions/` 新增或更新决策文件（含背景、决策内容、影响）。
+- **本规范**：涉及代码风格、测试、文档、Git、CI/CD 等标准变化时，同步修订本 STANDARDS。
+- **文档格式**：无行尾空白、无 NBSP、frontmatter 闭合、代码围栏偶数；改完通读核对。
 
 ## 4. Git 规范
 
@@ -258,7 +278,17 @@ const ERROR_CODES = {
 
 - 外部 Helper/钩子仅从设置指定目录（`paths.helpers` / `paths.hooks`）加载，禁止扫描 Vault 其他路径执行脚本
 
+## 8. CI/CD 与自动化工作流规范
+
+| 项 | 标准 | 说明 |
+| :--- | :--- | :--- |
+| 触发方式 | `push`（main/develop）与 `pull_request`（main） | `ci.yml` / `release.yml` 未启用 `workflow_dispatch`；手动重跑请用 GitHub Actions 页面 Re-run 或推送新提交 |
+| 本地执行 | 不在本地运行 `lint` / `test` / `build` / `package` | `package.json` 已加守卫（主动 exit 1）；验证一律交给 CI（CI 使用 `ci:*` 脚本） |
+| CI 产物 | `main.js` / `dist/` / `importer-pro.zip` / `coverage/` 不入库 | 已由 `.gitignore` 排除 |
+| 查询与调试 | 用 `gh` CLI（`gh api` 等非交互命令） | `gh run list` / `gh api .../actions/runs/.../jobs` 查询状态与日志；避免非 TTY 下 `gh run watch`（交互备用缓冲） |
+| 打包环境 | Ubuntu runner 打包前显式安装 `zip` | `scripts/package.mjs` Unix 分支依赖 `zip`（见 §1.3） |
+| 观察项 | Node 20 运行时弃用 warning | 目前仅 warning 不阻塞；计划升级 `actions/checkout` 等 action 版本 |
 
 ---
 
-_版本: 1.5.0
+_版本: 1.6.0
