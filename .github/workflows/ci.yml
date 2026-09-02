@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install
+      - name: Run Lint
+        run: pnpm run ci:lint
+      - name: Run Tests
+        run: pnpm run ci:test
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+      - name: Build
+        run: pnpm run ci:build
+      - name: Package
+        run: pnpm run ci:package
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: plugin-build
+          path: |
+            dist/
+            manifest.json
+            importer-pro.zip

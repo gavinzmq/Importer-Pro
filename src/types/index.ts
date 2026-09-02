@@ -1,0 +1,235 @@
+/**
+ * Importer Pro 核心类型定义
+ * 权威口径见 .arcmesh/system-repo/architecture.md §7 与 components/api-layer.md §12
+ */
+
+export enum LogLevel {
+  DEBUG = 'debug',
+  INFO = 'info',
+  WARN = 'warn',
+  ERROR = 'error'
+}
+
+/** 解析后的单条数据（键值对，键为列名） */
+export type DataRecord = Record<string, any>;
+
+/** 待解析文件的统一描述 */
+export interface FileInfo {
+  path: string; // Vault 内相对路径
+  name: string; // 文件名（含扩展名）
+  extension: string; // 小写扩展名，如 "xlsx"
+  size: number; // 字节数
+}
+
+export interface ParseOptions {
+  maxRows?: number; // 最大解析行数（超出截断）
+  sheetName?: string; // Excel 指定 sheet，缺省取第一个
+  startRow?: number; // 起始数据行
+}
+
+/** 多笔记生成：预处理阶段产出的单篇笔记规格（对应 _notes 数组元素） */
+export interface NoteSpec {
+  folder: string; // 目标文件夹（对应 _folder）
+  filename: string; // 文件名不含 .md（对应 _fileName）
+  templateRef?: string; // 内容模板路径（对应 _template，缺省用主 content）
+  data: DataRecord; // 该笔记的渲染数据
+  noteType?: string; // 可选类型标识
+  content?: string; // TemplateEngine 渲染后填充的 Markdown
+}
+
+export type ConflictStrategy = 'overwrite' | 'append' | 'skip' | 'rename' | 'merge';
+export type IncrementalMode = 'hash' | 'timestamp';
+
+export interface OutputConfig {
+  conflictStrategy: ConflictStrategy;
+  incrementalMode: IncrementalMode;
+  generateIfEmpty?: boolean;
+}
+
+export interface ProgressPayload {
+  done: number;
+  total: number;
+  phase: 'parse' | 'render' | 'write';
+}
+
+export interface BatchConfig extends OutputConfig {
+  concurrency?: number; // 写文件并发数，默认 5
+  onProgress?: (progress: ProgressPayload) => void;
+  abortSignal?: AbortSignal;
+}
+
+export interface GeneratedFileInfo {
+  path: string;
+  noteName: string;
+  recordId: string;
+  status: 'created' | 'updated' | 'skipped_unchanged' | 'skipped_conflict' | 'failed';
+  error?: string;
+}
+
+export interface ErrorEntry {
+  recordIndex?: number;
+  code: string;
+  message: string;
+}
+
+export interface BatchResult {
+  total: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+  files: GeneratedFileInfo[];
+  errors: ErrorEntry[];
+  duration: number;
+}
+
+export interface ConflictPreview {
+  path: string;
+  exists: boolean;
+  strategy: ConflictStrategy;
+}
+
+export interface DryRunResult {
+  files: GeneratedFileInfo[];
+  conflicts: ConflictPreview[];
+}
+
+export interface LinkTargetResult {
+  exists: boolean;
+  path: string;
+}
+
+export interface ImportHistoryEntry {
+  id: string;
+  templateId: string;
+  sourceFile: string;
+  startedAt: number;
+  duration: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface ImportResult {
+  success: boolean;
+  templateId: string;
+  totalRecords: number;
+  succeeded: number;
+  skipped: number;
+  failed: number;
+  files: GeneratedFileInfo[];
+  errors: ErrorEntry[];
+  startTime: number;
+  endTime: number;
+  duration: number;
+}
+
+export interface MergeOptions {
+  mode: 'frontmatter' | 'append' | 'replace_sections' | 'smart';
+  preserveUserEdits?: boolean;
+  sectionMarkers?: [string, string];
+}
+
+export interface MergePreview {
+  additions: number;
+  removals: number;
+  sections: string[];
+}
+
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  path: string;
+  matchRules: MatchRule[];
+}
+
+export interface MatchRule {
+  pattern: string;
+  type: 'regex' | 'glob' | 'exact';
+}
+
+export interface ValidationRule {
+  field: string;
+  type: string;
+  message: string;
+  options?: Record<string, any>;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  data: DataRecord;
+}
+
+export interface FieldValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export type ValidatorFn = (data: any) => Promise<ValidationResult> | ValidationResult;
+
+export interface TemplateFrontmatter {
+  template_id: string;
+  name: string;
+  version?: string;
+  description?: string;
+}
+
+export interface TemplateNoteSpec {
+  noteType: string;
+  folder: string;
+  condition: string;
+  content: string;
+}
+
+export interface TemplateConfig {
+  id: string;
+  name: string;
+  description?: string;
+  version: string;
+  frontmatter: TemplateFrontmatter;
+  preprocess: string;
+  content: string;
+  notes?: TemplateNoteSpec[];
+}
+
+/** 插件设置（architecture §9.1） */
+export interface PluginSettings {
+  schemaVersion: number;
+  paths: {
+    templates: string[];
+    outputFolder: string;
+    dataRoot: string;
+    helpers: string[];
+    hooks: string[];
+    cacheDir: string;
+    logDir: string;
+  };
+  conflictStrategy: ConflictStrategy;
+  incrementalMode: IncrementalMode;
+  enableSharding: boolean;
+  enableSmartLink: boolean;
+  concurrency: number;
+  cacheProvider: 'auto' | 'dataview' | 'builtin' | 'null';
+  cacheRefreshIntervalSec: number;
+  warmCacheOnStartup: boolean;
+  logLevel: LogLevel;
+  logToConsole: boolean;
+  logToFile: boolean;
+  logRetentionDays: number;
+  historyLimit: number;
+  csvEncoding: 'auto' | 'utf-8' | 'gbk';
+  autoMatchEnabled: boolean;
+  importHistory: ImportHistoryEntry[];
+}
+
+/** 外部注册扩展清单 */
+export interface ExtensionList {
+  parsers: string[];
+  caches: string[];
+  namers: string[];
+  conflictResolvers: string[];
+  exporters: string[];
+  helpers: string[];
+  hooks: string[];
+}

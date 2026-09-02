@@ -1,0 +1,54 @@
+{
+  "name": "obsidian-importer-pro",
+  "version": "0.1.0",
+  "description": "Importer Pro - 一次配置，处处使用。Obsidian 数据导入插件，通过 Handlebars 模板引擎实现灵活的数据处理和批量笔记生成。",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "type-check": "tsc -noEmit -skipLibCheck",
+    "clean": "rimraf dist coverage playwright-report",
+    "ci:lint": "eslint src --max-warnings 0",
+    "ci:test": "vitest run --coverage",
+    "ci:build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "ci:package": "pnpm run ci:build && node scripts/package.mjs",
+    "ci:release": "pnpm run ci:package && gh release create",
+    "lint": "node -e \"console.error('⚠️ Lint 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
+    "test": "node -e \"console.error('⚠️ Test 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
+    "build": "node -e \"console.error('⚠️ Build 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
+    "package": "node -e \"console.error('⚠️ Package 将在 CI 中执行，请勿本地运行'); process.exit(1)\""
+  },
+  "dependencies": {
+    "handlebars": "^4.7.8",
+    "js-md5": "^0.8.3",
+    "js-sha256": "^0.11.0",
+    "js-yaml": "^4.1.0",
+    "jszip": "^3.10.1",
+    "papaparse": "^5.4.1",
+    "tslib": "^2.6.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^20.12.7",
+    "@types/papaparse": "^5.3.14",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "@vitest/ui": "^1.6.0",
+    "esbuild": "^0.19.12",
+    "eslint": "^8.57.0",
+    "jsdom": "^24.0.0",
+    "obsidian": "^1.4.11",
+    "prettier": "^3.2.5",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@11.24.0"
+}
