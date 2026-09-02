@@ -567,6 +567,15 @@ interface PluginSettings {
 | 图形化配置 | ✅ | ✅（4 步向导，见 ui/layout.md） |
 | Playwright E2E | ✅（obsidian-testing-framework） | ❌ |
 
+### 9.8 构建与运行环境约束（esbuild × 哈希库）
+
+Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与 Node `process.versions.node` **同时存在**。esbuild 默认 browser 平台会按依赖 `package.json` 的 `browser` 字段，把 `js-md5` / `js-sha256` 中的 `require('buffer' / 'crypto')` **stub 成空模块**：
+
+- `js-sha256` 自带 `process.type != 'renderer'` 防护 → renderer 下自动走纯 JS，无碍；
+- `js-md5` 0.8.x **无此防护** → 误判为 Node 环境执行 `nodeWrap`，`require('buffer').Buffer` 取到空模块的 `undefined` → 模块求值即抛 `TypeError: Cannot read properties of undefined (reading 'from')`，表现为插件加载失败（app.js 的 `Plugin failure`）。
+
+**处理**：`esbuild.config.mjs` 通过 `banner` 在模块求值前设置 `window.JS_MD5_NO_NODE_JS = window.JS_SHA256_NO_NODE_JS = true`，强制两库走**纯 JS 实现**（桌面/移动端一致、不依赖 Node 内建模块，也无需在 esbuild `external` 暴露 `buffer`/`crypto`）。修改构建配置时不得删除该 banner（见 decisions/2026-09-03-esbuild-md5-buffer-fix.md）。
+
 ---
 
-_版本: 1.6.6 | 最后更新: 2026-09-03_
+_版本: 1.6.7 | 最后更新: 2026-09-03_
