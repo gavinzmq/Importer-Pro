@@ -1126,7 +1126,7 @@ export class ImportModal extends Modal {
     const logBox = container.createDiv({ cls: 'ipw-log' });
     const pushLog = (cls: string, text: string): void => {
       if (logBox.children.length >= 50) logBox.firstChild?.remove();
-      const line = logBox.createDiv({ cls: `ipw-log-line ${cls}`, text });
+      logBox.createDiv({ cls: `ipw-log-line ${cls}`, text });
       logBox.scrollTop = logBox.scrollHeight;
     };
 

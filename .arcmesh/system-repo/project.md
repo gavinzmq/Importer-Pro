@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.9.0"
+version: "1.9.1"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
