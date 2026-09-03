@@ -1,6 +1,6 @@
 {
   "name": "obsidian-importer-pro",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Importer Pro - 一次配置，处处使用。Obsidian 数据导入插件，通过 Handlebars 模板引擎实现灵活的数据处理和批量笔记生成。",
   "license": "MIT",
   "main": "main.js",
