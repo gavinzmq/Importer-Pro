@@ -1,7 +1,7 @@
 ---
 title: "能力差距与路线图"
 type: "component"
-version: "1.2.0"
+version: "1.3.0"
 last_updated: "2026-09-03"
 status: "active"
 ---
@@ -43,6 +43,7 @@ R01–R14 **全部纳入实现计划**，无暂缓项；优先级仅表示交付
 
 ## 4. 实施说明
 
+- **外部文件端到端导入（D65/D75 曾表述为「R01 类」，2026-09-03 已随向导落地）**：与 R01（Markdown 文件夹/ZIP 批量导入）**解耦**——Vault 外单文件经向导 Step 2 选中 → Step 3 解析/预览 → Step 4 写入已实现（读取经选择时持有的 `File/Blob` 句柄，跨端一致；详见 decisions/2026-09-03-external-file-e2e.md）。R01 仍指 Markdown 文件夹/ZIP 批量导入能力，保持 P1（v1.1/M7）排期不变。
 - **P0 三项**（R09/R10/R11）均基于既有蓝图能力补细节：`dryRun` API（api-layer §3.3）、进度面板（layout §6）、钩子 `after:import`（hooks/available-hooks.md）。
   - 2026-09-03 三项已实现落地：`PauseToken`/`PauseController` + `NoteGenerator.runWithConcurrency` 断点、`importRecords({dryRun})` 预检统计、`src/core/dataview.ts` after:import 内置刷新（详见 decisions/2026-09-03-p0-r09-r11.md）。待 Obsidian dev vault 联调打磨。
 - **P1 项**（v1.1/M7）涉及新模块或接口扩展，开工前须在本组件补充对应设计并更新决策记录：
@@ -58,4 +59,4 @@ R01–R14 **全部纳入实现计划**，无暂缓项；优先级仅表示交付
 
 ---
 
-*版本: 1.2.0 | 最后更新: 2026-09-03*
+*版本: 1.3.0 | 最后更新: 2026-09-03*

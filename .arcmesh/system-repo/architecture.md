@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.9.1"
+version: "1.10.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -239,7 +239,7 @@ export interface IValidator {
 
 - 解析/预览期间原文件需保持可访问；读取失败（文件被移动/删除、提供方 URI 失效）→ 错误码 `IO_002`，提示重选。
 - 无驻留缓存即无清理生命周期：不需要 `onunload` 清理，也不需要启动清扫孤儿文件。
-- 外部文件仍不写入 Vault（"不落库"边界不变），端到端导入随后续路线图（roadmap R01 类）。
+- 外部文件端到端导入已支持（D81）：Step 2 选中 Vault 外文件 → Step 3 解析/预览 → Step 4 写入 Vault 笔记；原文件本身**不复制进 Vault**（不产生原文件副本）。读取经选择时持有的 DOM `File`/`Blob` 句柄（`FileInfo.blob`）**按需**进行——桌面/移动端一致、不依赖本地 fs、不预加载内容；句柄不跨会话保留，重新导入需重新选择原文件。
 
 > 决策依据见 decisions/2026-09-03-step2-session-queue-path-ref.md（D66–D68）。
 
@@ -281,7 +281,7 @@ export interface IValidator {
 
 > **钩子 vs 事件**：钩子（Hook，见 `hooks/`）是核心流程内的**同步扩展点**，可修改上下文并影响后续流程；事件（`IEventBus`）是**异步广播**，订阅方只读观察、不阻塞主流程。`IExporter` 为后续导出功能预留，v1.0.0 不提供内置导出实现。
 >
-> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后 Step 2 文件列表（会话 + 历史合并）追加会话条目、自动选中（去重含历史条目），并仅记录路径引用（§2.8）（D66–D68）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
+> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后 Step 2 文件列表（会话 + 历史合并）追加会话条目、自动选中（去重含历史条目），并仅记录路径引用（§2.8）（D66–D68）。D81：所选 `FileInfo` 同时携带 `File/Blob` 句柄（外部文件按需读取源，§2.8）；Vault 内文件映射为相对路径后不携带句柄（读取走 Vault）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
 
 ## 6. 目录结构
 
@@ -349,10 +349,11 @@ interface DataRecord { [key: string]: any; }
 
 /** 待解析文件的统一描述 */
 interface FileInfo {
-  path: string;        // 文件路径：Vault 内为相对路径；外部文件为绝对路径（移动端为文件提供方标识）
+  path: string;        // 文件路径：Vault 内为相对路径；外部文件为绝对路径（移动端为文件提供方标识/空串）
   name: string;        // 文件名（含扩展名）
   extension: string;   // 小写扩展名，如 "xlsx"
   size: number;        // 字节数
+  blob?: File | Blob;  // 外部文件按需读取句柄（D81）：选择时持有的 File/Blob，内容不预加载；缺省经 path 走 Vault 读取
 }
 
 /** Step 2 文件列表会话条目（本次选择的文件，仅记录路径引用） */
@@ -627,4 +628,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.9.0 | 最后更新: 2026-09-03_
+_版本: 1.10.0 | 最后更新: 2026-09-03_

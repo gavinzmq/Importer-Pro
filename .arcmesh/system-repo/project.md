@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.9.1"
+version: "1.10.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -149,7 +149,7 @@ arcmesh:
 | **架构设计** | ✅ 完成 | 100% |
 | **技术选型** | ✅ 完成 | 100% |
 | **核心开发** | ✅ 完成（v0.1 骨架：解析/模板/管道/生成/API） |
-| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；Step 3 在 dev vault 联调中） |
+| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；**外部文件（Vault 外）端到端导入已落地（D81）**；Step 3 在 dev vault 联调中） |
 | **测试** | 🟡 进行中（Vitest 单元已接入：`helpers`/`wizard-data` 纯函数 37 例，CI `ci:test` 消费；本地不跑门禁） |
 | **文档** | 🟡 进行中 |
 | **发布** | ⬜ 待开始（目标 v1.0.0，2026-11-01） |
@@ -200,4 +200,4 @@ arcmesh:
 
 ---
 
-*版本: 1.9.0 | 最后更新: 2026-09-03*
+*版本: 1.10.0 | 最后更新: 2026-09-03*
