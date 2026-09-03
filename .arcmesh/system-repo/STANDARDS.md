@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.8.1"
+version: "1.8.2"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -298,9 +298,11 @@ const ERROR_CODES = {
 | 本地执行 | 不在本地运行 `lint` / `test` / `build` / `package` | `package.json` 已加守卫（主动 exit 1）；验证一律交给 CI（CI 使用 `ci:*` 脚本） |
 | CI 产物 | `main.js` / `dist/` / `importer-pro.zip` / `coverage/` 不入库 | 已由 `.gitignore` 排除 |
 | 查询与调试 | 用 `gh` CLI（`gh api` 等非交互命令） | `gh run list` / `gh api .../actions/runs/.../jobs` 查询状态与日志；避免非 TTY 下 `gh run watch`（交互备用缓冲） |
+| 发布/合入门禁（复用 CI） | 发布（打 tag / 发 Release）或合入 main 前核对待发布 commit 的 CI 状态：**该 commit 已存在通过的 CI run 则直接复用，不重复触发或重跑 CI** | 按 commit 核对（`gh run list --commit <sha>` / `gh api .../actions/runs`）；已有 `success` run 即复用，不空 push、不重复触发同源 run；仅当无既有 run 或非 `success` 时才启动新一轮 CI |
+| 执行后持续监听 | 触发 CI（push / PR）后须**持续监听至终态**，确认 `success` 后才进入合并 / 打 tag / 发布 | 轮询 `gh run list` / `gh api .../actions/runs` 直至 run 结束（非 TTY 不依赖交互 `gh run watch`）；失败即查日志定位修复并重推，不得"触发即走"或并行开多个同源 run |
 | 打包环境 | Ubuntu runner 打包前显式安装 `zip` | `scripts/package.mjs` Unix 分支依赖 `zip`（见 §1.3） |
 | 观察项 | Node 20 运行时弃用 warning | 目前仅 warning 不阻塞；计划升级 `actions/checkout` 等 action 版本 |
 
 ---
 
-_版本: 1.8.1
+_版本: 1.8.2

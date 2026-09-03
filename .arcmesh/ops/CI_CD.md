@@ -1,8 +1,8 @@
 ---
 title: "CI/CD 流水线"
 type: "ci-cd"
-version: "1.0.0"
-last_updated: "2026-09-02"
+version: "1.1.0"
+last_updated: "2026-09-03"
 status: "active"
 owner: "devops"
 tags: ["ci-cd", "github-actions", "deployment", "testing"]
@@ -117,6 +117,7 @@ jobs:
           files: |
             dist/main.js
             dist/manifest.json
+            dist/styles.css
             importer-pro.zip
           generate_release_notes: true
 ```
@@ -163,13 +164,18 @@ jobs:
 
 ```text
 1. 开发者合并 PR 到 main
-2. 更新 manifest.json 版本号
-3. 创建 tag: git tag v1.0.0
+2. 更新 manifest.json 版本号并推送 main（触发 CI）
+3. 持续监听 CI 至 success 后创建 tag: git tag v1.0.0
 4. 推送 tag: git push origin v1.0.0
 5. GitHub Actions 自动构建并创建 Release
 6. 用户下载或 Obsidian 社区自动更新
 ```
 
+**CI 门禁规范**（权威：STANDARDS.md §8「CI/CD 与自动化工作流规范」，D89）
+
+- **不重复执行 CI**：发布/合入前核对待发布 commit 是否已有通过（`success`）的 CI run；已通过则直接复用结果，不再重复触发或重跑 CI（不空 push、不重复触发同源 run）。
+- **触发后持续监听**：push / PR 触发 CI 后须持续监听至终态，确认 `success` 才进入打 tag / 发布；失败先定位修复并重推，不得"触发即走"。
+
 ---
 
-_版本: 1.0.0 | 最后更新: 2026-09-02_
+_版本: 1.1.0 | 最后更新: 2026-09-03_

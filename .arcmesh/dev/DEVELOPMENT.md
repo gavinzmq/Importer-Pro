@@ -1,8 +1,8 @@
 ---
 title: "开发环境与工作流"
 type: "development"
-version: "1.0.0"
-last_updated: "2026-09-02"
+version: "1.1.0"
+last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
 tags: ["development", "setup", "workflow", "environment"]
@@ -177,14 +177,17 @@ git push origin feature/my-feature
 
 ```bash
 # 1. 更新 manifest.json 和 package.json 版本号
-# 2. 提交并打标签
+# 2. 提交并推送 main（触发 CI），持续监听至 CI 通过后再打标签
 git add .
 git commit -m "chore: bump version to v1.0.0"
-git tag v1.0.0
 git push origin main
+# 3. 确认该 commit 的 CI 已通过（success）后打标签并推送（触发 Release）
+git tag v1.0.0
 git push origin v1.0.0
 ```
 
+> **CI 门禁**（见 STANDARDS.md §8，D89）：push 到 main 触发 CI 后须**持续监听至终态**，确认 `success` 才可进入发布；打 tag 前核对目标 commit 已存在通过（`success`）的 CI run，**已通过则不重复触发/重跑 CI**。
+
 ---
 
-_版本: 1.0.0 | 最后更新: 2026-09-02_
+_版本: 1.1.0 | 最后更新: 2026-09-03_

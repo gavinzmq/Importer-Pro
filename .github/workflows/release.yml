@@ -34,5 +34,6 @@ jobs:
           files: |
             dist/main.js
             dist/manifest.json
+            dist/styles.css
             importer-pro.zip
           generate_release_notes: true
