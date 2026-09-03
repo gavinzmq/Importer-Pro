@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.8.0"
+version: "1.8.1"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -226,41 +226,28 @@ export interface IValidator {
 | `DataPipeline` | 校验（错误分流）、按条件分流到 noteType、生成派生字段与 `_notes` | `DataRecord` → `NoteSpec[]` |
 | `Validator` | 字段级/记录级校验规则执行 | `DataRecord` + `rules` → `ValidationResult` |
 
-### 2.8 FileLoadManager（文件驻留管理）
+### 2.8 文件引用策略（路径引用）
 
-**职责**：管理导入向导所选文件的驻留介质与生命周期（内存优先，超阈值落临时磁盘缓存），并保证成功/异常双路径清理。
+**职责**：Step 2 所选文件仅记录**路径引用**（不预加载进内存、不复制、不写临时磁盘缓存），Step 3 解析/预览按需从原路径读取。
 
-```typescript
+| 平台 | 记录内容 | 读取方式 |
+| :--- | :--- | :--- |
+| 桌面端 | 本地绝对路径（Vault 内文件 = Vault 相对路径） | 按需直接读取文件系统 |
+| 移动端 | 文件提供方标识 / URI | 按需经平台文件服务读取 |
 
-export interface FileLoadManager {
-  /** 加载文件至驻留介质，返回队列条目（去重由 Step 2 状态层负责） */
-  load(file: FileInfo): Promise<ImportFileEntry>;
-  /** 读取驻留数据（内存直读 / 临时路径），供解析器与预览复用 */
-  getBuffer(entry: ImportFileEntry): Promise<ArrayBuffer>;
-  /** 释放单条：释放内存引用并删除对应临时文件 */
-  release(entry: ImportFileEntry): Promise<void>;
-  /** 全量清理：向导关闭 / 插件 unload / 启动清扫孤儿文件 */
-  cleanupAll(): Promise<void>;
-}
-```
+**约束**：
 
-**驻留策略**：
+- 解析/预览期间原文件需保持可访问；读取失败（文件被移动/删除、提供方 URI 失效）→ 错误码 `IO_002`，提示重选。
+- 无驻留缓存即无清理生命周期：不需要 `onunload` 清理，也不需要启动清扫孤儿文件。
+- 外部文件仍不写入 Vault（"不落库"边界不变），端到端导入随后续路线图（roadmap R01 类）。
 
-| 项 | 规则 |
-| :--- | :--- |
-| 内存优先 | 选中即读入内存（`ArrayBuffer`），Step 3 解析/预览零磁盘开销 |
-| 降级条件 | 内存预算超阈值：桌面 128MB / 移动 64MB（对齐 STANDARDS §6 内存 <200MB） |
-| 临时磁盘缓存 | 写入 `paths.cacheDir/tmp/`，命名 `会话ID + 内容哈希`（防重名），属插件内部数据区、不写 Vault 笔记区 |
-| 写入失败 | 降级为纯内存并记录 `IO_001`（WARN），不阻塞向导 |
-| 清理时机 | Step 4 成功完成 / 向导关闭（含取消与意外退出）→ 释放内存并删除临时文件；插件 `onunload` 兜底；下次启动清扫 `tmp/` 孤儿文件 |
-
-> 决策依据见 decisions/2026-09-03-step2-session-queue-file-residency.md（D66–D68）。
+> 决策依据见 decisions/2026-09-03-step2-session-queue-path-ref.md（D66–D68）。
 
 ## 3. 数据流
 
 ```text
 
-[文件（驻留介质：内存 / 临时磁盘缓存）] → DataParser → DataRecord[]
+[文件（按路径引用原文件）] → DataParser → DataRecord[]
     → TemplateScanner → 匹配模板
     → DataPipeline → 预处理渲染 → 校验 → 分流 → 派生字段
     → 组装 _notes 数组（每元素 = 1 个待生成笔记 NoteSpec）
@@ -272,7 +259,7 @@ export interface FileLoadManager {
 
 > 历史记录持久化在插件 `data.json` 的 `importHistory` 字段；每次导入追加一条，超出 20 条时裁剪最旧记录。
 >
-> 文件驻留：导入向导所选文件经 `FileLoadManager`（§2.8）驻留内存或临时磁盘缓存（`paths.cacheDir/tmp/`），DataParser 从驻留介质读取；导入成功或向导异常退出即释放/清理。
+> 文件引用：导入向导所选文件仅记录路径引用（§2.8），DataParser 按需从原路径读取；插件不预加载、不复制文件，亦无临时缓存需清理。
 
 ## 4. API 暴露层
 
@@ -294,7 +281,7 @@ export interface FileLoadManager {
 
 > **钩子 vs 事件**：钩子（Hook，见 `hooks/`）是核心流程内的**同步扩展点**，可修改上下文并影响后续流程；事件（`IEventBus`）是**异步广播**，订阅方只读观察、不阻塞主流程。`IExporter` 为后续导出功能预留，v1.0.0 不提供内置导出实现。
 >
-> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后文件经 `FileLoadManager`（§2.8）驻留内存或临时磁盘缓存，Step 2 会话队列追加条目并自动选中（D66–D68）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
+> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后 Step 2 会话队列仅记录路径引用（§2.8）并追加条目、自动选中（D66–D68）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
 
 ## 6. 目录结构
 
@@ -368,18 +355,10 @@ interface FileInfo {
   size: number;        // 字节数
 }
 
-/** Step 2 会话队列条目（待导入文件） */
+/** Step 2 会话队列条目（待导入文件，仅记录路径引用） */
 interface ImportFileEntry {
-  id: string;                       // 去重标识：Vault 内 = 相对路径；外部 = 绝对路径/移动端文件标识
-  file: FileInfo;                   // 文件元信息
-  medium: 'memory' | 'disk-cache';  // 当前驻留介质
-  tempPath?: string;                // 驻留磁盘缓存时的临时路径（paths.cacheDir/tmp/ 下）
-}
-
-/** 文件驻留预算（FileLoadManager） */
-interface FileBufferOptions {
-  memoryLimitBytes: number;         // 内存预算阈值：桌面 128MB / 移动 64MB
-  tempDir: string;                  // 临时磁盘缓存目录（paths.cacheDir/tmp）
+  id: string;      // 去重标识：Vault 内 = 相对路径；外部 = 绝对路径/移动端文件标识
+  file: FileInfo;  // 文件元信息（路径引用，不预加载内容）
 }
 
 interface ParseOptions {
@@ -513,7 +492,7 @@ interface ConflictPreview {
 | **懒初始化** | 插件 `onload` 仅注册命令/API 壳；模板索引、缓存、Helper 在首次使用时构建，避免阻塞 Obsidian 启动 | 首载 <500ms |
 | **模板索引缓存** | `TemplateScanner` 构建索引后监听 Vault 事件增量失效，避免每次导入全量扫描 | 单条 <50ms |
 | **解析结果缓存** | 解析器对 `FileInfo → DataRecord[]` 做 LRU 缓存，`preview`/`getColumns`/`parse` 复用同一次解析 | 内存 <200MB |
-| **文件驻留管理** | `FileLoadManager` 内存优先（阈值 128MB/64MB），超限转临时磁盘缓存；解析与预览复用同一驻留字节源 | 内存 <200MB |
+| **路径引用** | 所选文件仅记录路径、按需读取，不预加载不复制，零额外驻留开销 | 内存 <200MB |
 | **行数截断** | Excel/CSV 默认 `maxRows`（10000）截断 + 仅解析首个 sheet，控制 SheetJS 峰值内存 | 内存 <200MB |
 | **写文件并发限流** | `batchGenerate` 以并发 5（默认，可配置）写文件，配合 `onProgress` 进度与 `abortSignal` 取消 | 1000 行 <10s |
 | **批量存在性检查** | 冲突检测使用 `ICacheProvider.batchExists` 一次查询，避免逐文件 `vault.getAbstractFileByPath` | 1000 行 <10s |
@@ -616,7 +595,7 @@ interface PluginSettings {
 | 外部 Helper / 钩子执行 | ✅（`vm` 沙箱） | ⚠️ 内置白名单，外部注册的默认不执行 |
 | 图形化配置 | ✅ | ✅（4 步向导，见 ui/layout.md） |
 | 文件选择器 | ✅ OS 原生对话框（`DesktopFilePicker`） | ✅ 系统文档选择器（`MobileFilePicker`） |
-| 文件驻留 | ✅ 内存优先，阈值 128MB，超限临时磁盘缓存 | ✅ 内存优先，阈值 64MB（更易落盘），同款临时缓存 |
+| 文件引用 | ✅ 记录本地绝对路径（Vault 内为相对路径），按需读取 | ✅ 记录提供方标识/URI，按需经平台文件服务读取 |
 | Playwright E2E | ✅（obsidian-testing-framework） | ❌ |
 
 ### 9.8 构建与运行环境约束（esbuild × 哈希库）
@@ -630,4 +609,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.8.0 | 最后更新: 2026-09-03_
+_版本: 1.8.1 | 最后更新: 2026-09-03_

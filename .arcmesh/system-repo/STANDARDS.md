@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.8.0"
+version: "1.8.1"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -94,7 +94,7 @@ src/
 | **反射工厂** | 通过反射工厂（注册表 `Map<platform, ctor>` + 模块加载时反射注册）获取实现实例（`DesktopXxx` / `MobileXxx`） |
 | **平台判定唯一入口** | 平台判定只在工厂内部（`Platform.isDesktop` / `Platform.isMobile`），**禁止 UI 组件内散落 `Platform.isMobile` 条件分支** |
 
-> 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）；文件驻留与清理见 `architecture.md` §2.8。
+> 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）；文件路径引用见 `architecture.md` §2.8。
 
 ### 1.3 跨平台脚本与子进程调用
 
@@ -284,7 +284,7 @@ const ERROR_CODES = {
 
 - 文件操作限制在 Vault 内
 
-- 临时磁盘缓存（文件驻留）仅写入 `paths.cacheDir/tmp/`（插件内部数据区，非 Vault 笔记区）；导入成功、向导关闭（含取消/意外退出）与插件 `onunload` 必须释放内存并删除临时文件，下次启动清扫 `tmp/` 孤儿文件；缓存写入失败降级纯内存并记 `IO_001`（WARN），清理失败仅 WARN（见 architecture.md §2.8、ui/layout.md §4）
+- 向导所选文件**仅记录路径引用**：不预加载进内存、不复制到 Vault、不写临时磁盘缓存；解析/预览按需从原路径读取，读取失败（原文件不可访问/URI 失效）记 `IO_002`（见 architecture.md §2.8、ui/layout.md §4）
 
 - 文件写入采用"先渲染后写入"：全部内容在内存渲染并校验路径后统一写入，单个文件失败不影响批次，不产生半成品文件
 
@@ -303,4 +303,4 @@ const ERROR_CODES = {
 
 ---
 
-_版本: 1.8.0
+_版本: 1.8.1
