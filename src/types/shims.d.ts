@@ -13,13 +13,6 @@ declare module 'js-yaml' {
   export function dump(obj: any): string;
 }
 
-declare module 'xlsx' {
-  export function read(data: any, opts?: any): any;
-  export const utils: {
-    sheet_to_json<T = any>(sheet: any, opts?: any): T[];
-  };
-}
-
 declare module 'papaparse' {
   export function parse<T = any>(
     input: string,

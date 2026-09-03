@@ -28,6 +28,7 @@ import {
   parseRowNumbers,
   unmappedColumns
 } from '../../src/ui/wizard-data';
+import type { DataTransformConfig } from '../../src/ui/wizard-data';
 
 /* 本地时区的 YYYY-MM-DD（与实现 formatISODate 一致的推导，保证任意时区一致） */
 function isoLocal(ts: number): string {
@@ -162,7 +163,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
       { 姓名: ' 张三 ', 年龄: '18' },
       { 姓名: ' 李四 ', 年龄: '20' }
     ];
-    const cfg = {
+    const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'duplicateHeader', param: '' }],
       formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
@@ -179,7 +180,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
 
   it('byIndex 删除后预览行号不重排（# 显示原始行号）', () => {
     const data = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }];
-    const cfg = {
+    const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'byIndex', param: '2' }],
       formats: [],
       clean: [],
@@ -194,7 +195,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
 
   it('无删除规则时与 applyTransform 一致（空 removeRows）', () => {
     const data = [{ a: 1 }, { a: 2 }];
-    const cfg = { formats: [], clean: ['removeEmpty'], processes: [], mappings: [], derived: [] };
+    const cfg: DataTransformConfig = { formats: [], clean: ['removeEmpty'], processes: [], mappings: [], derived: [] };
     expect(applyTransform(data, cfg)).toEqual(applyTransformPreview(data, cfg).map((r) => r.row));
   });
 });
