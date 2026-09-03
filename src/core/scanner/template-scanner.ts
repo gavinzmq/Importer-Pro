@@ -6,7 +6,6 @@ import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 import {
   configToSegments,
   handlebarsToConfig,
-  isPresetEmptyFilter,
   presetFilterEmptyRows,
   rowFilterFromRemove,
   upsertSegments,
