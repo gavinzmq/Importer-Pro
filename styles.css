@@ -1,31 +1,623 @@
-/* Importer Pro 样式 */
+/* ==========================================================================
+   Importer Pro — 导入向导样式（ui/layout.md 权威）
+   间距 Token 统一引用 Obsidian 变量，缺省回落 --space-*（在 .theme-* 下）
+   ========================================================================== */
 
-/* 导入向导 Step 2 平台文件选择（ui/layout.md §4） */
-.importer-pro-pick-row {
+/* ── Modal 容器（ui/layout.md §1–2） ─────────────────────────── */
+.modal.importer-pro-modal {
+  width: 720px;
+  max-width: 96vw;
+  height: 90vh;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal.importer-pro-modal .modal-content {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.ipw-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  font-size: 14px;
+}
+
+/* ── Header / Footer Bar ──────────────────────────────────────── */
+.ipw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+.ipw-header-title {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.ipw-back {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-s, 4px);
+}
+.ipw-back:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ipw-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 20px 24px;
+}
+.ipw-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--background-modifier-border);
+  flex: 0 0 auto;
+}
+.ipw-footer-actions {
+  display: flex;
+  gap: var(--space-sm, 8px);
+  margin-left: auto;
+}
+
+/* ── 通用按钮 / 控件 ─────────────────────────────────────────── */
+.ipw-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-s, 4px);
+  cursor: pointer;
+  font-size: 13px;
+}
+.ipw-btn.ipw-primary {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+}
+.ipw-btn:disabled,
+.ipw-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ipw-btn.ipw-danger {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  border: none;
+}
+.ipw-mini {
+  font-size: 12px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-s, 4px);
+  cursor: pointer;
+}
+.ipw-mini.ipw-danger {
+  color: var(--text-error);
+}
+.ipw-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-s, 4px);
+  flex: 0 0 auto;
+}
+.ipw-icon-btn:hover {
+  color: var(--text-error);
+  background: var(--background-modifier-hover);
+}
+.ipw-link {
+  background: none;
+  border: none;
+  color: var(--text-accent);
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+  text-align: left;
+}
+
+.ipw-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-s, 4px);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  font-size: 13px;
+}
+.ipw-select {
+  max-width: 100%;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: var(--radius-s, 4px);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  font-size: 13px;
+}
+
+.ipw-sub {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 2px 0 12px;
+}
+.ipw-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.ipw-note {
+  font-size: 12px;
+  margin-top: 6px;
+}
+.ipw-sep {
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 16px 0;
+}
+.ipw-banner {
+  background: var(--background-secondary);
+  border-radius: var(--radius-m, 6px);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-normal);
+  margin: 8px 0;
+}
+.ipw-banner.is-error {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+/* ── Step 1：来源选择（纵向分组列表） ──────────────────────── */
+.ipw-group {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 14px 2px 6px;
+  font-weight: 600;
+}
+.ipw-source {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 14px;
+  gap: var(--space-md, 16px);
+  background: var(--background-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-m, 6px);
+  cursor: pointer;
+  margin-bottom: 2px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-normal);
+}
+.ipw-source:hover {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+.ipw-source-icon {
+  font-size: 24px;
+  line-height: 24px;
+}
+.ipw-source-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ipw-source-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.ipw-source-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ipw-source-tag {
+  font-size: 12px;
+  color: var(--text-accent);
+}
+.ipw-source-arrow {
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+/* ── Step 2：选择文件行 ─────────────────────────────────────── */
+.ipw-pick-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm, 8px);
-  margin-bottom: var(--space-md, 16px);
+  margin-bottom: 4px;
 }
-
-.importer-pro-pick-btn {
+.ipw-pick-btn {
   height: 36px;
   padding: 0 16px;
+  border-radius: var(--radius-s, 4px);
+  cursor: pointer;
+}
+.ipw-pick-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ipw-pick-status {
+  font-size: 13px;
+  color: var(--text-success);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.ipw-pick-status.is-error {
+  color: var(--text-error);
+}
+.ipw-list-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 6px 0;
+}
+.ipw-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 20px 0;
+  text-align: center;
 }
 
-.importer-pro-pick-status {
+/* ── Step 2：文件列表条目 ───────────────────────────────────── */
+.ipw-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ipw-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  padding: 10px 12px;
+  background: var(--background-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s, 4px);
+  cursor: default;
+}
+.ipw-session {
+  cursor: pointer;
+}
+.ipw-session.is-selected {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+.ipw-select-mark {
+  width: 20px;
+  color: var(--text-accent);
   font-size: 13px;
+  flex: 0 0 auto;
+}
+.ipw-file-icon {
+  font-size: 18px;
+}
+.ipw-file-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ipw-file-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ipw-file-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm, 8px);
+  font-size: 12px;
   color: var(--text-muted);
+}
+.ipw-file-meta .ipw-count {
+  font-weight: 700;
+  color: var(--text-normal);
+}
+.ipw-file-ext {
+  color: var(--text-accent);
+}
+.ipw-pending {
+  color: var(--color-yellow, #d8a657);
+  font-size: 12px;
+}
+.ipw-vault-path {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ipw-row-ops {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* ── Step 3：区块通用 ───────────────────────────────────────── */
+.ipw-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ipw-block h4,
+.ipw-block h5 {
+  margin: 0;
+}
+.ipw-file-bar {
+  background: var(--background-secondary);
+  padding: 8px 16px;
+  border-radius: var(--radius-s, 4px);
+  font-size: 14px;
+  color: var(--text-normal);
+}
+.ipw-card {
+  background: var(--background-secondary);
+  border-radius: var(--radius-m, 6px);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ipw-card-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ipw-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  flex-wrap: wrap;
+}
+.ipw-form-row .ipw-label {
+  width: 80px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.ipw-form-row > .ipw-input {
+  flex: 1;
+}
+.ipw-checks {
+  gap: 16px;
+  font-size: 13px;
+}
+.ipw-test-status.is-ok {
+  color: var(--text-success);
+}
+.ipw-test-status.is-error {
+  color: var(--text-error);
+}
+
+.ipw-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ipw-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ipw-rule-text {
+  flex: 1;
+  font-size: 13px;
+}
+
+/* 列映射 / 派生字段 表格 */
+.ipw-grid {
+  display: grid;
+  gap: var(--space-sm, 8px);
+  align-items: center;
+}
+.ipw-map-head,
+.ipw-map-row {
+  grid-template-columns: 22% 28% 22% auto;
+}
+.ipw-derive-head,
+.ipw-derive-row {
+  grid-template-columns: 18% 36% 26% auto;
+}
+.ipw-grid-head {
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 4px;
+}
+.ipw-map-row .ipw-select,
+.ipw-derive-row .ipw-select {
+  width: 100%;
+}
+
+/* 预览表格 */
+.ipw-preview-grid-wrap {
+  max-height: 200px;
+  overflow: auto;
+}
+.ipw-preview-grid {
+  display: grid;
+  grid-auto-columns: minmax(90px, max-content);
+  grid-auto-flow: column;
+  grid-auto-rows: min-content;
+  font-size: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  overflow: auto;
+}
+.ipw-cell {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-right: 1px solid var(--background-modifier-border);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 60%;
+  max-width: 220px;
+  color: var(--text-normal);
+}
+.ipw-cell.is-head {
+  background: var(--background-secondary);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.ipw-preview-actions {
+  margin-top: 8px;
 }
 
-.importer-pro-pick-status.is-ok {
-  color: var(--color-green, var(--text-success));
+.ipw-suggest-sub {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
-.importer-pro-pick-status.is-error {
-  color: var(--color-red, var(--text-error));
+/* ── Step 4 / 完成页 ────────────────────────────────────────── */
+.ipw-run-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--background-secondary);
+  border-radius: var(--radius-m, 6px);
+  padding: 16px;
+  margin: 12px 0;
 }
+.ipw-run-status {
+  font-size: 14px;
+}
+.ipw-bar {
+  height: 14px;
+  background: var(--background-modifier-border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.ipw-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--interactive-accent);
+  transition: width 0.2s ease;
+}
+.ipw-run-counts {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ipw-log {
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 24px;
+  margin-top: 12px;
+}
+.ipw-log.is-compact {
+  margin-top: 4px;
+}
+.ipw-log-line.ok {
+  color: var(--text-success);
+}
+.ipw-log-line.err {
+  color: var(--text-error);
+}
+.ipw-log-line.skip {
+  color: var(--text-muted);
+}
+.ipw-log-line.info {
+  color: var(--text-muted);
+}
+
+.ipw-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-md, 16px);
+  margin: 16px 0;
+}
+.ipw-stat-card {
+  background: var(--background-secondary);
+  border-radius: var(--radius-m, 6px);
+  padding: 14px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ipw-stat-num {
+  font-size: 24px;
+  font-weight: 700;
+}
+.ipw-stat-card.is-ok .ipw-stat-num {
+  color: var(--text-success);
+}
+.ipw-stat-card.is-err .ipw-stat-num {
+  color: var(--text-error);
+}
+.ipw-stat-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ipw-done-errors {
+  font-size: 13px;
+  margin-top: 10px;
+}
+.ipw-done-ops {
+  margin-top: 16px;
+}
+
+/* ── 响应式（ui/layout.md §8） ──────────────────────────────── */
+@media (max-width: 840px) {
+  .ipw-body {
+    padding: 16px 20px;
+  }
+  .ipw-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .modal.importer-pro-modal {
+    width: 100%;
+    max-width: 100%;
+  }
+  .ipw-map-row,
+  .ipw-derive-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ipw-footer {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 480px) {
+  .ipw-body {
+    padding: 12px 12px;
+  }
+  .ipw-file-row {
+    flex-wrap: wrap;
+  }
+  .ipw-row-ops {
+    margin-left: 28px;
+  }
+}
+

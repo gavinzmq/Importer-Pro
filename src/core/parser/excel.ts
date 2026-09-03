@@ -14,6 +14,13 @@ export class ExcelParser extends BaseParser {
     const rows = XLSX.utils.sheet_to_json<DataRecord>(sheet, { defval: '' });
     return sliceRows(rows, options);
   }
+
+  /** 枚举工作表名（Step 3 区块 2"数据表单选择"按需调用；ui/layout.md §5.3） */
+  async getSheetNames(file: FileInfo): Promise<string[]> {
+    const data = await this.ctx.readBinary(file.path);
+    const workbook = XLSX.read(data, { type: 'array' });
+    return workbook.SheetNames; 
+  }
 }
 
 function sliceRows(rows: DataRecord[], options?: ParseOptions): DataRecord[] {

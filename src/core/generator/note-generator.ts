@@ -6,7 +6,8 @@ import {
   DryRunResult,
   GeneratedFileInfo,
   NoteSpec,
-  OutputConfig
+  OutputConfig,
+  PauseToken
 } from '../../types';
 import { ICacheProvider } from '../cache/provider';
 import { IMergeEngine, MergeEngine } from '../merge/merge-engine';
@@ -41,18 +42,21 @@ export class NoteGenerator implements INoteGenerator {
 
   async batchGenerate(records: DataRecord[], config: BatchConfig): Promise<BatchResult> {
     const started = Date.now();
-    const specs: NoteSpec[] = [];
-    for (const record of records) specs.push(...toSpecs(record));
+    const allSpecs = collectSpecs(records);
+    // R09 断点续跑：跳过前 startAt 个已完成 note（写入以磁盘为准，跳过部分视为已处理）
+    const startAt = Math.max(0, config.startAt ?? 0);
+    const specs = allSpecs.slice(startAt);
+    const totalNotes = allSpecs.length;
 
-    const files = await this.runWithConcurrency(
-      specs,
-      (spec) => this.writeOne(spec, config),
-      config.concurrency ?? 5,
-      config.abortSignal,
-      config.onProgress
+    const files = await this.runWithConcurrency(specs, (spec) => this.writeOne(spec, config), {
+      concurrency: config.concurrency ?? 5,
+      abortSignal: config.abortSignal,
+      pause: config.pause,
+      base: startAt,
+      onProgress: config.onProgress
         ? (done, total) => config.onProgress!({ done, total, phase: 'write' })
         : undefined
-    );
+    });
 
     const succeeded = files.filter((f) => f.status === 'created' || f.status === 'updated').length;
     const skipped = files.filter((f) => f.status === 'skipped_unchanged' || f.status === 'skipped_conflict').length;
@@ -62,7 +66,7 @@ export class NoteGenerator implements INoteGenerator {
       .map((f) => ({ code: ERROR_CODES.IO_WRITE_FAILED, message: f.error ?? '写入失败' }));
 
     return {
-      total: specs.length,
+      total: totalNotes,
       succeeded,
       skipped,
       failed,
@@ -73,23 +77,47 @@ export class NoteGenerator implements INoteGenerator {
   }
 
   async dryRun(records: DataRecord[], config: OutputConfig): Promise<DryRunResult> {
-    const specs: NoteSpec[] = [];
-    for (const record of records) specs.push(...toSpecs(record));
+    const specs = collectSpecs(records);
 
     const files: GeneratedFileInfo[] = [];
     const conflicts: DryRunResult['conflicts'] = [];
     for (const spec of specs) {
       const fullPath = toFullPath(spec);
       const exists = await this.cache.noteExists(fullPath);
+      let status: GeneratedFileInfo['status'];
+      if (!exists) {
+        status = 'created';
+      } else {
+        conflicts.push({ path: fullPath, exists: true, strategy: config.conflictStrategy });
+        switch (config.conflictStrategy) {
+          case 'skip':
+            status = 'skipped_conflict';
+            break;
+          case 'rename':
+            // rename 策略在文件已存在时必然产出新文件，近似「将更新」（写入时可能继续+1 后缀）
+            status = 'updated';
+            break;
+          default: {
+            // overwrite/append/merge：内容一致 → 增量语义下将跳过（unchanged），否则将更新
+            const existing = this.app.vault.getAbstractFileByPath(fullPath);
+            let same = false;
+            if (existing instanceof TFile) {
+              try {
+                same = (await this.app.vault.read(existing)) === (spec.content ?? '');
+              } catch {
+                same = false;
+              }
+            }
+            status = same ? 'skipped_unchanged' : 'updated';
+          }
+        }
+      }
       files.push({
         path: fullPath,
         noteName: spec.filename,
         recordId: spec.filename,
-        status: exists ? (config.conflictStrategy === 'skip' ? 'skipped_conflict' : 'updated') : 'created'
+        status
       });
-      if (exists) {
-        conflicts.push({ path: fullPath, exists: true, strategy: config.conflictStrategy });
-      }
     }
     return { files, conflicts };
   }
@@ -193,31 +221,62 @@ export class NoteGenerator implements INoteGenerator {
     }
   }
 
-  private async runWithConcurrency<T>(
-    items: T[],
-    fn: (item: T) => Promise<GeneratedFileInfo>,
-    concurrency: number,
-    abortSignal?: AbortSignal,
-    onProgress?: (done: number, total: number) => void
+  /**
+   * 并发执行写入（R09 支持协作式暂停 + 断点续跑）。
+   * 暂停在「取下一个 note」前检查：暂停期间 worker 阻塞于 pause.waitWhilePaused()，
+   * 与 abort 竞速保证「⏹ 停止」可随时唤醒；暂停不影响已在写入的 note（天然无半成品）。
+   */
+  private async runWithConcurrency(
+    items: NoteSpec[],
+    fn: (item: NoteSpec) => Promise<GeneratedFileInfo>,
+    opts: {
+      concurrency: number;
+      abortSignal?: AbortSignal;
+      pause?: PauseToken;
+      /** 断点续跑基准：已完成的 note 数（用于进度计数归位） */
+      base?: number;
+      onProgress?: (done: number, total: number) => void;
+    }
   ): Promise<GeneratedFileInfo[]> {
+    const { concurrency, abortSignal, pause, base = 0, onProgress } = opts;
     const results: GeneratedFileInfo[] = new Array(items.length);
     let cursor = 0;
     let done = 0;
 
+    let abortResolve: (() => void) | null = null;
+    const onAbort = (): void => abortResolve?.();
+    const abortPromise = new Promise<void>((resolve) => {
+      abortResolve = resolve;
+    });
+    abortSignal?.addEventListener('abort', onAbort);
+
     const worker = async (): Promise<void> => {
       while (cursor < items.length) {
         if (abortSignal?.aborted) return;
+        if (pause?.paused) {
+          // 暂停断点：等待恢复或中止
+          await Promise.race([pause.waitWhilePaused(), abortPromise]);
+          continue;
+        }
         const idx = cursor++;
         results[idx] = await fn(items[idx]);
         done++;
-        onProgress?.(done, items.length);
+        onProgress?.(base + done, base + items.length);
       }
     };
 
     const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker);
     await Promise.all(workers);
+    abortSignal?.removeEventListener('abort', onAbort);
     return results;
   }
+}
+
+/** 收集记录级 _notes → 扁平 NoteSpec[]（供 batchGenerate/dryRun 共用） */
+function collectSpecs(records: DataRecord[]): NoteSpec[] {
+  const specs: NoteSpec[] = [];
+  for (const record of records) specs.push(...toSpecs(record));
+  return specs;
 }
 
 /** 记录 → NoteSpec：预处理阶段已注入 _notes 数组则直接使用；否则按默认字段单条生成 */

@@ -87,6 +87,15 @@ export class ImporterProSettingTab extends PluginSettingTab {
           await this.persist();
         })
       );
+    new Setting(containerEl)
+      .setName('导入后刷新 Dataview 索引')
+      .setDesc('导入完成后自动触发 Dataview 重索引（after:import 内置钩子）；未安装 Dataview 时提示')
+      .addToggle((t) =>
+        t.setValue(s.refreshDataviewOnImport).onChange(async (v) => {
+          s.refreshDataviewOnImport = v;
+          await this.persist();
+        })
+      );
 
     // 💾 缓存设置
     new Setting(containerEl).setName('💾 缓存设置').setHeading();

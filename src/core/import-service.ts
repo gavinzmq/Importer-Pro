@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, Notice, TFile } from 'obsidian';
 import {
   BatchConfig,
   DataRecord,
@@ -6,9 +6,11 @@ import {
   ImportHistoryEntry,
   ImportResult,
   NoteSpec,
+  PauseToken,
   PluginSettings,
   ProgressPayload
 } from '../types';
+import { refreshDataviewIndex } from './dataview';
 import { ParserRegistry } from './parser/registry';
 import { ParserContext } from './parser/parser';
 import { TemplateScanner } from './scanner/template-scanner';
@@ -30,6 +32,19 @@ export interface ImportFileOptions {
   abortSignal?: AbortSignal;
 }
 
+export interface ImportRecordsOptions {
+  /** 历史记录来源标注（通常为原文件路径/名称） */
+  sourceLabel?: string;
+  onProgress?: (p: ProgressPayload) => void;
+  abortSignal?: AbortSignal;
+  /** R10 预检（Dry Run）：仅统计不写入、不记历史、不发事件 */
+  dryRun?: boolean;
+  /** R09 协作式暂停令牌 */
+  pause?: PauseToken;
+  /** R09 断点续跑：跳过前 N 个已完成的 note（停止后继续） */
+  startAt?: number;
+}
+
 /** 导入服务：parse → 匹配模板 → 预处理/分流 → 生成 → 历史记录 */
 export class ImportService {
   constructor(
@@ -44,7 +59,9 @@ export class ImportService {
     private hooks: HookManager,
     private events: EventBus,
     private logger: ILogger,
-    private parserCtx: ParserContext
+    private parserCtx: ParserContext,
+    /** 设置持久化回调（写入 data.json；缺省时仅内存修改，历史不落盘） */
+    private saveSettingsCb?: () => Promise<void>
   ) {}
 
   get appRef(): App {
@@ -149,7 +166,10 @@ export class ImportService {
         duration: endTime - startedAt
       };
 
-      if (!options.dryRun) await this.recordHistory(importResult, filePath);
+      if (!options.dryRun) {
+        await this.recordHistory(importResult, filePath);
+        this.maybeRefreshDataview(importResult);
+      }
       this.events.publish('import:complete', importResult);
       return importResult;
     } catch (e) {
@@ -175,8 +195,143 @@ export class ImportService {
     }
   }
 
+  /**
+   * 以"已解析/已变换的记录"直接执行导入（语义同 api-layer §3.3 importData）。
+   * 供导入向导 Step 4 使用：向导侧先解析文件 + 应用 Step 3 数据处理/列映射/派生，
+   * 再调用本方法完成 预处理分流 → 生成 → 历史记录。
+   */
+  async importRecords(
+    templateId: string,
+    records: DataRecord[],
+    options: ImportRecordsOptions = {}
+  ): Promise<ImportResult> {
+    const startedAt = Date.now();
+    const errors: ImportResult['errors'] = [];
+    const files: ImportResult['files'] = [];
+
+    try {
+      const template = this.scanner.getConfig(templateId);
+      if (!template) {
+        throw new ImporterProError(ERROR_CODES.TEMPLATE_NOT_FOUND, `模板不存在: ${templateId}`);
+      }
+
+      // 预热缓存 + 同步链接索引（smartLink 依赖）
+      await this.cache.refresh();
+      this.engine.setLinkIndex(this.getLinkIndex());
+
+      await this.hooks.run('before:process', { records, template });
+
+      const defaultFolder = this.settings().paths.outputFolder;
+      const prepared: DataRecord[] = [];
+      for (const record of records) {
+        const specs = await this.pipeline.shard(record, template, { defaultFolder });
+        prepared.push({ ...record, _notes: specs.map(specToRecord) });
+      }
+      await this.hooks.run('after:process', { records: prepared, total: prepared.length });
+
+      const batchConfig: BatchConfig = {
+        conflictStrategy: this.settings().conflictStrategy,
+        incrementalMode: this.settings().incrementalMode,
+        concurrency: this.settings().concurrency,
+        onProgress: options.onProgress,
+        abortSignal: options.abortSignal,
+        pause: options.pause,
+        startAt: options.startAt
+      };
+
+      let importResult: ImportResult;
+      if (options.dryRun) {
+        // R10 Dry Run：预检不写入、不记历史、不发完成事件（供 Step 4 确认统计）
+        const dry = await this.generator.dryRun(prepared, batchConfig);
+        files.push(...dry.files);
+        const created = dry.files.filter((f) => f.status === 'created').length;
+        const updated = dry.files.filter((f) => f.status === 'updated').length;
+        const skipped = dry.files.filter((f) => f.status.startsWith('skipped')).length;
+        const failed = dry.files.filter((f) => f.status === 'failed').length;
+        const endTime = Date.now();
+        importResult = {
+          success: failed === 0,
+          templateId,
+          totalRecords: prepared.length,
+          succeeded: created + updated,
+          skipped,
+          failed,
+          files,
+          errors,
+          startTime: startedAt,
+          endTime,
+          duration: endTime - startedAt
+        };
+      } else {
+        const batch = await this.generator.batchGenerate(prepared, batchConfig);
+        files.push(...batch.files);
+        errors.push(...batch.errors);
+        const endTime = Date.now();
+        importResult = {
+          success: batch.failed === 0,
+          templateId,
+          totalRecords: prepared.length,
+          succeeded: batch.succeeded,
+          skipped: batch.skipped,
+          failed: batch.failed,
+          files,
+          errors,
+          startTime: startedAt,
+          endTime,
+          duration: endTime - startedAt
+        };
+        await this.hooks.run('after:import', { records: prepared, result: importResult });
+        if (records.length > 0) {
+          await this.recordHistory(importResult, options.sourceLabel ?? '');
+        }
+        this.maybeRefreshDataview(importResult);
+      }
+      this.events.publish(options.dryRun ? 'import:dryrun' : 'import:complete', importResult);
+      return importResult;
+    } catch (e) {
+      const endTime = Date.now();
+      const message = e instanceof Error ? e.message : String(e);
+      errors.push({ code: ERROR_CODES.PARSE_FAILED, message });
+      const importResult: ImportResult = {
+        success: false,
+        templateId,
+        totalRecords: 0,
+        succeeded: 0,
+        skipped: 0,
+        failed: 1,
+        files,
+        errors,
+        startTime: startedAt,
+        endTime,
+        duration: endTime - startedAt
+      };
+      this.logger.error('Import', message, e);
+      this.events.publish('import:error', importResult);
+      return importResult;
+    }
+  }
+
   private getLinkIndex() {
     return (this.cache as any).getLinkIndex?.();
+  }
+
+  /** R11 内置 after:import：真实写入的导入完成后自动触发 Dataview 重索引 */
+  private maybeRefreshDataview(result: ImportResult): void {
+    if (!this.settings().refreshDataviewOnImport) return;
+    if (result.succeeded === 0 && result.failed === 0) return; // 无实际写入/全跳过
+    const ok = refreshDataviewIndex(this.app);
+    if (ok) {
+      this.logger.info('Dataview', '导入完成，已触发 Dataview 索引刷新');
+      return;
+    }
+    this.logger.info('Dataview', '导入完成，未检测到 Dataview 插件，跳过索引自动刷新');
+    try {
+      new Notice(
+        `已导入 ${result.succeeded} 篇笔记。未检测到 Dataview 插件，索引未自动刷新（可在设置中关闭该提示）。`
+      );
+    } catch {
+      // 非 Obsidian 环境（如测试/CI）不弹提示
+    }
   }
 
   private async recordHistory(result: ImportResult, sourceFile: string): Promise<void> {
@@ -196,6 +351,8 @@ export class ImportService {
   }
 
   private saveSettings(): Promise<void> {
+    if (this.saveSettingsCb) return this.saveSettingsCb();
+    // 旧路径兜底：App 无 savePluginSettings，此分支实际 no-op（仅内存）
     return (this.app as any).savePluginSettings?.() ?? Promise.resolve();
   }
 }

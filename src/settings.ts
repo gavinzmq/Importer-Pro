@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   historyLimit: 20,
   csvEncoding: 'auto',
   autoMatchEnabled: true,
+  refreshDataviewOnImport: true,
   importHistory: []
 };
 

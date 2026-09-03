@@ -129,7 +129,8 @@ export default class ImporterProPlugin extends Plugin {
       this.hooks,
       this.events,
       this.logger,
-      this.parserCtx
+      this.parserCtx,
+      () => this.save(this.settings)
     );
     this.api = new ApiFacade(
       this.app,
@@ -156,7 +157,13 @@ export default class ImporterProPlugin extends Plugin {
 
   private async openImportModal(): Promise<void> {
     await this.ensureInitialized();
-    new ImportModal(this.app, this.service, this.scanner, () => this.settings).open();
+    new ImportModal(this.app, {
+      service: this.service,
+      scanner: this.scanner,
+      parsers: this.parsers,
+      settings: () => this.settings,
+      save: (s) => this.save(s)
+    }).open();
   }
 
   private async save(s: PluginSettings): Promise<void> {

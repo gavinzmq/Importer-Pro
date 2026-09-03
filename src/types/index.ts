@@ -52,10 +52,23 @@ export interface ProgressPayload {
   phase: 'parse' | 'render' | 'write';
 }
 
+/** 协作式暂停令牌（R09）：导入执行端在 note 粒度间隙检查 paused，暂停时等待恢复 */
+export interface PauseToken {
+  readonly paused: boolean;
+  pause(): void;
+  resume(): void;
+  /** 若已暂停则等待恢复；未暂停立即 resolve */
+  waitWhilePaused(): Promise<void>;
+}
+
 export interface BatchConfig extends OutputConfig {
   concurrency?: number; // 写文件并发数，默认 5
   onProgress?: (progress: ProgressPayload) => void;
   abortSignal?: AbortSignal;
+  /** R09 协作式暂停（Step 4 ⏸ 暂停 / ▶ 继续） */
+  pause?: PauseToken;
+  /** R09 断点续跑：跳过前 N 个已完成的 note（note 粒度，用于停止后继续） */
+  startAt?: number;
 }
 
 export interface GeneratedFileInfo {
@@ -220,6 +233,8 @@ export interface PluginSettings {
   historyLimit: number;
   csvEncoding: 'auto' | 'utf-8' | 'gbk';
   autoMatchEnabled: boolean;
+  /** R11 导入完成后自动刷新 Dataview 索引（after:import 内置钩子） */
+  refreshDataviewOnImport: boolean;
   importHistory: ImportHistoryEntry[];
 }
 
