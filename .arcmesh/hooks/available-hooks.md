@@ -1,8 +1,8 @@
 ---
 title: "可用钩子列表"
 type: "hooks"
-version: "1.0.0"
-last_updated: "2026-09-02"
+version: "1.1.0"
+last_updated: "2026-09-03"
 status: "active"
 ---
 
@@ -86,6 +86,14 @@ status: "active"
 | `before:error:handle` | 处理错误前 | `{ error, context }` | 修改后的 `{ error, context }` |
 | `after:error:handle` | 处理错误后 | `{ error, result }` | 修改后的 `{ result }` |
 
+### 9. 导入执行阶段 (ImportService)
+
+| 钩子名称 | 触发时机 | 上下文 | 返回值 |
+| :--- | :--- | :--- | :--- |
+| `after:import` | 真实写入的导入完成后（`importFile`/`importRecords` 均触发；Dry Run 不触发） | `{ records, result }` | 修改后的 `{ result }` |
+
+**内置行为（R11，2026-09-03）**：`after:import` 自带 Dataview 索引刷新——当 `settings.refreshDataviewOnImport` 开启且本次有实际写入时，自动调用 `refreshDataviewIndex(app)`（`src/core/dataview.ts`，兼容 `dataview.api.reindex` / `dataview.index.touch`）；未安装 Dataview 时记日志并对用户可见导入弹一次友好提示（可在设置中关闭）。
+
 ---
 
-*版本: 1.0.0 | 最后更新: 2026-09-02*
+*版本: 1.1.0 | 最后更新: 2026-09-03*

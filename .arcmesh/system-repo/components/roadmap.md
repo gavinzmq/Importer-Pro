@@ -1,7 +1,7 @@
 ---
 title: "能力差距与路线图"
 type: "component"
-version: "1.1.0"
+version: "1.2.0"
 last_updated: "2026-09-03"
 status: "active"
 ---
@@ -34,9 +34,9 @@ R01–R14 **全部纳入实现计划**，无暂缓项；优先级仅表示交付
 | R06 | JSON 嵌套数据展开 | JSON-CSV Importer | P1 | v1.1 | 待开始 | 路径选择（如 `data.users[*].tasks[*]`）；嵌套元素独立成笔记；上层字段作为上下文注入 |
 | R07 | 后台导入 / 进度通知 / 任务队列 | 官方 Importer 3.0 | P1 | v1.1 | 待开始 | 导入不阻塞 UI；通知可重开进度面板；多任务排队；移动端降级为前台（见 architecture §9.7） |
 | R08 | 断点续传 / 导入状态持久化 | 官方 Importer | P1 | v1.1 | 待开始 | 笔记 Frontmatter 记录源唯一标识（`importer_id`）；记录已导入文件/行；支持"标记为已导入"/"重新导入" |
-| R09 | 暂停 / 恢复 / 中断细节 | 自规划（layout Step 4 已有暂停/停止） | P0 | v1.0 | 已规划 | 暂停记录断点、恢复续跑；停止时询问是否保留已生成笔记；异常中断后提示"是否继续" |
-| R10 | 导入前 Dry Run 确认统计 | obsidian-process | P0 | v1.0 | 已规划 | 预览按钮展示"将新建 X / 更新 Y / 跳过 Z"；确认后写入（复用 `dryRun` API） |
-| R11 | Dataview 自动索引刷新 | 文档钩子示例 | P0 | v1.0 | 已规划 | 导入完成后自动触发 Dataview 重索引（`after:import` 钩子内置）；未安装时友好提示 |
+| R09 | 暂停 / 恢复 / 中断细节 | 自规划（layout Step 4 已有暂停/停止） | P0 | v1.0 | ✅ 已实现（2026-09-03） | Step 4 `⏸ 暂停 / ▶ 继续`（note 粒度断点，`PauseController`）＋ `⏹ 停止`（保留已写入笔记）；停止后完成页提供「从断点继续」（`startAt` 续跑）。停止前未强制二次确认，改为停止后明示"已保留"并提供继续入口（联调中） |
+| R10 | 导入前 Dry Run 确认统计 | obsidian-process | P0 | v1.0 | ✅ 已实现（2026-09-03） | Step 4 写入前 Dry Run 预检展示「将新建/更新/跳过/失败」→ 确认后写入；`importRecords({dryRun:true})` 按存在性＋内容一致性预估，不写入/不记历史（复用 dryRun） |
+| R11 | Dataview 自动索引刷新 | 文档钩子示例 | P0 | v1.0 | ✅ 已实现（2026-09-03） | `after:import` 内置：真实写入的导入完成后刷新 Dataview（`api.reindex` / `index.touch` 兼容）；设置项 `refreshDataviewOnImport`（默认开）；未安装时友好提示 |
 | R12 | 拖拽导入 | 官方 Importer 2.5 | P1 | v1.1 | 待开始 | 文件拖入 Modal 自动识别格式；多文件批量 |
 | R13 | 可搜索文件夹树 | 官方 Importer 3.0 | P1 | v1.1 | 待开始 | 文件选择器与目标文件夹选择器支持搜索过滤 |
 | R14 | 模板版本管理 | — | P2 | v1.2（M8） | 已排期 | 模板修改历史、回滚、变更时提示"已有 X 篇笔记使用此模板，是否批量更新" |
@@ -44,6 +44,7 @@ R01–R14 **全部纳入实现计划**，无暂缓项；优先级仅表示交付
 ## 4. 实施说明
 
 - **P0 三项**（R09/R10/R11）均基于既有蓝图能力补细节：`dryRun` API（api-layer §3.3）、进度面板（layout §6）、钩子 `after:import`（hooks/available-hooks.md）。
+  - 2026-09-03 三项已实现落地：`PauseToken`/`PauseController` + `NoteGenerator.runWithConcurrency` 断点、`importRecords({dryRun})` 预检统计、`src/core/dataview.ts` after:import 内置刷新（详见 decisions/2026-09-03-p0-r09-r11.md）。待 Obsidian dev vault 联调打磨。
 - **P1 项**（v1.1/M7）涉及新模块或接口扩展，开工前须在本组件补充对应设计并更新决策记录：
   - R01：`DataParser` 新增 Markdown 文件夹/ZIP 解析（层级、附件、`.base`/`.canvas` 保留，层级保留可配置）
   - R06：`JSONParser` 嵌套路径语法 + `DataPipeline` 上下文注入
@@ -57,4 +58,4 @@ R01–R14 **全部纳入实现计划**，无暂缓项；优先级仅表示交付
 
 ---
 
-*版本: 1.1.0 | 最后更新: 2026-09-03*
+*版本: 1.2.0 | 最后更新: 2026-09-03*

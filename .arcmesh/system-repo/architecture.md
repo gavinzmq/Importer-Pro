@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.8.2"
+version: "1.9.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -384,10 +384,20 @@ interface OutputConfig {
   generateIfEmpty?: boolean;
 }
 
+/** 协作式暂停令牌（R09）：导入执行端在 note 粒度间隙检查 paused，暂停时等待恢复 */
+interface PauseToken {
+  readonly paused: boolean;
+  pause(): void;
+  resume(): void;
+  waitWhilePaused(): Promise<void>;   // 未暂停立即 resolve；暂停时等待恢复
+}
+
 interface BatchConfig extends OutputConfig {
   concurrency?: number;    // 写文件并发数，默认 5
   onProgress?: (progress: ProgressPayload) => void;
   abortSignal?: AbortSignal;
+  pause?: PauseToken;      // R09 协作式暂停（Step 4 ⏸ 暂停 / ▶ 继续）
+  startAt?: number;        // R09 断点续跑：跳过前 N 个已完成 note（停止后继续的起点）
 }
 
 interface BatchResult {
@@ -533,8 +543,15 @@ interface PluginSettings {
   historyLimit: number;                     // 导入历史保留条数，默认 20
   csvEncoding: 'auto' | 'utf-8' | 'gbk';    // 默认 auto
   autoMatchEnabled: boolean;                // 自动模板匹配开关，默认 true
+  refreshDataviewOnImport: boolean;         // R11 导入后刷新 Dataview 索引，默认 true
 }
 ```
+
+**导入执行细节（R09/R10/R11，2026-09-03 落地）**：
+
+- **R09 暂停/恢复/断点续跑**：`ImportService.importRecords` 接受 `pause`（`PauseController`，见 `src/core/pause-controller.ts`）与 `startAt`；`NoteGenerator.runWithConcurrency` 在每写一个 note 前检查暂停，并以 `Promise.race([waitWhilePaused(), abortPromise])` 等待恢复或中止。暂停在 note 粒度生效，不影响正在写入的笔记（天然无半成品）；停止仅中止未开始的写入，**已写入笔记保留**；「从断点继续」以已完成的 note 数作为 `startAt` 续跑（同模板/同数据 → note 顺序确定，切片安全）。
+- **R10 Dry Run 预检**：`importRecords({ dryRun: true })` 走 `NoteGenerator.dryRun`——按文件存在性 + 内容一致性预估 `created / updated / skipped_unchanged / skipped_conflict`，不写入、不记历史、不发 `import:complete`（发 `import:dryrun`）；Step 4 先展示「将新建/更新/跳过/失败」统计并确认后写入。
+- **R11 Dataview 刷新**：真实写入的导入完成（`importFile`/`importRecords` 均触发）且 `refreshDataviewOnImport` 开启时，调用 `refreshDataviewIndex(app)`（`src/core/dataview.ts`，兼容 `dataview.api.reindex` 与 `dataview.index.touch`）；未安装 Dataview 时记日志，并对用户可见导入弹一次友好提示（可在设置关闭）。
 
 **路径设置**：所有用户路径均为 **Vault 内相对路径**，可在设置页（SettingsTab）或导入向导中修改，**插件不硬编码任何用户目录**（下方为首次初始化的默认值）：
 
@@ -610,4 +627,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.8.2 | 最后更新: 2026-09-03_
+_版本: 1.9.0 | 最后更新: 2026-09-03_
