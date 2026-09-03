@@ -22,12 +22,16 @@ export interface ColumnFormatRule {
 /** 行清洗开关 */
 export type RowCleanFlag = 'removeEmpty' | 'dedupe' | 'filterInvalid';
 
-/** 行删除规则（D88）：byIndex = 按原始行号（param='2,5,8-10'）；duplicateHeader = 删除值与列名全同的非空行 */
-export type RowRemoveKind = 'byIndex' | 'duplicateHeader';
+/** 行删除规则（D88/D93）：byIndex = 按原始行号（param='2,5,8-10'）；duplicateHeader = 删除值与列名全同的非空行；byContent = 按内容删除（精确/模糊） */
+export type RowRemoveKind = 'byIndex' | 'duplicateHeader' | 'byContent';
 export interface RowRemoveRule {
   kind: RowRemoveKind;
-  /** byIndex：1-based 原始行号串（支持 `2,5,8-10` 区间）；duplicateHeader：忽略 */
+  /** byIndex：1-based 原始行号串（支持 `2,5,8-10` 区间）；byContent：匹配关键词；duplicateHeader：忽略 */
   param: string;
+  /** byContent 专用：exact=精确相等 / contains=模糊包含（默认 contains，大小写敏感） */
+  mode?: 'exact' | 'contains';
+  /** byContent 可选：限定列；缺省匹配该行所有列值（任一值命中即删） */
+  column?: string;
 }
 
 /** 列处理操作 */
@@ -195,7 +199,7 @@ export function applyColumnFormats(records: DataRecord[], rules: ColumnFormatRul
   });
 }
 
-/* ── 行删除（D88：按原始行号 / 重复标题行） ─────────────── */
+/* ── 行删除（D88：按原始行号 / 重复标题行；D93：按内容精确/模糊） ── */
 
 /** 解析行号串 `2,5,8-10` → 1-based 行号（升序去重；非法片段与 ≤0 的号忽略） */
 export function parseRowNumbers(param: string): number[] {
@@ -218,8 +222,26 @@ export function parseRowNumbers(param: string): number[] {
 }
 
 /**
+ * byContent 是否命中该行（D93）：column 指定时仅比较该列；缺省遍历该行所有列值任一命中即删。
+ * mode=exact 字符串化后完全相等；mode=contains（默认）子串包含，大小写敏感。
+ */
+export function rowContentMatches(rule: RowRemoveRule, record: DataRecord): boolean {
+  const keyword = rule.param ?? '';
+  if (keyword === '') return false; // 空关键词不产生删除（防御，UI 亦要求非空）
+  const hit = (v: unknown): boolean => {
+    const s = v === undefined || v === null ? '' : String(v);
+    return rule.mode === 'exact' ? s === keyword : s.includes(keyword);
+  };
+  if (rule.column) {
+    return rule.column in record ? hit(record[rule.column]) : false;
+  }
+  return Object.values(record).some(hit);
+}
+
+/**
  * 计算应删除的行索引集合（0-based，相对 records 数组）。
- * byIndex：按 1-based 原始行号（越界忽略）；duplicateHeader：删除「所有值与其列名完全相同且非空」的行。
+ * byIndex：按 1-based 原始行号（越界忽略）；duplicateHeader：删除「所有值与其列名完全相同且非空」的行；
+ * byContent：按关键词删除（见 rowContentMatches）。三类规则为并集语义。
  */
 export function computeRowRemovalSet(records: DataRecord[], rules: RowRemoveRule[]): Set<number> {
   const out = new Set<number>();
@@ -243,9 +265,24 @@ export function computeRowRemovalSet(records: DataRecord[], rules: RowRemoveRule
         }
         if (allMatch) out.add(idx);
       });
+    } else if (rule.kind === 'byContent') {
+      records.forEach((r, idx) => {
+        if (rowContentMatches(rule, r)) out.add(idx);
+      });
     }
   }
   return out;
+}
+
+/** 删除行规则展示标签（D93，供已配置列表）：如 `按行号删除: 2,5` / `删除含「张三」的行（姓名列）` */
+export function rowRemoveRuleLabel(rule: RowRemoveRule): string {
+  if (rule.kind === 'duplicateHeader') return '删除重复标题行（值与列名全同的行）';
+  if (rule.kind === 'byContent') {
+    const kw = rule.param ?? '';
+    const col = rule.column ? `（${rule.column}列）` : '（全部列）';
+    return rule.mode === 'exact' ? `删除等于「${kw}」的行${col}` : `删除含「${kw}」的行${col}`;
+  }
+  return `按行号删除: ${rule.param}`;
 }
 
 /** 应用行删除规则（D88） */

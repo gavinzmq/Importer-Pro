@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.12.0"
+version: "1.13.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -205,6 +205,13 @@ export interface ITemplateScanner {
   findTemplate(fileName: string): Promise<TemplateInfo | null>;
   listTemplates(): Promise<TemplateInfo[]>;
   refresh(templateId?: string): Promise<void>;
+  /** D92：按向导当前配置引导创建模板（写入 paths.templates，重名不覆盖），成功后刷新索引 */
+  createTemplate(options: {
+    name: string;
+    matchType: 'regex' | 'glob' | 'exact';
+    matchPattern: string;
+    columns: string[];
+  }): Promise<TemplateInfo>;
 }
 
 export interface IDataPipeline {
@@ -224,7 +231,7 @@ export interface IValidator {
 
 | 模块 | 职责 | 输入 → 输出 |
 | :--- | :--- | :--- |
-| `TemplateScanner` | 维护模板索引、按文件名匹配模板 | `fileName` → `TemplateInfo` |
+| `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖） | `fileName` → `TemplateInfo` |
 | `DataPipeline` | 校验（错误分流）、按条件分流到 noteType、生成派生字段与 `_notes` | `DataRecord` → `NoteSpec[]` |
 | `Validator` | 字段级/记录级校验规则执行 | `DataRecord` + `rules` → `ValidationResult` |
 
@@ -244,6 +251,19 @@ export interface IValidator {
 - 外部文件端到端导入已支持（D81）：Step 2 选中 Vault 外文件 → Step 3 解析/预览 → Step 4 写入 Vault 笔记；原文件本身**不复制进 Vault**（不产生原文件副本）。读取经选择时持有的 DOM `File`/`Blob` 句柄（`FileInfo.blob`）**按需**进行——桌面/移动端一致、不依赖本地 fs、不预加载内容；句柄不跨会话保留，重新导入需重新选择原文件。
 
 > 决策依据见 decisions/2026-09-03-step2-session-queue-path-ref.md（D66–D68）。
+
+### 2.9 向导 UI 渲染策略（区块局部刷新，D91）
+
+**职责**：消除导入向导（尤其 Step 3）交互的「整页刷新感」与「滚动跳顶」。
+
+| 原则 | 内容 |
+| :--- | :--- |
+| **容器持久** | Step 3 的 body 滚动容器（`.ipw-body`）在整个 Step 内保持 DOM 身份不变；控件变更**禁止**重建 header/footer/body 与整个 `contentEl` |
+| **分级刷新** | L1 仅预览（`refreshPreviewOnly`）/ L2 区块内重建（规则列表、映射行、派生行增删改）/ L3 数据源级（表单、表头行、数据文件、模板切换 → 重解析后按依赖链刷新 映射→派生→预览） |
+| **滚动与焦点保持** | 任何刷新前记录 `scrollTop`，刷新后恢复；输入类控件的状态即数据源（渲染仅回填值），局部刷新不丢失输入焦点 |
+| **步骤切换例外** | Step 1/2/3/4 间跳转属页面结构切换，仍全量渲染（滚动置顶合理） |
+
+> 交互布局与渲染规格见 [../ui/layout.md](../ui/layout.md) §5.1；决策见 decisions/2026-09-03-ui-ux-polish.md（D91）。
 
 ## 3. 数据流
 
@@ -633,4 +653,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.12.0 | 最后更新: 2026-09-03_
+_版本: 1.13.0 | 最后更新: 2026-09-03_

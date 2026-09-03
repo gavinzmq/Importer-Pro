@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.8.2"
+version: "1.8.3"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -95,6 +95,17 @@ src/
 | **平台判定唯一入口** | 平台判定只在工厂内部（`Platform.isDesktop` / `Platform.isMobile`），**禁止 UI 组件内散落 `Platform.isMobile` 条件分支** |
 
 > 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）；文件路径引用见 `architecture.md` §2.8。
+
+### 1.2.2 向导渲染策略（无刷新感 / 不跳顶，D91）
+
+| 规范项 | 标准 |
+| :--- | :--- |
+| **容器持久** | 向导各步骤内（尤其 Step 3）body 滚动容器保持 DOM 身份不变；**控件变更禁止重建整个 `contentEl` / header / footer** |
+| **分级局部刷新** | 按影响范围刷新：L1 仅预览 / L2 区块内重建 / L3 数据源级（重解析后按依赖链刷新 映射→派生→预览）；禁止以全量渲染代替局部刷新 |
+| **滚动与焦点保持** | 刷新前记录并恢复 `scrollTop`；输入控件状态即数据源、渲染仅回填值，避免焦点丢失 |
+| **步骤切换例外** | Step 间跳转属页面结构切换，可全量渲染 |
+
+> 权威设计见 `architecture.md` §2.9 与 `ui/layout.md` §5.1；决策见 decisions/2026-09-03-ui-ux-polish.md（D91）。
 
 ### 1.3 跨平台脚本与子进程调用
 
@@ -305,4 +316,4 @@ const ERROR_CODES = {
 
 ---
 
-_版本: 1.8.2
+_版本: 1.8.3

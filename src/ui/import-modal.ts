@@ -41,6 +41,7 @@ import {
   parseRowNumbers,
   PROCESS_OP_LABELS,
   RowCleanFlag,
+  rowRemoveRuleLabel,
   unmappedColumns
 } from './wizard-data';
 import { dryRunStats, type DryRunSummary } from './wizard-data';
@@ -152,6 +153,17 @@ export class ImportModal extends Modal {
   private parsedInfo: FileInfo | null = null;
   private transform: DataTransformConfig = emptyTransform();
 
+  // D91：Step 3 区块局部刷新——.ipw-body 容器持久，各区块仅重建自身内容（含滚动保持）
+  private s3Body: HTMLElement | null = null;
+  private s3Wrap: {
+    template: HTMLElement | null;
+    process: HTMLElement | null;
+    mapping: HTMLElement | null;
+    derived: HTMLElement | null;
+  } = { template: null, process: null, mapping: null, derived: null };
+  /** footer「开始导入」按钮引用（Step 3 局部刷新后仅同步其启用态，不重建 footer，D91） */
+  private footerNextBtn: HTMLButtonElement | null = null;
+
   // Step 4 状态（R10 Dry Run 确认 / R09 暂停恢复停止 / 断点续跑）
   private step4Phase: 'confirm' | 'run' = 'confirm';
   private step4Dry: DryRunSummary | null = null;
@@ -250,9 +262,9 @@ export class ImportModal extends Modal {
     }
     if (this.step === 3) {
       const next = actions.createEl('button', { cls: 'ipw-btn ipw-primary', text: '🚀 开始导入' });
-      const blocked = !this.templateId || !this.step3 || this.parseError !== null || this.parsed.length === 0;
-      next.disabled = blocked;
+      this.footerNextBtn = next; // D91：局部刷新（如新建模板后）仅同步其禁用态，不重建 footer
       next.addEventListener('click', () => this.startImport());
+      this.syncStep3Footer();
       return;
     }
   }
@@ -496,14 +508,25 @@ export class ImportModal extends Modal {
 
   /* ── Step 3：模板配置（7 区块，ui/layout.md §5） ─────────── */
 
+  /** 进入 Step 3（步骤跳转，属页面结构切换，可全量渲染）：记录 body 容器并构建区块内容 */
   private async renderStep3(el: HTMLElement): Promise<void> {
     if (!this.step3) {
       el.createDiv({ cls: 'ipw-banner', text: '请先在 Step 2 选择一个可导入的文件。' });
       return;
     }
-
+    // D91：.ipw-body 在整个 Step 3 内保持 DOM 身份不变，后续仅刷新其内部区块
+    this.s3Body = el;
     await this.prepareParse(); // 解析当前文件（含表单/行数/列；Vault 内按路径读取，外部经 blob 句柄）
     await this.loadTemplates();
+    this.renderStep3Content();
+    this.syncStep3Footer();
+  }
+
+  /** 渲染 Step 3 body 全部区块内容（D91：仅重绘 .ipw-body 内部，header/footer/容器身份不变） */
+  private renderStep3Content(): void {
+    const el = this.s3Body;
+    if (!el || !this.step3) return;
+    el.empty();
 
     // 区块 1：文件信息条
     const info = el.createDiv({ cls: 'ipw-block ipw-file-bar' });
@@ -514,6 +537,7 @@ export class ImportModal extends Modal {
 
     if (this.parseError) {
       el.createDiv({ cls: 'ipw-banner is-error', text: this.parseError });
+      this.resetStep3Wrap();
       return;
     }
     if (rows === 0) {
@@ -535,6 +559,7 @@ export class ImportModal extends Modal {
       } else {
         el.createDiv({ cls: 'ipw-banner', text: '未解析到数据行，请返回重新选择文件。' });
       }
+      this.resetStep3Wrap();
       return;
     }
 
@@ -550,7 +575,7 @@ export class ImportModal extends Modal {
     this.renderTemplateBlock(el);
     el.createDiv({ cls: 'ipw-sep' });
 
-    // 区块 4：数据处理（列格式化 / 行清洗 / 列处理）
+    // 区块 4：数据处理（列格式化 / 行清洗 / 删除行 / 列处理）
     this.renderProcessBlock(el);
     el.createDiv({ cls: 'ipw-sep' });
 
@@ -564,6 +589,89 @@ export class ImportModal extends Modal {
 
     // 区块 7：预览
     this.renderPreviewBlock(el);
+  }
+
+  /** 区块全量重建后清理失效的局部引用（仅解析失败/0 行等无完整区块的状态） */
+  private resetStep3Wrap(): void {
+    this.s3Wrap.template = null;
+    this.s3Wrap.process = null;
+    this.s3Wrap.mapping = null;
+    this.s3Wrap.derived = null;
+    this.previewEl = null;
+  }
+
+  /** 是否处于 Step 3 且 body 仍挂载（向导关闭/切走后跳过刷新） */
+  private isStep3Live(): boolean {
+    return this.step === 3 && !!this.s3Body && this.s3Body.isConnected;
+  }
+
+  /**
+   * D91 L2 区块内刷新：重建指定区块容器内容（renderXxxBlock 会重建该区块并更新 s3Wrap 引用），
+   * 再按需刷新预览；全程保持 .ipw-body 滚动位置，不回顶、不闪烁。
+   */
+  private refreshStep3Blocks(kinds: Array<'template' | 'process' | 'mapping' | 'derived'>, withPreview = true): void {
+    if (!this.isStep3Live()) return;
+    const body = this.s3Body!;
+    const top = body.scrollTop;
+    for (const kind of kinds) this.rerenderStep3Block(kind);
+    if (withPreview) this.refreshPreviewOnly();
+    body.scrollTop = top;
+  }
+
+  private rerenderStep3Block(kind: 'template' | 'process' | 'mapping' | 'derived'): void {
+    const body = this.s3Body;
+    const old = this.s3Wrap[kind];
+    if (!body || !old || !old.isConnected) return;
+    const anchor = old.nextSibling; // 区块后的分隔线/下一区块，用于原位放回
+    old.remove();
+    this.buildStep3Block(kind);
+    const fresh = this.s3Wrap[kind];
+    if (fresh) {
+      if (anchor && anchor.parentNode === body) body.insertBefore(fresh, anchor);
+      else body.appendChild(fresh);
+    }
+  }
+
+  private buildStep3Block(kind: 'template' | 'process' | 'mapping' | 'derived'): void {
+    const body = this.s3Body;
+    if (!body) return;
+    switch (kind) {
+      case 'template':
+        this.renderTemplateBlock(body);
+        break;
+      case 'process':
+        this.renderProcessBlock(body);
+        break;
+      case 'mapping':
+        this.renderMappingBlock(body);
+        break;
+      case 'derived':
+        this.renderDerivedBlock(body);
+        break;
+    }
+  }
+
+  /**
+   * D91 L3 数据源级刷新：重解析后按依赖链重建 Step 3 body 内容
+   * （表单/表头行/文件等变更；列集合可能变化，映射→派生→预览均受影响）。
+   * 保留 .ipw-body 身份与滚动位置。
+   */
+  private async rerenderStep3(): Promise<void> {
+    if (!this.isStep3Live()) return;
+    const body = this.s3Body!;
+    const top = body.scrollTop;
+    await this.prepareParse();
+    await this.loadTemplates();
+    this.renderStep3Content();
+    body.scrollTop = top;
+    this.syncStep3Footer();
+  }
+
+  /** footer「开始导入」启用态同步（D91：局部刷新后不重建 footer，仅更新按钮态） */
+  private syncStep3Footer(): void {
+    if (!this.footerNextBtn) return;
+    const blocked = !this.templateId || !this.step3 || this.parseError !== null || this.parsed.length === 0;
+    this.footerNextBtn.disabled = blocked;
   }
 
   private columns(): string[] {
@@ -676,7 +784,7 @@ export class ImportModal extends Modal {
     sel.addEventListener('change', () => {
       this.sheetName = sel.value;
       this.importAllSheets = false;
-      void this.render();
+      void this.rerenderStep3(); // L3：重解析 + 按依赖链刷新（D91）
     });
     row.createSpan({ cls: 'ipw-muted', text: `行数: ${formatCount(this.parsed.length)}  列数: ${this.columns().length}` });
 
@@ -686,7 +794,7 @@ export class ImportModal extends Modal {
     checkbox.createSpan({ text: ' 同时导入所有表单 (每个表单独立配置模板)' });
     cb.addEventListener('change', () => {
       this.importAllSheets = cb.checked;
-      void this.render();
+      void this.rerenderStep3(); // L3（D91）
     });
   }
 
@@ -712,13 +820,15 @@ export class ImportModal extends Modal {
 
   private renderTemplateBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
+    this.s3Wrap.template = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
     wrap.createEl('h5', { text: '🧩 模板元信息' });
 
+    // 空态（D92）：无模板不再阻断——引导直接新建，创建后自动选中，无需重开向导
     if (this.templates.length === 0) {
-      wrap.createDiv({
-        cls: 'ipw-banner',
-        text: '未在模板目录发现模板。请先创建模板（frontmatter 含 template_id/name，正文含 preprocess 与 content 两个 handlebars 代码块），再重新打开向导。'
-      });
+      wrap.createDiv({ cls: 'ipw-banner', text: '未在模板目录发现模板，可直接新建（按当前文件名/列名生成骨架）。' });
+      const row = wrap.createDiv({ cls: 'ipw-form-row' });
+      const create = row.createEl('button', { cls: 'ipw-btn ipw-primary', text: '➕ 新建模板' });
+      create.addEventListener('click', () => void this.handleCreateTemplate());
       return;
     }
 
@@ -740,7 +850,7 @@ export class ImportModal extends Modal {
       } else {
         this.matchPattern = '';
       }
-      void this.render();
+      this.refreshStep3Blocks(['template'], false); // D91：仅重建本区块（模板切换不改数据/预览）
     });
 
     // 模板名称
@@ -779,8 +889,54 @@ export class ImportModal extends Modal {
 
     wrap.createDiv({
       cls: 'ipw-muted ipw-note',
-      text: '模板名称与匹配规则预填自所选模板；如需新建/修改模板，请直接编辑模板目录下的模板文件。'
+      text: '模板名称与匹配规则预填自所选模板；点击预览区「➕ 新建模板」可按当前配置再生成一个新模板。'
     });
+  }
+
+  /** D92：按当前已配置选项创建模板（名称/匹配规则留空则按当前文件自动生成），创建后自动选中 */
+  private async handleCreateTemplate(): Promise<void> {
+    if (!this.isStep3Live() || !this.step3) return;
+    const name = (this.templateName || '').trim() || this.defaultTemplateName();
+    let matchType: 'regex' | 'glob' | 'exact' = this.matchType;
+    let matchPattern = (this.matchPattern || '').trim();
+    if (!matchPattern) {
+      const d = this.defaultMatchRule();
+      matchType = d.type;
+      matchPattern = d.pattern;
+    }
+    try {
+      const created = await this.deps.scanner.createTemplate({
+        name,
+        matchType,
+        matchPattern,
+        columns: this.columns()
+      });
+      this.templateId = created.id;
+      this.templateName = created.name;
+      this.matchType = matchType;
+      this.matchPattern = matchPattern;
+      const body = this.s3Body!;
+      const top = body.scrollTop;
+      await this.loadTemplates();
+      this.renderStep3Content(); // 空态 → 完整区块（自动选中新模板）
+      body.scrollTop = top;
+      this.syncStep3Footer();
+      new Notice(`✅ 已创建模板「${created.name}」并自动选中，可直接开始导入`);
+    } catch (e) {
+      const text =
+        e instanceof ImporterProError ? `${e.code} ${e.message}` : `创建模板失败：${e instanceof Error ? e.message : String(e)}`;
+      new Notice(text);
+    }
+  }
+
+  private defaultTemplateName(): string {
+    const base = basenameOf(this.step3?.label ?? '');
+    return base.replace(/\.[^.]+$/, '') || base || '新模板';
+  }
+
+  private defaultMatchRule(): { type: 'glob'; pattern: string } {
+    const ext = (this.parsedInfo?.extension || extOf(this.parsedInfo?.path ?? '')).toLowerCase().replace(/^\./, '');
+    return { type: 'glob', pattern: ext ? `*.${ext}` : '*' };
   }
 
   private testMatch(): boolean {
@@ -800,6 +956,7 @@ export class ImportModal extends Modal {
 
   private renderProcessBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
+    this.s3Wrap.process = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
     wrap.createEl('h5', { text: '🧹 数据清洗与预处理' });
     const cols = this.columns();
 
@@ -818,11 +975,11 @@ export class ImportModal extends Modal {
     fAdd.addEventListener('click', () => {
       if (!fCol.value) return;
       this.transform.formats.push({ column: fCol.value, op: fOp.value as ColumnFormatOp, param: fParam.value });
-      void this.render();
+      this.refreshStep3Blocks(['process']); // D91：L2 区块内重建 + 预览刷新
     });
     this.renderRuleList(fmtCard, this.transform.formats.map((r) => formatRuleLabel(r.column, r.op, r.param)), (i) => {
       this.transform.formats.splice(i, 1);
-      void this.render();
+      this.refreshStep3Blocks(['process']); // D91：L2 区块内重建 + 预览刷新
     });
 
     // ── 行清洗 ──
@@ -846,43 +1003,63 @@ export class ImportModal extends Modal {
       });
     }
 
-    // ── 删除行（D88：按原始行号 / 删除重复标题行，预览「#」列对号删除） ──
+    // ── 删除行（D88/D93：按行号 / 按精确内容 / 按模糊内容 + 删除重复标题行，预览「#」列对号删除） ──
     const delRow = cleanCard.createDiv({ cls: 'ipw-form-row' });
     delRow.createSpan({ cls: 'ipw-label', text: '🗑 删除行:' });
-    const delInput = delRow.createEl('input', {
-      cls: 'ipw-input',
-      type: 'text',
-      placeholder: '原始行号 2,5,8-10（见预览 # 列）'
-    });
+    const delMode = delRow.createEl('select', { cls: 'ipw-select ipw-del-mode' });
+    for (const [v, l] of [
+      ['index', '按行号'],
+      ['exact', '按精确内容'],
+      ['contains', '按模糊内容']
+    ] as const) {
+      delMode.createEl('option', { value: v, text: l });
+    }
+    const delInput = delRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '原始行号 2,5,8-10（见预览 # 列）' });
+    const delColumnSel = delRow.createEl('select', { cls: 'ipw-select ipw-del-col' });
+    delColumnSel.createEl('option', { value: '', text: '列: 全部' });
+    for (const c of cols) delColumnSel.createEl('option', { value: c, text: `列: ${c}` });
+    const syncDelMode = (): void => {
+      const isContent = delMode.value === 'exact' || delMode.value === 'contains';
+      delInput.placeholder = isContent ? '匹配关键词（大小写敏感）' : '原始行号 2,5,8-10（见预览 # 列）';
+      delColumnSel.style.display = isContent ? '' : 'none';
+    };
+    syncDelMode();
+    delMode.addEventListener('change', syncDelMode);
+    const delList = cleanCard.createDiv({ cls: 'ipw-del-list' }); // 删除行「已配置」列表（仅重建此列表，控件持久）
     const delAdd = delRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
     delAdd.addEventListener('click', () => {
+      const mode = delMode.value as 'index' | 'exact' | 'contains';
       const val = delInput.value.trim();
-      if (parseRowNumbers(val).length === 0) {
-        new Notice('请输入有效行号（1 起始），如 2,5,8-10');
-        return;
+      if (mode === 'index') {
+        if (parseRowNumbers(val).length === 0) {
+          new Notice('请输入有效行号（1 起始），如 2,5,8-10');
+          return;
+        }
+        this.transform.removeRows = [...(this.transform.removeRows ?? []), { kind: 'byIndex', param: val }];
+      } else {
+        if (!val) {
+          new Notice('请输入要删除的内容关键词');
+          return;
+        }
+        const col = delColumnSel.value || undefined;
+        this.transform.removeRows = [
+          ...(this.transform.removeRows ?? []),
+          { kind: 'byContent', param: val, mode: mode === 'exact' ? 'exact' : 'contains', column: col }
+        ];
       }
-      this.transform.removeRows = [...(this.transform.removeRows ?? []), { kind: 'byIndex', param: val }];
       delInput.value = '';
-      this.refreshPreviewOnly();
+      this.renderRemoveRowsList(delList); // 仅刷新「已配置」列表
+      this.refreshPreviewOnly(); // D91 L1：删除行规则增删不动其它区块/控件（控件持久，便于连续添加）
     });
     const delDup = delRow.createEl('button', { cls: 'ipw-mini', text: '🗑 删除重复标题行' });
     delDup.addEventListener('click', () => {
       const rules = this.transform.removeRows ?? [];
       if (rules.some((r) => r.kind === 'duplicateHeader')) return; // 防重复添加
       this.transform.removeRows = [...rules, { kind: 'duplicateHeader', param: '' }];
+      this.renderRemoveRowsList(delList);
       this.refreshPreviewOnly();
     });
-    const removeRows = this.transform.removeRows ?? [];
-    this.renderRuleList(
-      cleanCard,
-      removeRows.map((r) => (r.kind === 'duplicateHeader' ? '删除重复标题行（值与列名全同的行）' : `按行号删除: ${r.param}`)),
-      (i) => {
-        const rules = [...(this.transform.removeRows ?? [])];
-        rules.splice(i, 1);
-        this.transform.removeRows = rules;
-        this.refreshPreviewOnly();
-      }
-    );
+    this.renderRemoveRowsList(delList);
 
     // ── 列处理 ──
     const procCard = wrap.createDiv({ cls: 'ipw-card' });
@@ -896,11 +1073,35 @@ export class ImportModal extends Modal {
     pAdd.addEventListener('click', () => {
       if (!pCol.value) return;
       this.transform.processes.push({ column: pCol.value, op: pOp.value as ColumnProcessOp, param: pParam.value, param2: '' });
-      void this.render();
+      this.refreshStep3Blocks(['process']); // D91：L2 区块内重建 + 预览刷新
     });
     this.renderRuleList(procCard, this.transform.processes.map((r) => processRuleLabel(r.column, r.op, r.param)), (i) => {
       this.transform.processes.splice(i, 1);
-      void this.render();
+      this.refreshStep3Blocks(['process']); // D91：L2 区块内重建 + 预览刷新
+    });
+  }
+
+  /** D91/D93：仅重建「删除行已配置」列表（不整块重建、不重置顶部控件），供 L1 级增删即时回显 */
+  private renderRemoveRowsList(container: HTMLElement): void {
+    container.empty();
+    const rules = this.transform.removeRows ?? [];
+    if (rules.length === 0) {
+      container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)' });
+      return;
+    }
+    container.createDiv({ cls: 'ipw-muted', text: '已配置:' });
+    const list = container.createDiv({ cls: 'ipw-rule-list' });
+    rules.forEach((r, i) => {
+      const row = list.createDiv({ cls: 'ipw-rule-row' });
+      row.createSpan({ cls: 'ipw-rule-text', text: `• ${rowRemoveRuleLabel(r)}` });
+      const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
+      del.addEventListener('click', () => {
+        const arr = [...(this.transform.removeRows ?? [])];
+        arr.splice(i, 1);
+        this.transform.removeRows = arr;
+        this.renderRemoveRowsList(container);
+        this.refreshPreviewOnly();
+      });
     });
   }
 
@@ -929,15 +1130,21 @@ export class ImportModal extends Modal {
     });
   }
 
-  /** D87：表头行变更 → 带 headerRow 重解析 → 按新列名自动补充已配置映射 → 重渲染刷新列映射/预览 */
+  /** D87：表头行变更 → 带 headerRow 重解析 → 按新列名自动补充已配置映射 → L3 局部刷新（D91） */
   private async applyHeaderRowChange(): Promise<void> {
+    if (!this.isStep3Live()) return;
+    const body = this.s3Body!;
+    const top = body.scrollTop;
     await this.prepareParse();
-    if (!this.contentEl.isConnected) return; // 向导已关闭
+    if (!this.isStep3Live()) return; // 向导已关闭
     // 仅已配置映射时按新列名自动补充（未配置映射 = 保留全部列，不自动锁定列）
     if (this.transform.mappings.length > 0) {
       this.transform.mappings = autoMapColumns(this.columns(), this.transform.mappings);
     }
-    void this.render();
+    await this.loadTemplates();
+    this.renderStep3Content();
+    body.scrollTop = top;
+    this.syncStep3Footer();
   }
 
   private addColumnSelect(container: HTMLElement, cols: string[], placeholder: string): HTMLSelectElement {
@@ -968,6 +1175,7 @@ export class ImportModal extends Modal {
 
   private renderMappingBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
+    this.s3Wrap.mapping = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
     wrap.createEl('h5', { text: '📋 列映射 (只映射需要的列，未映射的列将被忽略)' });
     const cols = this.columns();
 
@@ -989,7 +1197,7 @@ export class ImportModal extends Modal {
       src.value = m.source;
       src.addEventListener('change', () => {
         this.transform.mappings[i].source = src.value;
-        void this.render();
+        this.refreshStep3Blocks(['mapping']); // D91：L2 区块内重建（其余行的可选源列随之变化）+ 预览刷新
       });
       const target = row.createEl('input', { cls: 'ipw-input', type: 'text' });
       target.value = m.target;
@@ -999,6 +1207,7 @@ export class ImportModal extends Modal {
       type.value = m.type;
       type.addEventListener('change', () => {
         this.transform.mappings[i].type = type.value as ColumnMapping['type'];
+        this.refreshStep3Blocks(['mapping']); // D91：L2（ignore 型会影响预览列取舍）
       });
       const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕', attr: { title: '删除映射行' } });
       del.addEventListener('click', () => {
@@ -1007,7 +1216,7 @@ export class ImportModal extends Modal {
         } else {
           this.transform.mappings.splice(i, 1);
         }
-        void this.render();
+        this.refreshStep3Blocks(['mapping']);
       });
     });
 
@@ -1017,18 +1226,18 @@ export class ImportModal extends Modal {
       const free = unmappedColumns(cols, this.transform.mappings);
       const source = free[0] ?? cols[0] ?? '';
       this.transform.mappings.push({ source, target: source, type: 'text' });
-      void this.render();
+      this.refreshStep3Blocks(['mapping']);
     });
     const auto = ops.createEl('button', { cls: 'ipw-mini', text: '🧹 自动映射' });
     auto.addEventListener('click', () => {
       this.transform.mappings = autoMapColumns(cols, this.transform.mappings);
-      void this.render();
+      this.refreshStep3Blocks(['mapping']);
     });
     const clear = ops.createEl('button', { cls: 'ipw-mini ipw-danger', text: '🗑 清空所有' });
     clear.addEventListener('click', () => {
       if (!window.confirm('清空全部列映射？')) return;
       this.transform.mappings = [];
-      void this.render();
+      this.refreshStep3Blocks(['mapping']);
     });
 
     wrap.createDiv({
@@ -1039,6 +1248,7 @@ export class ImportModal extends Modal {
 
   private renderDerivedBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
+    this.s3Wrap.derived = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
     wrap.createEl('h5', { text: '🧩 派生字段' });
     const cols = this.columns();
 
@@ -1052,7 +1262,10 @@ export class ImportModal extends Modal {
       const row = wrap.createDiv({ cls: 'ipw-grid ipw-derive-row' });
       const field = row.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '目标字段' });
       field.value = d.field;
-      field.addEventListener('input', () => (this.transform.derived[i].field = field.value));
+      field.addEventListener('input', () => {
+        this.transform.derived[i].field = field.value;
+        this.refreshPreviewOnly(); // D91 L1：字段名影响预览表头，仅刷新预览
+      });
       const rule = row.createEl('select', { cls: 'ipw-select' });
       for (const p of DERIVED_PRESETS) rule.createEl('option', { value: p.id, text: p.label });
       rule.value = d.rule;
@@ -1060,16 +1273,20 @@ export class ImportModal extends Modal {
         this.transform.derived[i].rule = rule.value;
         const p = DERIVED_PRESETS.find((x) => x.id === rule.value);
         if (p && !p.needsSource) this.transform.derived[i].source = '';
+        this.refreshPreviewOnly(); // D91 L1：规则变更即时反映到预览
       });
       const source = row.createEl('select', { cls: 'ipw-select' });
       source.createEl('option', { value: '', text: '(无需来源)' });
       for (const c of cols) source.createEl('option', { value: c, text: c });
       source.value = d.source;
-      source.addEventListener('change', () => (this.transform.derived[i].source = source.value));
+      source.addEventListener('change', () => {
+        this.transform.derived[i].source = source.value;
+        this.refreshPreviewOnly(); // D91 L1
+      });
       const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
       del.addEventListener('click', () => {
         this.transform.derived.splice(i, 1);
-        void this.render();
+        this.refreshStep3Blocks(['derived']); // D91：L2 区块内重建 + 预览刷新
       });
     });
 
@@ -1077,7 +1294,7 @@ export class ImportModal extends Modal {
     const add = ops.createEl('button', { cls: 'ipw-mini', text: '+ 添加派生字段' });
     add.addEventListener('click', () => {
       this.transform.derived.push({ field: '', rule: DERIVED_PRESETS[0].id, source: cols[0] ?? '' });
-      void this.render();
+      this.refreshStep3Blocks(['derived']);
     });
     const presetBtn = ops.createEl('button', { cls: 'ipw-mini', text: '📋 预设规则' });
     presetBtn.addEventListener('click', () => {
@@ -1087,7 +1304,7 @@ export class ImportModal extends Modal {
           rule: p.id,
           source: p.needsSource ? cols[0] ?? '' : ''
         });
-        void this.render();
+        this.refreshStep3Blocks(['derived']);
       }).open();
     });
   }
@@ -1125,11 +1342,12 @@ export class ImportModal extends Modal {
         grid.createDiv({ cls: 'ipw-cell', text: v === undefined || v === null ? '' : (Array.isArray(v) ? v.join('、') : String(v)) });
       }
     }
+    // D92：预览按钮行 [📝 编辑模板代码] [➕ 新建模板]（无模板时「编辑」引导新建）
     const actions = container.createDiv({ cls: 'ipw-form-row ipw-preview-actions' });
     const edit = actions.createEl('button', { cls: 'ipw-link', text: '📝 编辑模板代码' });
     edit.addEventListener('click', () => {
       if (!this.templateId) {
-        new Notice('请先选择模板');
+        new Notice('当前无模板，请先点击右侧「➕ 新建模板」');
         return;
       }
       const parsed = this.deps.scanner.getParsed(this.templateId);
@@ -1137,6 +1355,11 @@ export class ImportModal extends Modal {
       if (file instanceof TFile) void this.app.workspace.getLeaf().openFile(file);
       else new Notice('模板文件不存在');
     });
+    const create = actions.createEl('button', { cls: 'ipw-link', text: '➕ 新建模板' });
+    create.addEventListener('click', () => void this.handleCreateTemplate());
+    if (!this.templateId) {
+      actions.createSpan({ cls: 'ipw-muted', text: '未选择模板' });
+    }
   }
 
   /** 仅刷新预览区（区块 7），用于不改变结构的配置变更 */

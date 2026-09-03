@@ -26,9 +26,11 @@ import {
   formatFileSize,
   formatTimeAgo,
   parseRowNumbers,
+  rowContentMatches,
+  rowRemoveRuleLabel,
   unmappedColumns
 } from '../../src/ui/wizard-data';
-import type { DataTransformConfig } from '../../src/ui/wizard-data';
+import type { DataTransformConfig, RowRemoveRule } from '../../src/ui/wizard-data';
 
 /* 本地时区的 YYYY-MM-DD（与实现 formatISODate 一致的推导，保证任意时区一致） */
 function isoLocal(ts: number): string {
@@ -153,6 +155,96 @@ describe('applyRowRemoval / computeRowRemovalSet：行删除（D88）', () => {
 
   it('空规则原样返回', () => {
     expect(applyRowRemoval(records, [])).toBe(records);
+  });
+});
+
+describe('byContent 行删除（D93：按精确/模糊内容，可限定列）', () => {
+  const data = [
+    { 姓名: '张三', 部门: '研发部' },
+    { 姓名: '李四', 部门: '市场部' },
+    { 姓名: '张三丰', 部门: '行政部' },
+    { 姓名: '王五', 部门: '研发部' }
+  ];
+
+  it('contains（默认）：任一列值包含关键词即删', () => {
+    const rule = { kind: 'byContent', param: '张三' } as const;
+    expect(computeRowRemovalSet(data, [rule])).toEqual(new Set([0, 2]));
+    expect(applyRowRemoval(data, [rule])).toEqual([
+      { 姓名: '李四', 部门: '市场部' },
+      { 姓名: '王五', 部门: '研发部' }
+    ]);
+  });
+
+  it('exact：限定列值与关键词完全相等才删（未限定则任一列相等）', () => {
+    expect(
+      computeRowRemovalSet(data, [{ kind: 'byContent', param: '研发部', mode: 'exact', column: '部门' }])
+    ).toEqual(new Set([0, 3]));
+    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'exact' }])).toEqual(new Set([0]));
+    // 张三丰 ≠ 张三（exact 非子串）
+    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'exact' }])).not.toContain(2);
+  });
+
+  it('contains 限定列：仅比对该列，其他列含关键词不删', () => {
+    const rule: RowRemoveRule = { kind: 'byContent', param: '研发', mode: 'contains', column: '部门' };
+    expect(computeRowRemovalSet(data, [rule])).toEqual(new Set([0, 3]));
+  });
+
+  it('大小写敏感：模糊包含区分大小写', () => {
+    const rows = [{ a: 'Hello' }, { a: 'hello world' }];
+    expect(applyRowRemoval(rows, [{ kind: 'byContent', param: 'Hello', mode: 'contains' }])).toEqual([
+      { a: 'hello world' }
+    ]);
+  });
+
+  it('空关键词为 no-op（不产生删除）', () => {
+    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '', mode: 'contains' }])).toEqual(new Set());
+  });
+
+  it('指定不存在的列不删除任何行', () => {
+    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'contains', column: '不存在' }])).toEqual(
+      new Set()
+    );
+  });
+
+  it('与 byIndex / duplicateHeader 并集语义（applyTransform 首步）', () => {
+    const rows = [
+      { a: 'a', b: 'b' }, // duplicateHeader
+      { 姓名: '张三', 部门: '研发部' },
+      { 姓名: '李四', 部门: '市场部' },
+      { 姓名: '王五', 部门: '研发部' }
+    ];
+    const cfg: DataTransformConfig = {
+      removeRows: [
+        { kind: 'byIndex', param: '2' }, // 删除原第 2 行（张三）
+        { kind: 'byContent', param: '研发', mode: 'contains', column: '部门' }, // 王五
+        { kind: 'duplicateHeader', param: '' }
+      ],
+      formats: [],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: []
+    };
+    expect(applyTransform(rows, cfg)).toEqual([{ 姓名: '李四', 部门: '市场部' }]);
+    expect(applyTransformPreview(rows, cfg).map((r) => r.src)).toEqual([3]);
+  });
+
+  it('rowContentMatches 单行命中判断', () => {
+    const row = { 姓名: '张三丰', 部门: '研发部' };
+    expect(rowContentMatches({ kind: 'byContent', param: '张三', mode: 'contains' }, row)).toBe(true);
+    expect(rowContentMatches({ kind: 'byContent', param: '张三', mode: 'exact' }, row)).toBe(false);
+    expect(rowContentMatches({ kind: 'byContent', param: '研发', mode: 'contains', column: '部门' }, row)).toBe(true);
+    expect(rowContentMatches({ kind: 'byContent', param: '研发', mode: 'contains', column: '姓名' }, row)).toBe(false);
+    expect(rowContentMatches({ kind: 'byContent', param: '', mode: 'contains' }, row)).toBe(false);
+  });
+
+  it('rowRemoveRuleLabel 展示标签', () => {
+    expect(rowRemoveRuleLabel({ kind: 'byIndex', param: '2,5,8-10' })).toBe('按行号删除: 2,5,8-10');
+    expect(rowRemoveRuleLabel({ kind: 'duplicateHeader', param: '' })).toBe('删除重复标题行（值与列名全同的行）');
+    expect(rowRemoveRuleLabel({ kind: 'byContent', param: '张三', mode: 'contains' })).toBe('删除含「张三」的行（全部列）');
+    expect(rowRemoveRuleLabel({ kind: 'byContent', param: '张三', mode: 'exact', column: '姓名' })).toBe(
+      '删除等于「张三」的行（姓名列）'
+    );
   });
 });
 

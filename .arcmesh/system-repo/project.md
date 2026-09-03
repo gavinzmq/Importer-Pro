@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.12.0"
+version: "1.13.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -149,8 +149,8 @@ arcmesh:
 | **架构设计** | ✅ 完成 | 100% |
 | **技术选型** | ✅ 完成 | 100% |
 | **核心开发** | ✅ 完成（v0.1 骨架：解析/模板/管道/生成/API） |
-| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；**外部文件（Vault 外）端到端导入已落地（D81）**；Step 3 在 dev vault 联调中；**Step 3 Excel 健壮性（偶发零行误报修复 D86）、表头行（D87）与行删除工具（D88）已实现**，见 decisions/2026-09-03-excel-step3-row-tools.md） |
-| **测试** | 🟡 进行中（Vitest 单元已接入：`helpers`/`wizard-data`/`parsers` 纯函数 52 例 + `file-input` 3 例，CI `ci:test` 消费；本地不跑门禁） |
+| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；**外部文件（Vault 外）端到端导入已落地（D81）**；Step 3 在 dev vault 联调中；**Excel 健壮性/表头行/行删除工具（D86–D88）已实现**（decisions/2026-09-03-excel-step3-row-tools.md）；**UX 打磨三项（D91–D93）已实现**：Step 3 区块局部刷新与滚动保持（L1 仅预览 / L2 区块内 / L3 数据源级依赖链，`.ipw-body` 持久不回顶）、空模板引导新建（D92 `TemplateScanner.createTemplate` 生成骨架并自动选中，无需手动建模板文件）、删除行按精确/模糊内容（D93 `byContent`，可限定列），见 decisions/2026-09-03-ui-ux-polish.md） |
+| **测试** | 🟡 进行中（Vitest 单元已接入：`helpers`/`wizard-data`/`parsers`/`file-input`/`template-scanner` 纯函数共 72 例，含 D93 `byContent` 行删除与 D92 模板骨架/ID/重名后缀用例；CI `ci:test` 消费；本地不跑门禁） |
 | **文档** | 🟡 进行中 |
 | **发布** | ⬜ 待开始（目标 v1.0.0，2026-11-01） |
 
@@ -200,4 +200,4 @@ arcmesh:
 
 ---
 
-*版本: 1.12.0 | 最后更新: 2026-09-03*
+*版本: 1.13.0 | 最后更新: 2026-09-03*

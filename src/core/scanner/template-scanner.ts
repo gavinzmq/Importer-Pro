@@ -2,7 +2,7 @@ import { App, TFile } from 'obsidian';
 import { load as parseYaml } from 'js-yaml';
 import { MatchRule, TemplateConfig, TemplateInfo, TemplateNoteSpec } from '../../types';
 import { ImporterProError, ERROR_CODES } from '../../utils/errors';
-import { normalizeVaultPath } from '../../utils/path';
+import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 
 /** 模板扫描器（architecture §2.7） */
 export interface ITemplateScanner {
@@ -10,6 +10,13 @@ export interface ITemplateScanner {
   findTemplate(fileName: string): Promise<TemplateInfo | null>;
   listTemplates(): Promise<TemplateInfo[]>;
   refresh(templateId?: string): Promise<void>;
+  /** D92：按向导当前配置引导创建模板（写入 paths.templates[0]，重名不覆盖），成功后刷新索引并返回新模板 */
+  createTemplate(options: {
+    name: string;
+    matchType: 'regex' | 'glob' | 'exact';
+    matchPattern: string;
+    columns: string[];
+  }): Promise<TemplateInfo>;
 }
 
 export interface ParsedTemplate {
@@ -69,6 +76,65 @@ export class TemplateScanner implements ITemplateScanner {
 
   getParsed(templateId: string): ParsedTemplate | null {
     return this.index.get(templateId) ?? null;
+  }
+
+  /**
+   * D92：按向导已解析选项引导创建模板（目标目录 paths.templates[0]，目录不存在自动创建；
+   * 文件名重名追加序号不覆盖；失败抛 TEMPLATE_004）。创建成功后解析并入索引、返回 TemplateInfo。
+   */
+  async createTemplate(options: {
+    name: string;
+    matchType: 'regex' | 'glob' | 'exact';
+    matchPattern: string;
+    columns: string[];
+  }): Promise<TemplateInfo> {
+    const name = (options.name || '').trim() || '新模板';
+    const matchType = options.matchType || 'glob';
+    const matchPattern = (options.matchPattern || '').trim() || '*';
+    const folder = normalizeVaultPath(this.folders[0] || '_templates');
+
+    try {
+      // 模板 ID：tpl_ + 时间戳短码（与既有冲突则追加随机后缀）
+      let id = newTemplateId();
+      while (this.index.has(id)) id = `${id}${Math.random().toString(36).slice(2, 6)}`;
+
+      // 文件名：清理非法字符 + 重名追加序号（不覆盖既有文件）
+      const baseName = sanitizeFilename(name) || 'template';
+      const existing = this.app.vault
+        .getMarkdownFiles()
+        .filter((f) => folder === '' || f.path.startsWith(folder + '/'))
+        .map((f) => f.name);
+      const fileName = nextAvailableFileName(existing, `${baseName}.md`);
+
+      const path = folder ? normalizeVaultPath(`${folder}/${fileName}`) : fileName;
+      await this.ensureTemplateFolder(folder);
+
+      const content = renderTemplateSkeleton({ name, id, matchType, matchPattern, columns: options.columns ?? [] });
+      await this.app.vault.create(path, content);
+
+      // 解析新模板并入索引（含匹配规则），供向导立即选中使用
+      const parsed = await this.parseTemplateFile(this.app.vault.getAbstractFileByPath(path) as TFile);
+      if (parsed) this.index.set(parsed.info.id, parsed);
+      return parsed ? parsed.info : { id, name, path, matchRules: [{ type: matchType, pattern: matchPattern }] };
+    } catch (e) {
+      throw new ImporterProError(
+        ERROR_CODES.TEMPLATE_CREATE_FAILED,
+        `创建模板失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  /** D92：目标模板目录不存在时逐级创建（仅 Vault 内，安全 §7） */
+  private async ensureTemplateFolder(folder: string): Promise<void> {
+    if (!folder) return;
+    const parts = normalizeVaultPath(folder).split('/').filter(Boolean);
+    let cur = '';
+    for (const part of parts) {
+      cur = cur ? `${cur}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(cur)) {
+        await this.app.vault.createFolder(cur);
+      }
+    }
   }
 
   /** 解析模板文件：frontmatter + 两个 handlebars 代码块（preprocess / content） */
@@ -159,4 +225,71 @@ function scoreRule(fileName: string, parsed: ParsedTemplate): number {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/* ── D92 模板引导创建纯函数（可单测；规范见 components/template-schema.md §8） ── */
+
+/** 模板 ID 生成：`tpl_` + 时间戳短码（36 进制），保证唯一 */
+export function newTemplateId(ts: number = Date.now()): string {
+  return `tpl_${ts.toString(36)}`;
+}
+
+/** 文件名重名后缀（不覆盖既有）：existing 为该目录现有 .md 文件名（含扩展名）；比较大小写不敏感（Obsidian 常见于大小写不敏感文件系统） */
+export function nextAvailableFileName(existing: string[], candidate: string): string {
+  const exists = (name: string): boolean => existing.some((e) => e.toLowerCase() === name.toLowerCase());
+  const base = candidate.replace(/\.md$/i, '');
+  if (!exists(candidate)) return candidate;
+  let i = 1;
+  while (exists(`${base} ${i}.md`)) i++;
+  return `${base} ${i}.md`;
+}
+
+/** YAML 单引号标量（内部单引号翻倍，避免正则/特殊字符破坏 frontmatter 解析） */
+function yamlQuote(s: string): string {
+  return `'${String(s).replace(/'/g, "''")}'`;
+}
+
+/** Handlebars 表达式：非法标识符列名用 [ ] 转义，规避渲染报错 */
+function hbExpr(column: string): string {
+  const safe = /^[\w\u00C0-\uFFFF-]+$/.test(column);
+  return safe ? `{{${column}}}` : `{{[${column.replace(/[\]}]/g, '\\$&')}]}}`;
+}
+
+/**
+ * 渲染向导创建的模板骨架内容（纯函数，D92）：
+ * frontmatter（name / template_id / match）+ preprocess / content 两个 handlebars 代码块；
+ * content 预填当前数据源列名列表供用户编辑。
+ */
+export function renderTemplateSkeleton(opts: {
+  name: string;
+  id: string;
+  matchType: 'regex' | 'glob' | 'exact';
+  matchPattern: string;
+  columns: string[];
+}): string {
+  const name = (opts.name || '').trim() || '新模板';
+  const matchType = opts.matchType || 'glob';
+  const matchPattern = (opts.matchPattern || '').trim() || '*';
+  const colLines = (opts.columns ?? []).map((c) => `- ${c}: ${hbExpr(c)}`);
+  const lines = [
+    '---',
+    `name: ${yamlQuote(name)}`,
+    `template_id: ${opts.id}`,
+    'match:',
+    '  patterns:',
+    `    - type: ${matchType}`,
+    `      value: ${yamlQuote(matchPattern)}`,
+    '---',
+    '',
+    '```handlebars',
+    '{{!-- 预处理（可选）：可用 {{set "字段" 值}} 生成 _folder/_hash/_skip 等字段 --}}',
+    '```',
+    '',
+    '```handlebars',
+    '{{!-- 内容模板：字段名取自当前数据源列，请按需编辑正文 --}}',
+    ...colLines,
+    '```',
+    ''
+  ];
+  return lines.join('\n');
 }

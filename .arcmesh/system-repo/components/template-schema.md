@@ -1,8 +1,8 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.0.0"
-last_updated: "2026-09-02"
+version: "1.1.0"
+last_updated: "2026-09-03"
 status: "active"
 ---
 
@@ -92,6 +92,22 @@ status: "active"
 | 匹配规则 | `MatchRule`（architecture.md §7） |
 | 校验规则 | `ValidationRule`（architecture.md §7） |
 
+## 8. 向导引导创建的模板骨架（D92）
+
+导入向导 Step 3 在**无模板**时可通过 [➕ 新建模板] 按当前已配置选项生成模板（`ITemplateScanner.createTemplate`，architecture §2.7），骨架如下：
+
+| 项 | 生成规则 |
+| :--- | :--- |
+| 目标目录 | `paths.templates[0]`（未配置时默认 `_templates`）；目录不存在时自动 `vault.createFolder` 创建 |
+| 文件名 | `name.md`（清理非法字符；重名追加序号后缀，**不覆盖既有文件**） |
+| `template_id` | `tpl_` + 时间戳短码，保证唯一 |
+| `name` | 向导「模板名称」输入值；空则用当前数据文件名 |
+| `match` | 向导匹配规则（类型 + 模式）；空则按当前文件扩展名生成 `glob: *.<ext>` |
+| preprocess 块 | 最小骨架（注释 + 空输出），供后续编辑 |
+| content 块 | 预填当前数据源列名列表（如 `- {{姓名}}`），供用户在此基础上编辑 |
+
+约束：创建仅写入 `paths.templates` 目录（STANDARDS §7 安全标准）；失败抛 `TEMPLATE_004`（新增错误码）；创建成功自动刷新模板索引并选中新模板，无需重开向导。
+
 ---
 
-*版本: 1.0.0 | 最后更新: 2026-09-02*
+*版本: 1.1.0 | 最后更新: 2026-09-03*
