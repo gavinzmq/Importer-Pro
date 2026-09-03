@@ -22,6 +22,14 @@ export interface ColumnFormatRule {
 /** 行清洗开关 */
 export type RowCleanFlag = 'removeEmpty' | 'dedupe' | 'filterInvalid';
 
+/** 行删除规则（D88）：byIndex = 按原始行号（param='2,5,8-10'）；duplicateHeader = 删除值与列名全同的非空行 */
+export type RowRemoveKind = 'byIndex' | 'duplicateHeader';
+export interface RowRemoveRule {
+  kind: RowRemoveKind;
+  /** byIndex：1-based 原始行号串（支持 `2,5,8-10` 区间）；duplicateHeader：忽略 */
+  param: string;
+}
+
 /** 列处理操作 */
 export type ColumnProcessOp = 'split' | 'merge' | 'map' | 'regexExtract' | 'fillDefault';
 export interface ColumnProcessRule {
@@ -48,6 +56,8 @@ export interface DerivedRule {
 
 /** Step 3 数据处理总配置 */
 export interface DataTransformConfig {
+  /** D88：行删除（先行步骤，作用于解析后原始行序） */
+  removeRows?: RowRemoveRule[];
   formats: ColumnFormatRule[];
   clean: RowCleanFlag[];
   processes: ColumnProcessRule[];
@@ -56,7 +66,7 @@ export interface DataTransformConfig {
 }
 
 export function emptyTransform(): DataTransformConfig {
-  return { formats: [], clean: [], processes: [], mappings: [], derived: [] };
+  return { removeRows: [], formats: [], clean: [], processes: [], mappings: [], derived: [] };
 }
 
 /* ── 下拉选项（与 ui/layout.md §5.5 一致） ────────────────── */
@@ -183,6 +193,66 @@ export function applyColumnFormats(records: DataRecord[], rules: ColumnFormatRul
     }
     return next;
   });
+}
+
+/* ── 行删除（D88：按原始行号 / 重复标题行） ─────────────── */
+
+/** 解析行号串 `2,5,8-10` → 1-based 行号（升序去重；非法片段与 ≤0 的号忽略） */
+export function parseRowNumbers(param: string): number[] {
+  const set = new Set<number>();
+  for (const part of (param || '').split(/[,，;；\s]+/)) {
+    const seg = part.trim();
+    if (!seg) continue;
+    const m = /^(\d+)\s*-\s*(\d+)$/.exec(seg);
+    if (m) {
+      let a = Number(m[1]);
+      let b = Number(m[2]);
+      if (a > b) [a, b] = [b, a];
+      for (let n = Math.max(1, a); n <= b; n++) set.add(n);
+    } else if (/^[1-9]\d*$/.test(seg)) {
+      set.add(Number(seg));
+    }
+    // 非法片段忽略
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * 计算应删除的行索引集合（0-based，相对 records 数组）。
+ * byIndex：按 1-based 原始行号（越界忽略）；duplicateHeader：删除「所有值与其列名完全相同且非空」的行。
+ */
+export function computeRowRemovalSet(records: DataRecord[], rules: RowRemoveRule[]): Set<number> {
+  const out = new Set<number>();
+  for (const rule of rules ?? []) {
+    if (rule.kind === 'byIndex') {
+      for (const one of parseRowNumbers(rule.param)) {
+        const idx = one - 1;
+        if (idx >= 0 && idx < records.length) out.add(idx);
+      }
+    } else if (rule.kind === 'duplicateHeader') {
+      records.forEach((r, idx) => {
+        const keys = Object.keys(r);
+        if (keys.length === 0) return;
+        let allMatch = true;
+        for (const k of keys) {
+          const v = r[k];
+          if (v === undefined || v === null || String(v) === '' || String(v) !== String(k)) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) out.add(idx);
+      });
+    }
+  }
+  return out;
+}
+
+/** 应用行删除规则（D88） */
+export function applyRowRemoval(records: DataRecord[], rules: RowRemoveRule[]): DataRecord[] {
+  const removed = computeRowRemovalSet(records, rules ?? []);
+  if (removed.size === 0) return records;
+  return records.filter((_, i) => !removed.has(i));
 }
 
 /** 行清洗（去空行 / 去重 / 过滤全无效行） */
@@ -341,14 +411,58 @@ function isIDLike(s: string): boolean {
 }
 
 /** 依序应用整套变换（供 Step 3 预览与 Step 4 导入前统一调用） */
+
+/** 变换结果行（src = 解析后原始 1-based 行号，D88 预览「#」列；不做正式导入数据） */
+export interface TransformRow {
+  src: number;
+  row: DataRecord;
+}
+
+/**
+ * 整链变换并保留每行解析后原始行号（D88）：
+ * 顺序 = 行删除 → 列格式化 → 行清洗 → 列处理 → 列映射 → 派生。
+ * 行级过滤（删除/清洗）只过滤不重排，故逐行单元格变换前后行号一一对应。
+ * 仅预览/行号标注使用；正式导入用 applyTransform（去除行号）。
+ */
+export function applyTransformPreview(records: DataRecord[], cfg: DataTransformConfig): TransformRow[] {
+  const removed = computeRowRemovalSet(records, cfg.removeRows ?? []);
+  let rows: TransformRow[] = [];
+  records.forEach((r, i) => {
+    if (!removed.has(i)) rows.push({ src: i + 1, row: r });
+  });
+  // 列格式化（1:1）
+  rows = rows.map((r) => ({ src: r.src, row: applyColumnFormats([r.row], cfg.formats)[0] }));
+  // 行清洗（过滤类，保留 src）
+  const seen = new Set<string>();
+  rows = rows.filter(({ row }) => {
+    if (cfg.clean.includes('removeEmpty')) {
+      const vals = Object.values(row);
+      if (vals.length === 0 || vals.every((v) => v === undefined || v === null || v === '')) return false;
+    }
+    if (cfg.clean.includes('dedupe')) {
+      const key = JSON.stringify(row);
+      if (seen.has(key)) return false;
+      seen.add(key);
+    }
+    return true;
+  });
+  if (cfg.clean.includes('filterInvalid')) {
+    rows = rows.filter(({ row }) => Object.values(row).some((v) => v !== undefined && v !== null && v !== ''));
+  }
+  // 列处理 / 列映射 / 派生（1:1）
+  const values = rows.map((r) => r.row);
+  const processed = applyColumnProcesses(values, cfg.processes);
+  const mapped = applyColumnMappings(processed, cfg.mappings);
+  const derived = applyDerivedFields(mapped, cfg.derived);
+  return rows.map((r, j) => ({ src: r.src, row: derived[j] }));
+}
+
+/**
+ * 依序应用整套变换（D88：行删除 → 列格式化 → 行清洗 → 列处理 → 列映射 → 派生），
+ * 供 Step 3 预览与 Step 4 导入前统一调用（预览用 applyTransformPreview 以便标注原始行号）。
+ */
 export function applyTransform(records: DataRecord[], cfg: DataTransformConfig): DataRecord[] {
-  let out = records;
-  out = applyColumnFormats(out, cfg.formats);
-  out = applyRowCleaning(out, cfg.clean);
-  out = applyColumnProcesses(out, cfg.processes);
-  out = applyColumnMappings(out, cfg.mappings);
-  out = applyDerivedFields(out, cfg.derived);
-  return out;
+  return applyTransformPreview(records, cfg).map((r) => r.row);
 }
 
 /* ── Dry Run 统计（R10：Step 4 确认页「将新建/更新/跳过/失败」） ── */

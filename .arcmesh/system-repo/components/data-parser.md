@@ -1,7 +1,7 @@
 ---
 title: "DataParser 组件"
 type: "component"
-version: "1.2.0"
+version: "1.3.0"
 last_updated: "2026-09-03"
 status: "active"
 ---
@@ -48,8 +48,19 @@ export interface IDataParser {
 
 ## 性能约定
 
-- 解析器对 `FileInfo → DataRecord[]` 做 LRU 缓存：`preview` / `getColumns` / `parse` 复用同一次解析，避免重复 IO。
+- 解析器对 `FileInfo → DataRecord[]` 做 LRU 缓存：`preview` / `getColumns` / `parse` 复用同一次解析，避免重复 IO；缓存键 = `path|name:size|sheetName|headerRow`（外部文件携带 blob 句柄不走缓存）。
 - Excel 默认仅解析首个 sheet，`maxRows` 超出截断（默认 10000），控制峰值内存。
+
+## 表格类解析选项（Excel/CSV）
+
+| 选项 | 语义 | 默认 |
+| :--- | :--- | :--- |
+| `maxRows` | 最大解析行数，超出截断 | 10000 |
+| `sheetName` | Excel 指定工作表；不存在 → 抛 `PARSE_002`（D86） | 第一个 sheet |
+| `headerRow` | 表头所在物理行索引（0-based，D87）：Excel 经 `sheet_to_json` 的 `range` 起始行实现；CSV 先行切分后跳过前 `headerRow` 行 | 0（首行为表头） |
+| `startRow` | 跳过前 N 个**数据行**（表头之后，D87 与 headerRow 区分） | 0 |
+
+- 前置空行场景：文件前面几行为空行时，默认表头取空行 → 列名退化为 `__EMPTY`/`__EMPTY_1`；将 `headerRow` 指向真实表头行即可正确映射（向导 Step 3「表头行」控件，ui/layout.md §5.5）。
 
 ## 使用示例
 
@@ -65,4 +76,4 @@ console.log(records[0]); // { 姓名: "张三", 身份证号: "110101..." }
 
 ---
 
-*版本: 1.2.0 | 最后更新: 2026-09-03*
+*版本: 1.3.0 | 最后更新: 2026-09-03*

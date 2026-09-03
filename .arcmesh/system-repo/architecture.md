@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.10.1"
+version: "1.12.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -92,6 +92,8 @@ export interface IDataParser {
 |`EnexParser`|.enex|
 |`NotionParser`|.zip（Notion 导出）|
 |`AppleNotesParser`|.notes（Apple Notes 导出）|
+
+> **表格类解析选项（D87/D88）**：`ExcelParser`/`CSVParser` 支持 `ParseOptions.headerRow`（表头所在物理行索引，跳过前 N 行后以该行为表头）；Excel 指定不存在的 `sheetName` 抛 `PARSE_002`（D86，不再静默返回空数组）；行删除等预处理位于向导数据变换层（ui/layout.md §5.5）。
 
 ### 2.2 TemplateEngine（模板引擎）
 
@@ -365,8 +367,9 @@ interface ImportFileEntry {
 
 interface ParseOptions {
   maxRows?: number;    // 最大解析行数（超出截断）
-  sheetName?: string;  // Excel 指定 sheet，缺省取第一个
-  startRow?: number;   // 起始数据行
+  sheetName?: string;  // Excel 指定 sheet，缺省取第一个；不存在抛 PARSE_002（D86）
+  startRow?: number;   // 起始数据行（跳过前 N 个数据行，表头之后）
+  headerRow?: number;  // 表头所在物理行索引（0-based，跳过前 N 行后以该行为表头；仅 Excel/CSV，D87）
 }
 
 /** 多笔记生成：预处理阶段产出的单篇笔记规格（对应 _notes 数组元素） */
@@ -584,7 +587,7 @@ interface PluginSettings {
 | 前缀 | 类别 | 示例 |
 | :--- | :--- | :--- |
 | `TEMPLATE_` | 模板加载/解析/匹配 | `TEMPLATE_001` 模板未找到 |
-| `PARSE_` | 数据解析 | `PARSE_001` 不支持的文件格式 |
+| `PARSE_` | 数据解析 | `PARSE_001` 不支持的文件格式 / `PARSE_002` 解析失败（含指定工作表不存在，D86） |
 | `VALIDATE_` | 数据校验 | `VALIDATE_001` 必填字段缺失 |
 | `CACHE_` | 缓存 | `CACHE_001` 缓存未就绪 |
 | `IO_` | 文件读写 | `IO_001` 写入失败 / `IO_002` 文件读取失败 |
@@ -630,4 +633,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.10.0 | 最后更新: 2026-09-03_
+_版本: 1.12.0 | 最后更新: 2026-09-03_

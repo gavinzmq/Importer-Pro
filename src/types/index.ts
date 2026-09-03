@@ -28,8 +28,9 @@ export interface FileInfo {
 
 export interface ParseOptions {
   maxRows?: number; // 最大解析行数（超出截断）
-  sheetName?: string; // Excel 指定 sheet，缺省取第一个
-  startRow?: number; // 起始数据行
+  sheetName?: string; // Excel 指定 sheet，缺省取第一个；指定且不存在时抛 PARSE_002（D86）
+  startRow?: number; // 起始数据行（跳过前 N 个数据行，表头之后）
+  headerRow?: number; // 表头所在物理行索引（0-based，D87）：跳过前 N 行后以该行为表头；仅 Excel/CSV 生效
 }
 
 /** 多笔记生成：预处理阶段产出的单篇笔记规格（对应 _notes 数组元素） */

@@ -16,7 +16,7 @@ import {
 import { ImportService } from '../core/import-service';
 import { TemplateScanner } from '../core/scanner/template-scanner';
 import { ParserRegistry } from '../core/parser/registry';
-import type { DataRecord, FileInfo, ImportHistoryEntry, ImportResult, PluginSettings } from '../types';
+import type { DataRecord, FileInfo, ImportHistoryEntry, ImportResult, ParseOptions, PluginSettings } from '../types';
 import { ImporterProError } from '../utils/errors';
 import { extOf } from '../utils/path';
 import { PauseController } from '../core/pause-controller';
@@ -24,6 +24,7 @@ import { FilePickerFactory, pickOptionsForSource } from './platform';
 import type { IFilePicker } from './platform/types';
 import {
   applyTransform,
+  applyTransformPreview,
   autoMapColumns,
   ColumnFormatOp,
   ColumnMapping,
@@ -37,6 +38,7 @@ import {
   formatTimeAgo,
   FORMAT_OP_LABELS,
   MAPPING_TYPE_LABELS,
+  parseRowNumbers,
   PROCESS_OP_LABELS,
   RowCleanFlag,
   unmappedColumns
@@ -141,6 +143,10 @@ export class ImportModal extends Modal {
   private sheetNames: string[] = [];
   private sheetName = '';
   private importAllSheets = false;
+  /** D87：表头所在物理行索引（0-based；UI 按 1-based「从第 N 行开始读取」展示，仅表格类数据源生效） */
+  private headerRow = 0;
+  /** 当前 headerRow 配置对应的文件标识（切换数据文件即重置 headerRow，防跨文件状态泄漏，同 D86 sheetName） */
+  private headerParseKey = '';
   private parsed: Record<string, unknown>[] = [];
   private parseError: string | null = null;
   private parsedInfo: FileInfo | null = null;
@@ -511,7 +517,24 @@ export class ImportModal extends Modal {
       return;
     }
     if (rows === 0) {
-      el.createDiv({ cls: 'ipw-banner', text: '未解析到数据行，请返回重新选择文件。' });
+      // D86：0 行且无解析错误不再一刀切「返回重新选择」。
+      // 表格类数据源（Excel/CSV）仍渲染表单选择与表头行控件，引导切换表单/调整表头行；
+      // 确无可解析内容（非表格类）时才提示返回重新选择。
+      if (this.isTableSource()) {
+        el.createDiv({
+          cls: 'ipw-banner',
+          text: '未解析到数据行：工作表可能为空，请切换表单或调整表头行；若确认无内容请返回重新选择文件。'
+        });
+        if (this.sheetNames.length > 1) {
+          this.renderSheetBlock(el);
+          el.createDiv({ cls: 'ipw-sep' });
+        }
+        const block = el.createDiv({ cls: 'ipw-block' });
+        block.createEl('h5', { text: '🧹 数据清洗与预处理' });
+        this.renderHeaderRowCard(block);
+      } else {
+        el.createDiv({ cls: 'ipw-banner', text: '未解析到数据行，请返回重新选择文件。' });
+      }
       return;
     }
 
@@ -582,6 +605,12 @@ export class ImportModal extends Modal {
     }
     this.parsedInfo = info;
     if (!info) return; // 防御：确保数据源非空后进入解析
+
+    // D87：切换数据文件时重置表头行配置（防止跨文件状态泄漏——同 D86 sheetName 泄漏根因）
+    const infoKey = `${info.path}::${info.name}`;
+    if (this.headerParseKey && infoKey !== this.headerParseKey) this.headerRow = 0;
+    this.headerParseKey = infoKey;
+
     try {
       const parser = this.deps.parsers.getForFile(info);
       // 表单枚举（仅 Excel 提供，ui/layout.md §5.3）
@@ -590,18 +619,22 @@ export class ImportModal extends Modal {
       // 即外部 Excel 第三步误报 IO_002 的根因。
       const withSheets = parser as unknown as { getSheetNames?: (f: FileInfo) => Promise<string[]> };
       this.sheetNames = typeof withSheets.getSheetNames === 'function' ? await withSheets.getSheetNames(info) : [];
-      if (this.sheetNames.length > 1 && !this.sheetNames.includes(this.sheetName)) {
+      // D86：无条件校验 sheetName 属于当前文件表单（与表单数无关、切换文件即生效），
+      // 否则旧表名残留 → sheet_to_json 对不存在 sheet 静默返回 [] → 误报「未解析到数据行」。
+      if (this.sheetNames.length === 0) {
+        this.sheetName = '';
+      } else if (!this.sheetNames.includes(this.sheetName)) {
         this.sheetName = this.sheetNames[0];
       }
       if (this.importAllSheets && this.sheetNames.length > 1) {
         const all: Record<string, unknown>[] = [];
         for (const sn of this.sheetNames) {
-          const rows = await parser.parse(info, { sheetName: sn });
+          const rows = await parser.parse(info, this.parseOptionsFor(info, sn));
           for (const r of rows) all.push({ ...r, _sheet: sn });
         }
         this.parsed = all;
       } else {
-        this.parsed = await parser.parse(info, { sheetName: this.sheetName || undefined });
+        this.parsed = await parser.parse(info, this.parseOptionsFor(info));
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -614,6 +647,20 @@ export class ImportModal extends Modal {
       }
       this.parsed = [];
     }
+  }
+
+  /** 表格类数据源（Excel/CSV 支持 headerRow / 表头行控件，D87） */
+  private isTableSource(info?: FileInfo | null): boolean {
+    const f = info ?? this.parsedInfo;
+    const ext = f ? (f.extension || extOf(f.path)).toLowerCase() : '';
+    return ext === 'xlsx' || ext === 'xls' || ext === 'csv' || ext === 'tsv';
+  }
+
+  /** 当前 Step 3 的解析选项：sheetName + 表头行（D87，仅表格类且 headerRow>0 时携带） */
+  private parseOptionsFor(info: FileInfo, sheetName?: string): ParseOptions {
+    const opts: ParseOptions = { sheetName: sheetName ?? (this.sheetName || undefined) };
+    if (this.isTableSource(info) && this.headerRow > 0) opts.headerRow = this.headerRow;
+    return opts;
   }
 
   private renderSheetBlock(el: HTMLElement): void {
@@ -756,6 +803,9 @@ export class ImportModal extends Modal {
     wrap.createEl('h5', { text: '🧹 数据清洗与预处理' });
     const cols = this.columns();
 
+    // ── 表头行（D87，仅 Excel/CSV 显示；变更即带 headerRow 重解析） ──
+    this.renderHeaderRowCard(wrap);
+
     // ── 列格式化 ──
     const fmtCard = wrap.createDiv({ cls: 'ipw-card' });
     fmtCard.createDiv({ cls: 'ipw-card-title', text: '📐 列格式化' });
@@ -796,6 +846,44 @@ export class ImportModal extends Modal {
       });
     }
 
+    // ── 删除行（D88：按原始行号 / 删除重复标题行，预览「#」列对号删除） ──
+    const delRow = cleanCard.createDiv({ cls: 'ipw-form-row' });
+    delRow.createSpan({ cls: 'ipw-label', text: '🗑 删除行:' });
+    const delInput = delRow.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      placeholder: '原始行号 2,5,8-10（见预览 # 列）'
+    });
+    const delAdd = delRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
+    delAdd.addEventListener('click', () => {
+      const val = delInput.value.trim();
+      if (parseRowNumbers(val).length === 0) {
+        new Notice('请输入有效行号（1 起始），如 2,5,8-10');
+        return;
+      }
+      this.transform.removeRows = [...(this.transform.removeRows ?? []), { kind: 'byIndex', param: val }];
+      delInput.value = '';
+      this.refreshPreviewOnly();
+    });
+    const delDup = delRow.createEl('button', { cls: 'ipw-mini', text: '🗑 删除重复标题行' });
+    delDup.addEventListener('click', () => {
+      const rules = this.transform.removeRows ?? [];
+      if (rules.some((r) => r.kind === 'duplicateHeader')) return; // 防重复添加
+      this.transform.removeRows = [...rules, { kind: 'duplicateHeader', param: '' }];
+      this.refreshPreviewOnly();
+    });
+    const removeRows = this.transform.removeRows ?? [];
+    this.renderRuleList(
+      cleanCard,
+      removeRows.map((r) => (r.kind === 'duplicateHeader' ? '删除重复标题行（值与列名全同的行）' : `按行号删除: ${r.param}`)),
+      (i) => {
+        const rules = [...(this.transform.removeRows ?? [])];
+        rules.splice(i, 1);
+        this.transform.removeRows = rules;
+        this.refreshPreviewOnly();
+      }
+    );
+
     // ── 列处理 ──
     const procCard = wrap.createDiv({ cls: 'ipw-card' });
     procCard.createDiv({ cls: 'ipw-card-title', text: '⚙️ 列处理' });
@@ -814,6 +902,42 @@ export class ImportModal extends Modal {
       this.transform.processes.splice(i, 1);
       void this.render();
     });
+  }
+
+  /** D87：表头行卡片（仅表格类数据源 Excel/CSV 显示；数字输入 1-based「从第 N 行开始读取」） */
+  private renderHeaderRowCard(wrap: HTMLElement): void {
+    if (!this.isTableSource()) return;
+    const card = wrap.createDiv({ cls: 'ipw-card' });
+    card.createDiv({ cls: 'ipw-card-title', text: '📐 表头行 (Header Row)' });
+    const row = card.createDiv({ cls: 'ipw-form-row' });
+    row.createSpan({ cls: 'ipw-label', text: '从第' });
+    const input = row.createEl('input', {
+      cls: 'ipw-input ipw-hr-input',
+      type: 'number',
+      value: `${this.headerRow + 1}`,
+      attr: { min: '1', step: '1' }
+    });
+    row.createSpan({ cls: 'ipw-muted', text: `行开始读取（跳过前 ${this.headerRow} 行，仅 Excel/CSV）` });
+    input.addEventListener('change', () => {
+      const n = Math.max(1, Math.trunc(Number(input.value)) || 1);
+      if (n - 1 === this.headerRow) {
+        input.value = `${this.headerRow + 1}`; // 回写合法值
+        return;
+      }
+      this.headerRow = n - 1;
+      void this.applyHeaderRowChange();
+    });
+  }
+
+  /** D87：表头行变更 → 带 headerRow 重解析 → 按新列名自动补充已配置映射 → 重渲染刷新列映射/预览 */
+  private async applyHeaderRowChange(): Promise<void> {
+    await this.prepareParse();
+    if (!this.contentEl.isConnected) return; // 向导已关闭
+    // 仅已配置映射时按新列名自动补充（未配置映射 = 保留全部列，不自动锁定列）
+    if (this.transform.mappings.length > 0) {
+      this.transform.mappings = autoMapColumns(this.columns(), this.transform.mappings);
+    }
+    void this.render();
   }
 
   private addColumnSelect(container: HTMLElement, cols: string[], placeholder: string): HTMLSelectElement {
@@ -981,20 +1105,23 @@ export class ImportModal extends Modal {
     container.querySelector('.ipw-preview-grid-wrap')?.remove();
     container.querySelector('.ipw-preview-actions')?.remove();
 
-    const transformed = applyTransform(this.parsed.slice(0, 20), this.transform).slice(0, 3);
-    if (transformed.length === 0) {
+    // D88：预览首列「#」为解析后原始行号（1-based，删除后不重排），供「删除行」对号删除与核对
+    const preview = applyTransformPreview(this.parsed.slice(0, 20), this.transform).slice(0, 3);
+    if (preview.length === 0) {
       const note = container.createDiv({ cls: 'ipw-muted ipw-note', text: '(无数据可预览)' });
       note.addClass('ipw-preview-grid-wrap');
       return;
     }
-    const cols = Object.keys(transformed[0]);
+    const cols = Object.keys(preview[0].row);
     const wrapEl = container.createDiv({ cls: 'ipw-preview-grid-wrap' });
     wrapEl.addClass('ipw-preview-grid-wrap');
     const grid = wrapEl.createDiv({ cls: 'ipw-preview-grid' });
+    grid.createDiv({ cls: 'ipw-cell is-head ipw-row-num', text: '#' });
     for (const c of cols) grid.createDiv({ cls: 'ipw-cell is-head', text: c, attr: { title: c } });
-    for (const r of transformed) {
+    for (const p of preview) {
+      grid.createDiv({ cls: 'ipw-cell ipw-row-num', text: `${p.src}` });
       for (const c of cols) {
-        const v = r[c];
+        const v = p.row[c];
         grid.createDiv({ cls: 'ipw-cell', text: v === undefined || v === null ? '' : (Array.isArray(v) ? v.join('、') : String(v)) });
       }
     }
@@ -1276,6 +1403,7 @@ export class ImportModal extends Modal {
     this.sheetNames = [];
     this.sheetName = '';
     this.importAllSheets = false;
+    this.headerRow = 0;
     this.lastResult = null;
     this.accResult = null;
     this.accNotes = 0;

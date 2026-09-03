@@ -13,8 +13,11 @@ import {
   applyColumnProcesses,
   applyDerivedFields,
   applyRowCleaning,
+  applyRowRemoval,
   applyTransform,
+  applyTransformPreview,
   autoMapColumns,
+  computeRowRemovalSet,
   deriveFieldName,
   deriveValue,
   dryRunStats,
@@ -22,6 +25,7 @@ import {
   formatCount,
   formatFileSize,
   formatTimeAgo,
+  parseRowNumbers,
   unmappedColumns
 } from '../../src/ui/wizard-data';
 
@@ -112,6 +116,86 @@ describe('applyRowCleaning：行清洗', () => {
   it('组合开关', () => {
     const records = [{ a: '' }, { a: 'x' }, { a: 'x' }, {}];
     expect(applyRowCleaning(records, ['removeEmpty', 'dedupe', 'filterInvalid'])).toEqual([{ a: 'x' }]);
+  });
+});
+
+describe('parseRowNumbers：行号串解析（D88）', () => {
+  it('单号 / 区间 / 混合，升序去重', () => {
+    expect(parseRowNumbers('2,5,8-10')).toEqual([2, 5, 8, 9, 10]);
+    expect(parseRowNumbers('10-8')).toEqual([8, 9, 10]); // 反向区间归一
+    expect(parseRowNumbers('1,1,3-3,5,5')).toEqual([1, 3, 5]); // 重复合并
+    expect(parseRowNumbers('')).toEqual([]);
+  });
+
+  it('非法片段 / 非正数忽略', () => {
+    expect(parseRowNumbers('a,0,-3,2,x-y')).toEqual([2]);
+  });
+});
+
+describe('applyRowRemoval / computeRowRemovalSet：行删除（D88）', () => {
+  const records = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }];
+
+  it('byIndex 删除指定原始行号（越界忽略）', () => {
+    expect(applyRowRemoval(records, [{ kind: 'byIndex', param: '1,3,99' }])).toEqual([{ a: 2 }, { a: 4 }]);
+    expect(computeRowRemovalSet(records, [{ kind: 'byIndex', param: '1,3,99' }])).toEqual(new Set([0, 2]));
+  });
+
+  it('duplicateHeader 删除「所有值与其列名完全相同且非空」的行', () => {
+    const data = [
+      { 姓名: '姓名', 年龄: '年龄' }, // 重复打印的标题行
+      { 姓名: '张三', 年龄: '18' },
+      {}, // 空行不因 duplicateHeader 删除（交由 removeEmpty）
+      { 姓名: '张三', 年龄: '18' }
+    ];
+    expect(applyRowRemoval(data, [{ kind: 'duplicateHeader', param: '' }])).toEqual([{ 姓名: '张三', 年龄: '18' }, {}, { 姓名: '张三', 年龄: '18' }]);
+  });
+
+  it('空规则原样返回', () => {
+    expect(applyRowRemoval(records, [])).toBe(records);
+  });
+});
+
+describe('applyTransformPreview / applyTransform：行删除置于变换首步（D88）', () => {
+  it('duplicateHeader 先行删除后，后续列格式化/映射生效，预览保留原始行号', () => {
+    const data = [
+      { 姓名: '姓名', 年龄: '年龄' },
+      { 姓名: ' 张三 ', 年龄: '18' },
+      { 姓名: ' 李四 ', 年龄: '20' }
+    ];
+    const cfg = {
+      removeRows: [{ kind: 'duplicateHeader', param: '' }],
+      formats: [{ column: '姓名', op: 'trim', param: '' }],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: []
+    };
+    expect(applyTransform(data, cfg)).toEqual([
+      { 姓名: '张三', 年龄: '18' },
+      { 姓名: '李四', 年龄: '20' }
+    ]);
+    expect(applyTransformPreview(data, cfg).map((r) => r.src)).toEqual([2, 3]);
+  });
+
+  it('byIndex 删除后预览行号不重排（# 显示原始行号）', () => {
+    const data = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }];
+    const cfg = {
+      removeRows: [{ kind: 'byIndex', param: '2' }],
+      formats: [],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: []
+    };
+    const rows = applyTransformPreview(data, cfg);
+    expect(rows.map((r) => r.src)).toEqual([1, 3, 4, 5]);
+    expect(rows.map((r) => r.row)).toEqual([{ a: 1 }, { a: 3 }, { a: 4 }, { a: 5 }]);
+  });
+
+  it('无删除规则时与 applyTransform 一致（空 removeRows）', () => {
+    const data = [{ a: 1 }, { a: 2 }];
+    const cfg = { formats: [], clean: ['removeEmpty'], processes: [], mappings: [], derived: [] };
+    expect(applyTransform(data, cfg)).toEqual(applyTransformPreview(data, cfg).map((r) => r.row));
   });
 });
 

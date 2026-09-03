@@ -401,6 +401,11 @@
 .ipw-form-row > .ipw-input {
   flex: 1;
 }
+.ipw-form-row .ipw-input.ipw-hr-input {
+  width: 72px;
+  flex: 0 0 72px;
+  text-align: center;
+}
 .ipw-checks {
   gap: 16px;
   font-size: 13px;
@@ -482,6 +487,14 @@
   font-weight: 600;
   position: sticky;
   top: 0;
+}
+/* 预览首列「#」：解析后原始行号（D88，删除后不重排，便于对号删除） */
+.ipw-cell.ipw-row-num {
+  color: var(--text-muted);
+  min-width: 30px;
+  max-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .ipw-preview-actions {
   margin-top: 8px;
