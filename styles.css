@@ -1,1 +1,31 @@
 /* Importer Pro 样式 */
+
+/* 导入向导 Step 2 平台文件选择（ui/layout.md §4） */
+.importer-pro-pick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  margin-bottom: var(--space-md, 16px);
+}
+
+.importer-pro-pick-btn {
+  height: 36px;
+  padding: 0 16px;
+}
+
+.importer-pro-pick-status {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+.importer-pro-pick-status.is-ok {
+  color: var(--color-green, var(--text-success));
+}
+
+.importer-pro-pick-status.is-error {
+  color: var(--color-red, var(--text-error));
+}

@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.6.0"
+version: "1.7.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -256,10 +256,13 @@ export interface IValidator {
 |命名|`IFileNamer`|自定义命名策略|
 |冲突|`IConflictResolver`|自定义冲突处理|
 |导出|`IExporter`|自定义导出格式（预留）|
+|文件选择（UI 平台能力）|`IFilePicker`|桌面原生文件对话框 / 移动系统文档选择器，经反射工厂按平台实例化|
 |Helper|Function|新增模板 Helper|
 |钩子|Hook|注入业务逻辑|
 
 > **钩子 vs 事件**：钩子（Hook，见 `hooks/`）是核心流程内的**同步扩展点**，可修改上下文并影响后续流程；事件（`IEventBus`）是**异步广播**，订阅方只读观察、不阻塞主流程。`IExporter` 为后续导出功能预留，v1.0.0 不提供内置导出实现。
+>
+> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
 
 ## 6. 目录结构
 
@@ -539,7 +542,7 @@ interface PluginSettings {
 | `PARSE_` | 数据解析 | `PARSE_001` 不支持的文件格式 |
 | `VALIDATE_` | 数据校验 | `VALIDATE_001` 必填字段缺失 |
 | `CACHE_` | 缓存 | `CACHE_001` 缓存未就绪 |
-| `IO_` | 文件读写 | `IO_001` 写入失败 |
+| `IO_` | 文件读写 | `IO_001` 写入失败 / `IO_002` 文件读取失败 |
 | `GENERATE_` | 笔记生成 | `GENERATE_001` 命名冲突无策略 |
 | `MERGE_` | 合并 | `MERGE_001` 无法合并的内容 |
 | `API_` | API 调用参数 | `API_001` 参数非法 |
@@ -565,6 +568,7 @@ interface PluginSettings {
 | 导入 / 模板渲染 / 校验 / 多笔记生成 | ✅ | ✅ |
 | 外部 Helper / 钩子执行 | ✅（`vm` 沙箱） | ⚠️ 内置白名单，外部注册的默认不执行 |
 | 图形化配置 | ✅ | ✅（4 步向导，见 ui/layout.md） |
+| 文件选择器 | ✅ OS 原生对话框（`DesktopFilePicker`） | ✅ 系统文档选择器（`MobileFilePicker`） |
 | Playwright E2E | ✅（obsidian-testing-framework） | ❌ |
 
 ### 9.8 构建与运行环境约束（esbuild × 哈希库）
@@ -578,4 +582,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.6.7 | 最后更新: 2026-09-03_
+_版本: 1.7.0 | 最后更新: 2026-09-03_

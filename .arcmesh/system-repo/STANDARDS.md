@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.6.0"
+version: "1.7.0"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -85,6 +85,16 @@ src/
 ├── main.ts                # 插件入口
 └── settings.ts            # 设置定义
 ```
+
+### 1.2.1 UI 平台能力抽象（接口 + 反射工厂）
+
+| 规范项 | 标准 |
+| :--- | :--- |
+| **接口优先** | 平台差异能力（文件选择器等）一律定义 `I` 前缀接口（如 `IFilePicker`），UI 组件仅依赖接口 |
+| **反射工厂** | 通过反射工厂（注册表 `Map<platform, ctor>` + 模块加载时反射注册）获取实现实例（`DesktopXxx` / `MobileXxx`） |
+| **平台判定唯一入口** | 平台判定只在工厂内部（`Platform.isDesktop` / `Platform.isMobile`），**禁止 UI 组件内散落 `Platform.isMobile` 条件分支** |
+
+> 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）。
 
 ### 1.3 跨平台脚本与子进程调用
 
@@ -291,4 +301,4 @@ const ERROR_CODES = {
 
 ---
 
-_版本: 1.6.0
+_版本: 1.7.0

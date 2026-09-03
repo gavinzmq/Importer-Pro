@@ -1,7 +1,10 @@
-import { App, Modal, Notice, Setting, TFile, TFolder } from 'obsidian';
+import { App, Modal, Setting, TFile, TFolder } from 'obsidian';
 import { ImportService } from '../core/import-service';
 import { TemplateScanner } from '../core/scanner/template-scanner';
-import { TemplateInfo } from '../types';
+import { FileInfo, TemplateInfo } from '../types';
+import { ERROR_CODES, ImporterProError } from '../utils/errors';
+import { FilePickerFactory, pickOptionsForSource } from './platform';
+import type { IFilePicker } from './platform/types';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -22,6 +25,10 @@ export class ImportModal extends Modal {
   private templates: TemplateInfo[] = [];
   private selectedTemplateId = '';
   private outputFolder = '';
+  /** 平台原生选择器实例（FilePickerFactory.create() 按平台惰性创建一次） */
+  private picker: IFilePicker | null = null;
+  /** 经平台选择器选中的外部文件（本里程碑不落库，仅 Step 2 回显） */
+  private pickedFile: FileInfo | null = null;
 
   constructor(
     app: App,
@@ -63,14 +70,24 @@ export class ImportModal extends Modal {
   private async renderStep2(el: HTMLElement): Promise<void> {
     el.createEl('h4', { text: '文件管理' });
 
-    const pickBtn = el.createEl('button', { text: '📁 选择文件' });
-    pickBtn.addEventListener('click', () => void this.pickFile(el));
+    // 平台原生文件选择（IFilePicker + FilePickerFactory，ui/layout.md §4；不落库里程碑仅回显）
+    const pickRow = el.createEl('div', { cls: 'importer-pro-pick-row' });
+    const pickBtn = pickRow.createEl('button', {
+      text: '📁 选择文件',
+      cls: 'importer-pro-pick-btn'
+    });
+    const pickStatus = pickRow.createEl('span', { cls: 'importer-pro-pick-status' });
+    if (this.pickedFile) {
+      pickStatus.setText(`已选择：${this.pickedFile.name}`);
+      pickStatus.addClass('is-ok');
+    }
+    pickBtn.addEventListener('click', () => void this.pickWithPlatform(pickStatus));
 
-    const history = (this.settings as any)().paths; // 历史记录展示（简化：列出 dataRoot 内文件）
+    const paths = this.settings().paths; // 历史记录展示（简化：列出 dataRoot 内文件）
     el.createEl('div', { text: '─'.repeat(40) });
-    el.createEl('div', { text: '最近使用的文件（数据根目录）' });
+    el.createEl('div', { text: '最近使用的文件（数据根目录，可直接导入）' });
     const root = el.createEl('div');
-    const folder = this.app.vault.getAbstractFileByPath(history.dataRoot);
+    const folder = this.app.vault.getAbstractFileByPath(paths.dataRoot);
     const files =
       folder instanceof TFolder
         ? folder.children.filter(
@@ -83,6 +100,7 @@ export class ImportModal extends Modal {
       const row = root.createEl('div', { text: `📄 ${f.name}` });
       row.addEventListener('click', () => {
         this.selectedFile = f;
+        this.pickedFile = null; // 与平台选择互斥，避免状态歧义
         this.step = 3;
         void this.render();
       });
@@ -91,10 +109,30 @@ export class ImportModal extends Modal {
     this.addBackButton(nav);
   }
 
-  private async pickFile(el: HTMLElement): Promise<void> {
-    // Obsidian 无原生文件选择器，从 dataRoot 列表选择
-    void el;
-    new Notice('请从下方列表选择数据文件（或使用 API 导入）');
+  /**
+   * 经 FilePickerFactory 调用平台原生文件选择（D64）：
+   * - 成功 → 回显 FileInfo（accept 已按 Step 1 数据源过滤）
+   * - 取消(null) → 不改向导状态，停留 Step 2
+   * - 读取失败 → 错误码 IO_002 内联提示，允许重选
+   * 外部文件本里程碑不落库（Vault 写入属后续里程碑），故不自动进入 Step 3。
+   */
+  private async pickWithPlatform(status: HTMLElement): Promise<void> {
+    try {
+      const picker = this.picker ?? (this.picker = FilePickerFactory.create());
+      const file = await picker.pickFile(pickOptionsForSource(this.selectedFormat));
+      if (!file) return; // 取消：向导状态不变，停留 Step 2
+      this.pickedFile = file;
+      this.selectedFile = null;
+      status.removeClass('is-error');
+      status.setText(`已选择：${file.name}${file.path ? `（${file.path}）` : ''}`);
+      status.addClass('is-ok');
+    } catch (e) {
+      const code = e instanceof ImporterProError ? e.code : ERROR_CODES.IO_READ_FAILED;
+      const detail = e instanceof Error ? e.message : String(e);
+      status.removeClass('is-ok');
+      status.setText(`⚠ ${code} 文件读取失败：${detail}，可重新选择`);
+      status.addClass('is-error');
+    }
   }
 
   private async renderStep3(el: HTMLElement): Promise<void> {
