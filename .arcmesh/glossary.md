@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.3.0"
+version: "1.4.0"
 last_updated: "2026-09-03"
 status: "active"
 ---
@@ -77,6 +77,10 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 ### 动态文件夹 (Dynamic Folder)
 
 在预处理模板中通过 `_folder` 字段动态指定的目标文件夹路径。
+
+### 待导入文件 (Pending Import File)
+
+Step 2 会话队列中的条目（`ImportFileEntry`），选择文件后自动追加并选中（已存在则仅选中），经 `FileLoadManager` 驻留内存或临时磁盘缓存（见 [architecture.md](system-repo/architecture.md) §2.8）。
 
 ---
 
@@ -165,6 +169,10 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 ### 列映射 (Column Mapping)
 
 将源文件列名映射到模板字段名的规则（`mapping: [{ source, target }]`），缺省为同名映射。
+
+### 临时磁盘缓存 (Temp Disk Cache)
+
+文件驻留的降级介质：内存预算超阈值（桌面 128MB / 移动 64MB）时写入 `paths.cacheDir/tmp/`（命名 `会话ID + 内容哈希`），导入成功或意外退出即删除。
 
 ---
 
@@ -258,6 +266,10 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 
 定义模板如何根据文件名自动匹配的规则，支持正则表达式、通配符和精确匹配。
 
+### 文件驻留 (File Residency)
+
+`FileLoadManager` 管理的内存优先 + 临时磁盘缓存策略及其清理生命周期（成功完成 / 向导关闭 / 插件卸载 / 启动清扫孤儿文件），见 [architecture.md](system-repo/architecture.md) §2.8。
+
 ---
 
 ## Y
@@ -332,4 +344,4 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 
 ---
 
-*版本: 1.3.0 | 最后更新: 2026-09-03*
+*版本: 1.4.0 | 最后更新: 2026-09-03*
