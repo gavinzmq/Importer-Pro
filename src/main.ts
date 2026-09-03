@@ -161,6 +161,7 @@ export default class ImporterProPlugin extends Plugin {
       service: this.service,
       scanner: this.scanner,
       parsers: this.parsers,
+      engine: this.engine,
       settings: () => this.settings,
       save: (s) => this.save(s)
     }).open();

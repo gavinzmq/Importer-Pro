@@ -7,8 +7,10 @@ import { sanitizeFilename, normalizeVaultPath } from '../../utils/path';
 /** 数据管道（architecture §2.7 DataPipeline）：校验 → 分流 → 派生 → _notes 组装 */
 export interface IDataPipeline {
   validate(record: DataRecord, rules: ValidationRule[]): ValidationResult;
-  shard(record: DataRecord, template: TemplateConfig): Promise<NoteSpec[]>;
+  shard(record: DataRecord, template: TemplateConfig, ctx?: ShardContext, index?: number): Promise<NoteSpec[]>;
   derive(record: DataRecord): DataRecord;
+  /** D98：按模板 frontmatter 引擎开关（row.remove.duplicateHeader / row.clean dedupe|filterInvalid）批量预过滤跨行记录 */
+  applyEngineRowSwitches(records: DataRecord[], template: TemplateConfig): Promise<DataRecord[]>;
 }
 
 export interface ShardContext {
@@ -34,9 +36,43 @@ export class DataPipeline implements IDataPipeline {
     return this.validator.validate(record, rules);
   }
 
-  /** 分流与多笔记组装：预处理渲染 → 收集 _notes → 渲染各笔记内容 */
-  async shard(record: DataRecord, template: TemplateConfig, ctx?: ShardContext): Promise<NoteSpec[]> {
-    const preprocessed = await this.engine.renderPreprocess(template.preprocess, { ...record });
+  /**
+   * 引擎级跨行开关（D98 例外）：删除重复标题行（row.remove.duplicateHeader）与内容级去重
+   * （row.clean.dedupe）、过滤无效行（filterInvalid）是单行 Handlebars 无法表达的跨行/结构操作，
+   * 由引擎在逐行 preprocess 渲染前按模板 frontmatter 批量处理（wizard 路径由 applyWizardTransform 处理）。
+   */
+  async applyEngineRowSwitches(records: DataRecord[], template: TemplateConfig): Promise<DataRecord[]> {
+    const raw = (template as unknown as { _raw?: Record<string, any> })._raw ?? {};
+    const row = (raw.row ?? {}) as Record<string, any>;
+    const remove: any[] = Array.isArray(row.remove) ? row.remove : [];
+    const clean: string[] = Array.isArray(row.clean) ? row.clean : [];
+    let out = records;
+    if (remove.some((r) => r?.kind === 'duplicateHeader')) {
+      out = out.filter((r) => !isDuplicateHeaderRowLocal(r));
+    }
+    if (clean.includes('dedupe')) {
+      const seen = new Set<string>();
+      out = out.filter((r) => {
+        const key = JSON.stringify(r, (_k, v) => (_k === '_index' ? undefined : v));
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    if (clean.includes('filterInvalid')) {
+      out = out.filter((r) => Object.values(r).some((v) => v !== undefined && v !== null && v !== ''));
+    }
+    return out;
+  }
+
+  /**
+   * 分流与多笔记组装：预处理渲染 → 收集 _notes → 渲染各笔记内容。
+   * index（可选）= 解析后原始行号（1-based）：预处理前注入保留字段 `_index`（template-schema §3），
+   * 使模板 preprocess 中「按行号删除」等编译段生效（D98）。
+   */
+  async shard(record: DataRecord, template: TemplateConfig, ctx?: ShardContext, index?: number): Promise<NoteSpec[]> {
+    const seeded = index !== undefined && index > 0 ? { ...record, _index: index } : { ...record };
+    const preprocessed = await this.engine.renderPreprocess(template.preprocess, seeded);
     const data = this.derive(preprocessed as DataRecord);
 
     if (data._skip) return [];
@@ -82,4 +118,14 @@ export class DataPipeline implements IDataPipeline {
     }
     return { folder, filename, data: specData, noteType: String(data._status ?? 'main') };
   }
+}
+
+/** 是否「重复打印的标题行」：所有非空值均与其列名完全相同（本地实现，避免 core→ui 反向依赖） */
+function isDuplicateHeaderRowLocal(record: DataRecord): boolean {
+  const keys = Object.keys(record).filter((k) => !k.startsWith('_'));
+  if (keys.length === 0) return false;
+  return keys.every((k) => {
+    const v = record[k];
+    return v !== undefined && v !== null && String(v) !== '' && String(v) === String(k);
+  });
 }

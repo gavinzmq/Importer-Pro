@@ -212,6 +212,33 @@ export interface TemplateConfig {
   notes?: TemplateNoteSpec[];
 }
 
+/** 行筛选操作（D96，Excel 式筛选，包含式保留；公共类型登记 architecture §7） */
+export type RowFilterOp =
+  | 'eq'
+  | 'neq'
+  | 'contains'
+  | 'notContains'
+  | 'startsWith'
+  | 'endsWith'
+  | 'empty'
+  | 'notEmpty'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'regex';
+
+/**
+ * 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行删除之后（删除优先）。
+ * D97：column 支持 '*' 任意列（整行任一列值命中即通过）；empty/notEmpty 时忽略列。
+ * D98：规则经编译层（wizard-data configToHandlebars）生成 preprocess Handlebars 条件块，不在运行时由 JS 执行。
+ */
+export interface RowFilterRule {
+  column: string; // 目标列名；'*' = 任意列
+  op: RowFilterOp;
+  value: string; // 比较值（regex 为正则文本；empty/notEmpty 忽略）
+}
+
 /** 插件设置（architecture §9.1） */
 export interface PluginSettings {
   schemaVersion: number;

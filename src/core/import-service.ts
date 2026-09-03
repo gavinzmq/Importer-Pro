@@ -43,6 +43,11 @@ export interface ImportRecordsOptions {
   pause?: PauseToken;
   /** R09 断点续跑：跳过前 N 个已完成的 note（停止后继续） */
   startAt?: number;
+  /**
+   * D98：向导 Step 4 传入的 preprocess override（已去掉 Step 3 编译段、仅保留段外手写逻辑）。
+   * 记录已由向导 applyWizardTransform 真实渲染，此处跳过模板 preprocess 编译段避免双重应用。
+   */
+  preprocessOverride?: string;
 }
 
 /** 导入服务：parse → 匹配模板 → 预处理/分流 → 生成 → 历史记录 */
@@ -120,12 +125,17 @@ export class ImportService {
       // 钩子：处理前
       await this.hooks.run('before:process', { records, template });
 
-      // 预处理 + 分流（每记录组装 _notes）
+      // D98 引擎级跨行开关（duplicateHeader / dedupe / filterInvalid，模板 frontmatter）批量预过滤
+      const engineRecords = await this.pipeline.applyEngineRowSwitches(records, template);
+
+      // 预处理 + 分流（每记录组装 _notes；index 注入 _index 保留字段，供 preprocess 行号删除编译段使用）
       const defaultFolder = this.settings().paths.outputFolder;
       const prepared: DataRecord[] = [];
-      for (const record of records) {
-        const specs = await this.pipeline.shard(record, template, { defaultFolder });
-        prepared.push({ ...record, _notes: specs.map(specToRecord) });
+      let rowNo = 0;
+      for (const record of engineRecords) {
+        rowNo++;
+        const specs = await this.pipeline.shard(record, template, { defaultFolder }, rowNo);
+        prepared.push({ ...record, _index: rowNo, _notes: specs.map(specToRecord) });
       }
       await this.hooks.run('after:process', { records: prepared, total: prepared.length });
 
@@ -222,9 +232,10 @@ export class ImportService {
       await this.hooks.run('before:process', { records, template });
 
       const defaultFolder = this.settings().paths.outputFolder;
+      const shardTemplate = options.preprocessOverride ? { ...template, preprocess: options.preprocessOverride } : template;
       const prepared: DataRecord[] = [];
       for (const record of records) {
-        const specs = await this.pipeline.shard(record, template, { defaultFolder });
+        const specs = await this.pipeline.shard(record, shardTemplate, { defaultFolder });
         prepared.push({ ...record, _notes: specs.map(specToRecord) });
       }
       await this.hooks.run('after:process', { records: prepared, total: prepared.length });

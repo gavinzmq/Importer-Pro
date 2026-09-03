@@ -1,8 +1,18 @@
 import { App, TFile } from 'obsidian';
-import { load as parseYaml } from 'js-yaml';
-import { MatchRule, TemplateConfig, TemplateInfo, TemplateNoteSpec } from '../../types';
+import { load as parseYaml, dump as stringifyYaml } from 'js-yaml';
+import { MatchRule, RowFilterRule, TemplateConfig, TemplateInfo, TemplateNoteSpec } from '../../types';
 import { ImporterProError, ERROR_CODES } from '../../utils/errors';
 import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
+import {
+  configToSegments,
+  handlebarsToConfig,
+  isPresetEmptyFilter,
+  presetFilterEmptyRows,
+  rowFilterFromRemove,
+  upsertSegments,
+  type Step3TemplateSnapshot
+} from '../../ui/wizard-data';
+import type { LegacyByContentRule } from '../../ui/wizard-data';
 
 /** 模板扫描器（architecture §2.7） */
 export interface ITemplateScanner {
@@ -17,6 +27,10 @@ export interface ITemplateScanner {
     matchPattern: string;
     columns: string[];
   }): Promise<TemplateInfo>;
+  /** D95/D98：读取模板持久化的 Step 3 配置（preprocess 标记段反编译 + frontmatter 元信息/引擎开关 + 旧配置迁移），供 Step 3 回填 */
+  readTemplateConfig(templateId: string): Promise<Step3TemplateSnapshot | null>;
+  /** D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回（模板即配置源；写入仅限 paths.templates 目录） */
+  saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void>;
 }
 
 export interface ParsedTemplate {
@@ -76,6 +90,57 @@ export class TemplateScanner implements ITemplateScanner {
 
   getParsed(templateId: string): ParsedTemplate | null {
     return this.index.get(templateId) ?? null;
+  }
+
+  /**
+   * D95/D98：读取模板持久化的 Step 3 配置。
+   * preprocess 标记段反编译 → transform；frontmatter 提供元信息（match/output/name）与引擎开关
+   * （row.header_row、row.clean dedupe/filterInvalid、row.remove duplicateHeader）；
+   * 旧模板 frontmatter（byContent 删除 / removeEmpty 清洗 / row.filter / columns / mapping / derived）
+   * 一次性迁移入 transform（读取即迁移，保存不再产出旧字段）。
+   */
+  async readTemplateConfig(templateId: string): Promise<Step3TemplateSnapshot | null> {
+    const parsed = this.getParsed(templateId);
+    if (!parsed) return null;
+    try {
+      const raw = await this.app.vault.read(this.app.vault.getAbstractFileByPath(parsed.info.path) as TFile);
+      return parseStep3Snapshot(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回所选模板（模板即配置源）。
+   * - 写入仅限 paths.templates 目录（STANDARDS §7）；模板不存在抛 TEMPLATE_001，越界抛 SECURITY_001；
+   * - frontmatter 仅写元信息（name/match/output）与引擎开关（row.header_row / row.clean / row.remove[duplicateHeader]），
+   *   列/映射/派生等旧字段不再写入（收敛进编译段）；失败抛 TEMPLATE_005。
+   */
+  async saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void> {
+    const parsed = this.getParsed(templateId);
+    if (!parsed) {
+      throw new ImporterProError(ERROR_CODES.TEMPLATE_NOT_FOUND, `模板不存在: ${templateId}`);
+    }
+    const withinTemplates = this.folders.some((f) => {
+      if (f === '') return true;
+      return parsed.info.path === f || parsed.info.path.startsWith(f + '/');
+    });
+    if (!withinTemplates) {
+      throw new ImporterProError(ERROR_CODES.SECURITY_PATH_OUTSIDE, `仅允许写入模板目录: ${parsed.info.path}`);
+    }
+    try {
+      const file = this.app.vault.getAbstractFileByPath(parsed.info.path) as TFile;
+      const raw = await this.app.vault.read(file);
+      const next = composeStep3Snapshot(raw, config);
+      await this.app.vault.process(file, () => next);
+      await this.refresh(templateId); // 重新解析并入索引（后续向导直接使用新配置）
+    } catch (e) {
+      if (e instanceof ImporterProError) throw e;
+      throw new ImporterProError(
+        ERROR_CODES.TEMPLATE_CONFIG_WRITE_FAILED,
+        `保存模板配置失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
 
   /**
@@ -292,4 +357,183 @@ export function renderTemplateSkeleton(opts: {
     ''
   ];
   return lines.join('\n');
+}
+
+/* ── D95/D98 模板配置读写纯函数（可单测；编译/反编译核心在 wizard-data） ── */
+
+/** 拆 frontmatter 与正文（纯函数） */
+function splitRawFrontmatter(raw: string): { frontmatter: Record<string, any>; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  if (!m) return { frontmatter: {}, body: raw };
+  return { frontmatter: (parseYaml(m[1]) ?? {}) as Record<string, any>, body: raw.slice(m[0].length) };
+}
+
+/** 提取正文中首个 handlebars 代码块（preprocess）内容 */
+function preprocessBlockOf(body: string): string {
+  const m = /```handlebars\r?\n([\s\S]*?)```/.exec(body);
+  return m ? m[1] : '';
+}
+
+/** 以新 preprocess 内容替换正文首个 handlebars 代码块（保留其余正文/代码块） */
+function withPreprocess(body: string, preprocess: string): string {
+  const re = /```handlebars\r?\n[\s\S]*?```/;
+  const m = re.exec(body);
+  const newBlock = `\`\`\`handlebars\n${preprocess}\`\`\``;
+  if (!m) return `${body}\n${newBlock}\n`;
+  return body.slice(0, m.index) + newBlock + body.slice(m.index + m[0].length);
+}
+
+function ensureFilter(rules: RowFilterRule[], rule: RowFilterRule): void {
+  const hit = rules.some((x) => x.column === rule.column && x.op === rule.op && x.value === rule.value);
+  if (!hit) rules.push(rule);
+}
+
+/** 旧 frontmatter 行/列配置一次性迁移进 transform（D97/D98：byContent→筛选、removeEmpty→预置规则；段已编码者不去重叠加） */
+function migrateLegacyRowConfig(transform: Step3TemplateSnapshot['transform'], row: Record<string, any> | undefined): void {
+  if (!row || typeof row !== 'object') return;
+  const clean: string[] = Array.isArray(row.clean) ? row.clean : [];
+  for (const flag of clean) {
+    if (flag === 'removeEmpty') ensureFilter(transform.filters, presetFilterEmptyRows());
+    else if (flag === 'dedupe' && !transform.clean.includes('dedupe')) transform.clean.push('dedupe');
+    else if (flag === 'filterInvalid' && !transform.clean.includes('filterInvalid')) transform.clean.push('filterInvalid');
+  }
+  const remove: any[] = Array.isArray(row.remove) ? row.remove : [];
+  for (const r of remove) {
+    if (!r || typeof r !== 'object') continue;
+    if (r.kind === 'byContent') {
+      ensureFilter(transform.filters, rowFilterFromRemove(r as LegacyByContentRule));
+    } else if (r.kind === 'byIndex') {
+      const rules = transform.removeRows ?? (transform.removeRows = []);
+      if (r.param && !rules.some((x) => x.kind === 'byIndex' && x.param === r.param)) {
+        rules.push({ kind: 'byIndex', param: String(r.param) });
+      }
+    } else if (r.kind === 'duplicateHeader') {
+      const rules = transform.removeRows ?? (transform.removeRows = []);
+      if (!rules.some((x) => x.kind === 'duplicateHeader')) rules.push({ kind: 'duplicateHeader', param: '' });
+    }
+  }
+  const legacyFilter: RowFilterRule[] = Array.isArray(row.filter) ? row.filter : [];
+  for (const f of legacyFilter) {
+    if (f && typeof f === 'object' && f.column && f.op) ensureFilter(transform.filters, f as RowFilterRule);
+  }
+}
+
+/** 旧 frontmatter columns/mapping/derived 一次性迁移（仅当段未编码时才补；段存在时不叠加） */
+function migrateLegacyColumnConfig(
+  transform: Step3TemplateSnapshot['transform'],
+  fm: Record<string, any>,
+  segmentsPresent: { format: boolean; process: boolean; mapping: boolean; derived: boolean }
+): void {
+  const columns = fm.columns as Record<string, any> | undefined;
+  if (columns && typeof columns === 'object' && !segmentsPresent.format) {
+    const fmt: any[] = Array.isArray(columns.format) ? columns.format : [];
+    for (const f of fmt) {
+      if (f && f.column && f.op && !transform.formats.some((x) => x.column === f.column && x.op === f.op && x.param === (f.param ?? ''))) {
+        transform.formats.push({ column: String(f.column), op: f.op, param: f.param ? String(f.param) : '' });
+      }
+    }
+  }
+  if (columns && typeof columns === 'object' && !segmentsPresent.process) {
+    const proc: any[] = Array.isArray(columns.process) ? columns.process : [];
+    for (const p of proc) {
+      if (p && p.column && p.op && !transform.processes.some((x) => x.column === p.column && x.op === p.op && x.param === (p.param ?? ''))) {
+        transform.processes.push({
+          column: String(p.column),
+          op: p.op,
+          param: p.param ? String(p.param) : '',
+          param2: p.param2 ? String(p.param2) : ''
+        });
+      }
+    }
+  }
+  const mapping: any[] = Array.isArray(fm.mapping) ? fm.mapping : [];
+  if (mapping.length > 0 && !segmentsPresent.mapping) {
+    for (const m of mapping) {
+      if (m && m.source && !transform.mappings.some((x) => x.source === m.source && x.target === (m.target ?? m.source))) {
+        transform.mappings.push({ source: String(m.source), target: String(m.target ?? m.source), type: 'text' });
+      }
+    }
+  }
+  const derived: any[] = Array.isArray(fm.derived) ? fm.derived : [];
+  if (derived.length > 0 && !segmentsPresent.derived) {
+    for (const d of derived) {
+      if (d && d.field && d.rule && !transform.derived.some((x) => x.field === d.field)) {
+        transform.derived.push({ field: String(d.field), rule: String(d.rule), source: d.source ? String(d.source) : '' });
+      }
+    }
+  }
+}
+
+/** 从模板原始内容解析 Step 3 配置快照（纯函数；读路径） */
+export function parseStep3Snapshot(rawContent: string): Step3TemplateSnapshot | null {
+  const { frontmatter, body } = splitRawFrontmatter(rawContent);
+  if (typeof frontmatter.template_id !== 'string' || frontmatter.template_id === '') return null;
+  const preprocess = preprocessBlockOf(body);
+  const transform = handlebarsToConfig(preprocess);
+  const row = frontmatter.row as Record<string, any> | undefined;
+  migrateLegacyRowConfig(transform, row);
+  const segments = extractPresentSegments(preprocess);
+  migrateLegacyColumnConfig(transform, frontmatter, segments);
+
+  const name = String(frontmatter.name ?? '');
+  const patterns = Array.isArray(frontmatter.match?.patterns) ? frontmatter.match.patterns : [];
+  const first = patterns[0] as { type?: string; value?: string } | undefined;
+  const out = (frontmatter.output ?? {}) as Record<string, any>;
+  return {
+    name,
+    matchType: (first?.type as Step3TemplateSnapshot['matchType']) ?? 'glob',
+    matchPattern: first?.value ? String(first.value) : '',
+    outputFolder: out.folder ? String(out.folder) : '',
+    outputNoteName: out.note_name ? String(out.note_name) : '{{_hash}}',
+    headerRow: Number((row as any)?.header_row) || 0,
+    transform
+  };
+}
+
+/** preprocess 中已存在的段集合（迁移用：段已编码则不叠加旧 frontmatter） */
+function extractPresentSegments(preprocess: string): { format: boolean; process: boolean; mapping: boolean; derived: boolean } {
+  const names = ['row-remove', 'row-filter', 'column-format', 'column-process', 'column-mapping', 'derived'];
+  const present = new Set(
+    names.filter((n) => new RegExp(`\\{\\{!-- ipro:begin:${n} --\\}\\}`).test(preprocess))
+  );
+  return {
+    format: present.has('column-format'),
+    process: present.has('column-process'),
+    mapping: present.has('column-mapping'),
+    derived: present.has('derived')
+  };
+}
+
+/** 把 Step 3 快照写回模板内容（纯函数：frontmatter 元信息/引擎开关 + preprocess 段；写路径） */
+export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnapshot): string {
+  const { frontmatter, body } = splitRawFrontmatter(rawContent);
+  const next: Record<string, any> = { ...frontmatter };
+  next.name = snap.name || frontmatter.name || '新模板';
+  if (snap.matchPattern) {
+    next.match = {
+      enabled: (frontmatter.match as any)?.enabled ?? true,
+      patterns: [{ type: snap.matchType, value: snap.matchPattern }]
+    };
+  }
+  const t = snap.transform;
+  next.output = {
+    folder: snap.outputFolder ?? '',
+    note_name: snap.outputNoteName || '{{_hash}}'
+  };
+  const row: Record<string, any> = {};
+  if (snap.headerRow > 0) row.header_row = snap.headerRow;
+  if (t.clean.length > 0) row.clean = t.clean;
+  const dupHeader = (t.removeRows ?? []).filter((r) => r.kind === 'duplicateHeader');
+  if (dupHeader.length > 0) row.remove = dupHeader.map((r) => ({ kind: 'duplicateHeader', param: r.param ?? '' }));
+  if (Object.keys(row).length > 0) next.row = row;
+  else delete next.row;
+  // D98：columns/mapping/derived 收敛进 preprocess 编译段，不再写 frontmatter（读取旧字段仅兼容迁移）
+  delete next.columns;
+  delete next.mapping;
+  delete next.derived;
+
+  const preprocess = upsertSegments(preprocessBlockOf(body), configToSegments(t));
+  const newBody = withPreprocess(body, preprocess);
+  const yaml = stringifyYaml(next).replace(/\n+$/, '');
+  return `---\n${yaml}\n---${newBody}`;
 }

@@ -1,8 +1,8 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.4.2"
-last_updated: "2026-09-03"
+version: "1.4.5"
+last_updated: "2026-09-04"
 status: "active"
 ---
 
@@ -29,6 +29,10 @@ status: "active"
 ---
 
 ## B
+
+### 编译段 (Compiled Code Block)
+
+Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代码段**（D98），以成对注释 `{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 包裹，与用户手写代码共存；段名对应向导区块（row-remove/row-filter/column-format/column-process/column-mapping/derived）。模板逻辑自包含、可迁移、可手改；权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9。
 
 ### 内容模板 (Content Template)
 
@@ -264,6 +268,14 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ---
 
+## X
+
+### 行筛选 (Row Filter)
+
+Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全部规则均匹配」的行（多条规则 AND 组合），条件含等于/不等于/包含/不包含/开头为/结尾为/为空/非空/数字比较/正则匹配等 13 种（Excel 式）；列支持「任意列」（`*`，整行任一列值命中即通过，D97）。**D97 行能力收敛**：原「按内容删除行」（`byContent`）迁移为筛选的取反表达（删除含 X = 筛选「任意列 不包含 X」），「去除空行」为预置筛选规则（`任意列 非空`）的快捷开关；删除行仅保留按行号/重复标题行两种结构级模式，执行顺序在行删除之后（删除优先）。**D98 执行载体**：规则由编译层生成 preprocess Handlebars 条件块（不匹配即 `{{set "_skip" true}}`，见 [编译段](#编译段-compiled-code-block)），由 `renderPreprocess` 渲染执行而非 JS 函数调用。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
+
+---
+
 ## Y
 
 ### 预处理模板 (Preprocess Template)
@@ -336,4 +348,4 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ---
 
-*版本: 1.4.2 | 最后更新: 2026-09-03*
+*版本: 1.4.5 | 最后更新: 2026-09-04*

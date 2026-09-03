@@ -1,8 +1,8 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.13.0"
-last_updated: "2026-09-03"
+version: "1.16.0"
+last_updated: "2026-09-04"
 status: "active"
 owner: "core-team"
 tags: ["architecture", "design", "system", "api"]
@@ -212,6 +212,10 @@ export interface ITemplateScanner {
     matchPattern: string;
     columns: string[];
   }): Promise<TemplateInfo>;
+  /** D95：读取模板 frontmatter 中持久化的向导配置（output/row/columns/mapping/derived），供 Step 3 回填 */
+  readTemplateConfig(templateId: string): Promise<TemplateTransformConfig | null>;
+  /** D95：把 Step 3 全部配置写回模板 frontmatter（模板即配置源），写入仅限 paths.templates 目录 */
+  saveTemplateConfig(templateId: string, config: TemplateTransformConfig): Promise<void>;
 }
 
 export interface IDataPipeline {
@@ -231,7 +235,7 @@ export interface IValidator {
 
 | 模块 | 职责 | 输入 → 输出 |
 | :--- | :--- | :--- |
-| `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖） | `fileName` → `TemplateInfo` |
+| `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖）；**D95 起兼任模板配置读写**（`readTemplateConfig` / `saveTemplateConfig`：Step 3 向导配置写回模板 frontmatter，模板即配置源） | `fileName` → `TemplateInfo` |
 | `DataPipeline` | 校验（错误分流）、按条件分流到 noteType、生成派生字段与 `_notes` | `DataRecord` → `NoteSpec[]` |
 | `Validator` | 字段级/记录级校验规则执行 | `DataRecord` + `rules` → `ValidationResult` |
 
@@ -265,13 +269,28 @@ export interface IValidator {
 
 > 交互布局与渲染规格见 [../ui/layout.md](../ui/layout.md) §5.1；决策见 decisions/2026-09-03-ui-ux-polish.md（D91）。
 
+### 2.10 Step 3 配置与模板同步 + 逻辑抽离（D94–D96）
+
+**职责**：模板为 Step 3 向导配置的**唯一事实源**（「一次配置，处处使用」）；UI 层只渲染与调用，不承载业务逻辑。
+
+| 原则 | 内容 |
+| :--- | :--- |
+| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选/删除行编译为写 `_skip` 的条件块，列格式化/列处理/列映射/派生编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录 |
+| **配置写回模板** | Step 3 全部配置经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写模板——保存 = 编译进 preprocess 标记段（内存编译不落盘，仅保存时写回）；读取 = 从标记段反编译回填各区块；字段规范见 template-schema.md §2/§9；写入仅限 `paths.templates` 目录 |
+| **[💾 保存到模板] 按钮** | Step 3 区块 3 模板元信息操作行 [📝 编辑模板代码] [➕ 新建模板] [💾 保存到模板]（D94/D95）——点击「保存到模板」即把 Step 3 全部配置编译并写回所选模板 preprocess 块；未选模板时禁用并提示先新建/选择；写入失败抛 `TEMPLATE_005` 内联提示；保存成功仅 Notice 不刷新页面 |
+| **UI 只调用** | 行筛选/删除/列变换等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
+| **区块归类** | Step 3 区块按影响粒度归类：模板级（模板元信息，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 行级（行配置：表头行/行清洗/删除行/筛选）→ 列级（列配置：格式化/处理/映射）→ 字段级（派生）→ 结果（预览）；布局权威见 ui/layout.md §5 |
+| **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；执行顺序在行删除之后、列格式化之前（`行删除 → 行筛选 → …`）；类型 `RowFilterRule` / `RowFilterOp` 见 §7。**D97 行能力收敛**：删除行仅保留结构级模式（`byIndex` 行号 / `duplicateHeader` 重复标题行），`byContent` 内容删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」）；「去除空行」为预置筛选规则（`column: '*'` + `notEmpty`）的快捷开关；`RowFilterRule.column` 支持 `'*'` 任意列 |
+
+> 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）。
+
 ## 3. 数据流
 
 ```text
 
 [文件（按路径引用原文件）] → DataParser → DataRecord[]
     → TemplateScanner → 匹配模板
-    → DataPipeline → 预处理渲染 → 校验 → 分流 → 派生字段
+    → DataPipeline → 预处理渲染（Handlebars 承载向导全部配置：行删除/行筛选/列格式化/行清洗/列处理/列映射/派生均编译自 Step 3，D98）→ 校验 → 分流 → 派生字段
     → 组装 _notes 数组（每元素 = 1 个待生成笔记 NoteSpec）
     → NoteGenerator → 冲突检测 → 合并/覆盖/追加/跳过
     → 增量更新（内容哈希比对）→ 写入文件
@@ -495,12 +514,61 @@ interface ValidationRule {
 
 type ValidatorFn = (data: any) => Promise<ValidationResult> | ValidationResult;
 
-/** 模板 Frontmatter 元数据 */
+/** 模板 Frontmatter 元数据（D95/D98：match/output 为元信息；row/columns/derived 自 D98 起仅兼容旧模板读取，执行契约在 preprocess 编译段，权威规范见 components/template-schema.md §2/§9） */
 interface TemplateFrontmatter {
   template_id: string;
   name: string;
   version?: string;
   description?: string;
+  match?: { enabled: boolean; patterns: MatchRule[] };
+  /** 输出位置及命名规则（D94：输出文件夹 + 文件名 Handlebars 表达式） */
+  output?: {
+    folder: string;
+    note_name: string;
+    conflict_strategy?: OutputConfig['conflictStrategy'];
+    incremental_mode?: OutputConfig['incrementalMode'];
+  };
+  row?: TemplateRowConfig;        // 行配置（表头行/清洗/删除/筛选）
+  columns?: TemplateColumnConfig; // 列配置（格式化/处理）
+  mapping?: { source: string; target: string }[];
+  validation?: ValidationRule[];
+  derived?: { field: string; rule: string; source: string }[];
+}
+
+/** 行配置（D94/D95/D97/D98）：D98 起 row/columns/derived 不再作为执行契约（执行逻辑编译进 preprocess 块，template-schema §9）；此结构仅用于旧模板 frontmatter 兼容迁移与 row.clean 跨行引擎开关 */
+interface TemplateRowConfig {
+  header_row?: number;    // 表头物理行（1-based，仅表格类数据源；解析级参数，不入 preprocess）
+  /** D97 收敛：删除行仅结构级模式（byContent 已迁移至 filter） */
+  remove?: { kind: 'byIndex' | 'duplicateHeader'; param: string }[];
+  filter?: RowFilterRule[];   // 行筛选（D96，包含式；D97 column 支持 '*' 任意列）
+  clean?: ('dedupe' | 'filterInvalid')[];  // 跨行操作引擎开关（单行 Handlebars 无法表达，D98 例外；removeEmpty 已改为预置筛选规则）
+}
+
+/** 列配置（D94/D95）：写入模板 frontmatter 的 columns 字段 */
+interface TemplateColumnConfig {
+  format?: { column: string; op: string; param: string }[];
+  process?: { column: string; op: string; param: string; param2?: string }[];
+}
+
+/** Step 3 向导配置（编译/反编译层的配置模型，D95/D98：编译为 preprocess Handlebars 标记段后写入模板） */
+interface TemplateTransformConfig {
+  match?: TemplateFrontmatter['match'];
+  output?: TemplateFrontmatter['output'];
+  row?: TemplateRowConfig;
+  columns?: TemplateColumnConfig;
+  mapping?: TemplateFrontmatter['mapping'];
+  derived?: TemplateFrontmatter['derived'];
+}
+
+/** 行筛选操作（D96，Excel 式筛选，包含式保留） */
+type RowFilterOp = 'eq' | 'neq' | 'contains' | 'notContains' | 'startsWith' | 'endsWith'
+  | 'empty' | 'notEmpty' | 'gt' | 'gte' | 'lt' | 'lte' | 'regex';
+
+/** 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行删除之后（删除优先）；D97：column 支持 '*' 任意列；D98：规则经编译层生成 preprocess Handlebars 条件块，不在运行时由 JS 执行 */
+interface RowFilterRule {
+  column: string;  // 目标列名；'*' = 任意列（整行任一列值命中即通过）；empty/notEmpty 时忽略列
+  op: RowFilterOp;
+  value: string;   // 比较值（regex 为正则文本）
 }
 
 interface ErrorEntry {
@@ -653,4 +721,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.13.0 | 最后更新: 2026-09-03_
+_版本: 1.16.0 | 最后更新: 2026-09-04_

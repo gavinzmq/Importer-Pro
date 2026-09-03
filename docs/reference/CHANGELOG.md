@@ -1,8 +1,8 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.5.0"
-last_updated: "2026-09-03"
+version: "1.9.0"
+last_updated: "2026-09-04"
 status: "active"
 owner: "core-team"
 tags: ["changelog", "releases"]
@@ -42,9 +42,10 @@ arcmesh:
 - **向导落地（2026-09-03）**：Step 2 单一文件列表（会话条目 + 历史条目、路径引用）、Step 3 七区块模板配置（数据处理/列映射/派生字段实时预览）、Step 4 进度与完成页
 - **Step 3 表头行与行删除（2026-09-03，D87/D88）**：表格类数据源（Excel/CSV）数据处理区块新增「📐 表头行」控件——从第 N 行开始读取（跳过前 N-1 行），适配前部空行的不规范表格，列映射随表头行即时刷新；新增「🗑 删除行」工具——按原始行号删除指定行（支持 `2,5,8-10` 区间语法）与一键删除重复标题行，预览区显示原始行号便于对号删除（见 decisions/2026-09-03-excel-step3-row-tools.md）
 - **Step 3 UX 打磨（2026-09-03，D91–D93 已实现）**：区块局部刷新与滚动保持（L1 仅预览 / L2 区块内重建 / L3 数据源级按依赖链刷新；`.ipw-body` 容器持久、刷新前后保持滚动与焦点，消除「刷新感」「跳回顶部」）；模板目录为空时支持 [➕ 新建模板] 按当前配置生成模板骨架并自动选中（无需手动创建模板文件、无需重开向导；新增 `TEMPLATE_004` 错误码）；「🗑 删除行」新增按精确内容/模糊内容删除模式（可限定列、大小写敏感，与行号/重复标题行删除并集）（见 decisions/2026-09-03-ui-ux-polish.md）
+- **Step 3 归类重构与模板写回（2026-09-04，D94–D98 已实现）**：区块按影响粒度归类——模板级「模板元信息」（含新增**输出位置及命名规则**与 [📝 编辑模板代码]/[➕ 新建模板]/[💾 保存到模板] 按钮行，原预览区按钮迁移至此）→ 行级「行配置」（表头行/行清洗/删除行/**新增 Excel 式行筛选**）→ 列级「列配置」（列格式化/列处理/列映射）→ 派生字段 → 预览；Step 3 配置可写回模板（`ITemplateScanner.readTemplateConfig/saveTemplateConfig`，模板即配置源、UI 只调用逻辑抽离，新增 `TEMPLATE_005` 错误码）；新增 **Excel 式行筛选**（13 种条件：等于/包含/为空/数字比较/正则匹配等，多规则 AND 保留语义，删除优先）；**行能力收敛（D97）**：删除行仅保留按行号/重复标题行（结构级），`byContent` 内容删除与「去除空行」并入行筛选（`column: '*'` 任意列 + 预置规则快捷开关，旧配置读取自动迁移）；**Handlebars 执行载体（D98）**：UI 第三步所有功能编译为模板 preprocess 的 Handlebars 标记段（`{{!-- ipro:begin:<区块> --}}`），导入与预览统一由 `renderPreprocess` 渲染执行、不再调用 JS 变换函数（`_index` 原始行号注入、wizard-data 重定位为编译/反编译层、编译产物仅用内置 Helper 白名单）。实现落点：`wizard-data` 编译/反编译层（`configToHandlebars`/`handlebarsToConfig`/`upsertSegments`/`applyWizardTransform` 真实渲染）、`template-scanner` 模板配置读写（旧 frontmatter 一次性迁移）、`builtin` 编译段 Helper 白名单补齐、向导 Step 3 重构 + 行筛选 UI + [💾 保存到模板] + 输出位置/命名实时示例（见 decisions/2026-09-04-step3-template-config-restructure.md）
 - **Roadmap P0 落地（2026-09-03）**：Step 4 增加 **R10 Dry Run 预检确认**（「将新建/更新/跳过/失败」→ 确认后写入，不直接落盘）与 **R09 暂停/恢复/停止/断点续跑**（note 粒度断点，停止保留已写入笔记，可从断点继续）；内置 **R11 Dataview 索引刷新**（`after:import`，设置 `refreshDataviewOnImport`，未安装时友好提示）
 - **外部文件端到端导入（2026-09-03）**：Step 2 选中的 **Vault 外文件**（桌面绝对路径 / 移动端文件提供方）现可进入 Step 3 解析/预览并完成 Step 4 写入 Vault 笔记（原文件不复制进 Vault）；读取经选择时持有的 **File/Blob 句柄**按需进行（跨端一致、不预加载内容、不写临时缓存）；外部文件导入历史仅保留记录，重新导入需重新选择原文件
-- **单元测试接入（2026-09-03）**：`helpers`/`wizard-data`/`parsers` 纯函数 Vitest 单测 + `file-input`、`template-scanner`（D92 骨架/ID/重名纯函数）共 72 例（含 D86–D93 行号解析/行删除 `byContent`/`PARSE_002`/`headerRow`/模板骨架用例；CI `ci:test` 消费，本地不跑门禁）
+- **单元测试接入（2026-09-03/09-04）**：`helpers`/`wizard-data`/`parsers`/`file-input`/`template-scanner` 纯函数 Vitest 单测共 **98 例**（含 D86–D93 行号解析/`PARSE_002`/`headerRow`/模板骨架，及 D94–D98 行筛选各 op 语义与任意列、D97 迁移/预置、D98 编译·反编译往返与真实渲染一致性、模板配置读写往返；CI `ci:test` 消费，本地不跑门禁）
 - **零代码配置**：无需编写任何代码即可完成模板配置
 
 #### 数据处理
@@ -91,4 +92,4 @@ arcmesh:
 
 ---
 
-*版本: 1.5.0 | 最后更新: 2026-09-03*
+*版本: 1.9.0 | 最后更新: 2026-09-04*

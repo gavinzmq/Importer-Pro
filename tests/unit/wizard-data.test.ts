@@ -1,36 +1,55 @@
 /**
- * wizard-data.ts 纯函数单元测试（Vitest，供 CI `ci:test` 消费；本地不跑）
+ * wizard-data.ts 纯函数单元测试（Vitest，供 CI `ci:test` 消费）
  *
- * 覆盖：列格式化 / 行清洗 / 列处理 / 列映射 / 派生字段 / applyTransform 全链路
- *      / Dry Run 统计 / 展示格式化（文件大小、数量、相对时间）。
- * 纯逻辑、无 Obsidian 依赖；本地时间相关用例从 Date 动态推导，避免时区抖动。
+ * 覆盖（D94–D98）：列格式化 / 行清洗（收敛）/ 行删除（收敛）/ 列处理 / 列映射 / 派生字段
+ *      / JS 整链变换 / D96 行筛选 / D97 迁移与预置 / D98 编译·反编译往返与真实渲染一致性
+ *      / Dry Run 统计 / 展示格式化。纯逻辑、无 Obsidian 依赖。
  */
 import { describe, expect, it } from 'vitest';
+import { TemplateEngine } from '../../src/core/template/engine';
 import {
+  ANY_COLUMN,
   applyColumnFormats,
   applyColumnMappings,
   applyColumnProcess,
   applyColumnProcesses,
   applyDerivedFields,
   applyRowCleaning,
+  applyRowFilter,
   applyRowRemoval,
   applyTransform,
   applyTransformPreview,
+  applyWizardTransform,
   autoMapColumns,
+  cellPassesFilter,
   computeRowRemovalSet,
+  configToHandlebars,
+  configToSegments,
+  countRowsAfterSelection,
   deriveFieldName,
   deriveValue,
   dryRunStats,
+  extractSegments,
   formatCellValue,
   formatCount,
   formatFileSize,
   formatTimeAgo,
+  handlebarsToConfig,
+  isDuplicateHeaderRow,
+  isPresetEmptyFilter,
   parseRowNumbers,
-  rowContentMatches,
+  presetFilterEmptyRows,
+  rowFilterFromRemove,
+  rowFilterRuleLabel,
+  rowMatchesFilter,
   rowRemoveRuleLabel,
-  unmappedColumns
+  segmentsToPreprocess,
+  unmappedColumns,
+  upsertSegments,
+  emptyTransform,
+  type DataTransformConfig,
+  type RowFilterRule
 } from '../../src/ui/wizard-data';
-import type { DataTransformConfig, RowRemoveRule } from '../../src/ui/wizard-data';
 
 /* 本地时区的 YYYY-MM-DD（与实现 formatISODate 一致的推导，保证任意时区一致） */
 function isoLocal(ts: number): string {
@@ -99,13 +118,7 @@ describe('applyColumnFormats：应用列格式化规则', () => {
   });
 });
 
-describe('applyRowCleaning：行清洗', () => {
-  it('removeEmpty 去除空行（保留 0/false）', () => {
-    const records = [{}, { a: '' }, { b: 0 }, { c: false }, { d: 'x' }];
-    const out = applyRowCleaning(records, ['removeEmpty']);
-    expect(out).toEqual([{ b: 0 }, { c: false }, { d: 'x' }]);
-  });
-
+describe('applyRowCleaning：行清洗（D97 收敛：dedupe / filterInvalid；removeEmpty 已并入行筛选）', () => {
   it('dedupe 按 JSON 去重', () => {
     const records = [{ a: 1 }, { a: 1 }, { a: 2 }];
     expect(applyRowCleaning(records, ['dedupe'])).toEqual([{ a: 1 }, { a: 2 }]);
@@ -118,7 +131,7 @@ describe('applyRowCleaning：行清洗', () => {
 
   it('组合开关', () => {
     const records = [{ a: '' }, { a: 'x' }, { a: 'x' }, {}];
-    expect(applyRowCleaning(records, ['removeEmpty', 'dedupe', 'filterInvalid'])).toEqual([{ a: 'x' }]);
+    expect(applyRowCleaning(records, ['dedupe', 'filterInvalid'])).toEqual([{ a: 'x' }]);
   });
 });
 
@@ -135,7 +148,7 @@ describe('parseRowNumbers：行号串解析（D88）', () => {
   });
 });
 
-describe('applyRowRemoval / computeRowRemovalSet：行删除（D88）', () => {
+describe('applyRowRemoval / computeRowRemovalSet：行删除（D88/D97 收敛：仅 byIndex / duplicateHeader）', () => {
   const records = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }];
 
   it('byIndex 删除指定原始行号（越界忽略）', () => {
@@ -147,10 +160,23 @@ describe('applyRowRemoval / computeRowRemovalSet：行删除（D88）', () => {
     const data = [
       { 姓名: '姓名', 年龄: '年龄' }, // 重复打印的标题行
       { 姓名: '张三', 年龄: '18' },
-      {}, // 空行不因 duplicateHeader 删除（交由 removeEmpty）
+      {}, // 空行不因 duplicateHeader 删除（交由「去除空行」筛选）
       { 姓名: '张三', 年龄: '18' }
     ];
-    expect(applyRowRemoval(data, [{ kind: 'duplicateHeader', param: '' }])).toEqual([{ 姓名: '张三', 年龄: '18' }, {}, { 姓名: '张三', 年龄: '18' }]);
+    expect(applyRowRemoval(data, [{ kind: 'duplicateHeader', param: '' }])).toEqual([
+      { 姓名: '张三', 年龄: '18' },
+      {},
+      { 姓名: '张三', 年龄: '18' }
+    ]);
+  });
+
+  it('isDuplicateHeaderRow 单行判断', () => {
+    expect(isDuplicateHeaderRow({ 姓名: '姓名', 年龄: '年龄' })).toBe(true);
+    expect(isDuplicateHeaderRow({ 姓名: '张三', 年龄: '18' })).toBe(false);
+    expect(isDuplicateHeaderRow({})).toBe(false);
+    // 保留字段不参与数据列判定（_index 使数据仍按普通列判断）
+    expect(isDuplicateHeaderRow({ _index: 1, 姓名: '姓名' })).toBe(true);
+    expect(isDuplicateHeaderRow({ _index: 1, 姓名: '张三' })).toBe(false);
   });
 
   it('空规则原样返回', () => {
@@ -158,55 +184,8 @@ describe('applyRowRemoval / computeRowRemovalSet：行删除（D88）', () => {
   });
 });
 
-describe('byContent 行删除（D93：按精确/模糊内容，可限定列）', () => {
-  const data = [
-    { 姓名: '张三', 部门: '研发部' },
-    { 姓名: '李四', 部门: '市场部' },
-    { 姓名: '张三丰', 部门: '行政部' },
-    { 姓名: '王五', 部门: '研发部' }
-  ];
-
-  it('contains（默认）：任一列值包含关键词即删', () => {
-    const rule = { kind: 'byContent', param: '张三' } as const;
-    expect(computeRowRemovalSet(data, [rule])).toEqual(new Set([0, 2]));
-    expect(applyRowRemoval(data, [rule])).toEqual([
-      { 姓名: '李四', 部门: '市场部' },
-      { 姓名: '王五', 部门: '研发部' }
-    ]);
-  });
-
-  it('exact：限定列值与关键词完全相等才删（未限定则任一列相等）', () => {
-    expect(
-      computeRowRemovalSet(data, [{ kind: 'byContent', param: '研发部', mode: 'exact', column: '部门' }])
-    ).toEqual(new Set([0, 3]));
-    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'exact' }])).toEqual(new Set([0]));
-    // 张三丰 ≠ 张三（exact 非子串）
-    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'exact' }])).not.toContain(2);
-  });
-
-  it('contains 限定列：仅比对该列，其他列含关键词不删', () => {
-    const rule: RowRemoveRule = { kind: 'byContent', param: '研发', mode: 'contains', column: '部门' };
-    expect(computeRowRemovalSet(data, [rule])).toEqual(new Set([0, 3]));
-  });
-
-  it('大小写敏感：模糊包含区分大小写', () => {
-    const rows = [{ a: 'Hello' }, { a: 'hello world' }];
-    expect(applyRowRemoval(rows, [{ kind: 'byContent', param: 'Hello', mode: 'contains' }])).toEqual([
-      { a: 'hello world' }
-    ]);
-  });
-
-  it('空关键词为 no-op（不产生删除）', () => {
-    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '', mode: 'contains' }])).toEqual(new Set());
-  });
-
-  it('指定不存在的列不删除任何行', () => {
-    expect(computeRowRemovalSet(data, [{ kind: 'byContent', param: '张三', mode: 'contains', column: '不存在' }])).toEqual(
-      new Set()
-    );
-  });
-
-  it('与 byIndex / duplicateHeader 并集语义（applyTransform 首步）', () => {
+describe('行删除与并集语义（D97：byIndex + duplicateHeader 并集，applyTransform 首步）', () => {
+  it('byIndex 与 duplicateHeader 并集，预览保留原始行号', () => {
     const rows = [
       { a: 'a', b: 'b' }, // duplicateHeader
       { 姓名: '张三', 部门: '研发部' },
@@ -215,40 +194,30 @@ describe('byContent 行删除（D93：按精确/模糊内容，可限定列）',
     ];
     const cfg: DataTransformConfig = {
       removeRows: [
-        { kind: 'byIndex', param: '2' }, // 删除原第 2 行（张三）
-        { kind: 'byContent', param: '研发', mode: 'contains', column: '部门' }, // 王五
+        { kind: 'byIndex', param: '2' },
         { kind: 'duplicateHeader', param: '' }
       ],
+      filters: [],
       formats: [],
       clean: [],
       processes: [],
       mappings: [],
       derived: []
     };
-    expect(applyTransform(rows, cfg)).toEqual([{ 姓名: '李四', 部门: '市场部' }]);
-    expect(applyTransformPreview(rows, cfg).map((r) => r.src)).toEqual([3]);
+    expect(applyTransform(rows, cfg)).toEqual([
+      { 姓名: '李四', 部门: '市场部' },
+      { 姓名: '王五', 部门: '研发部' }
+    ]);
+    expect(applyTransformPreview(rows, cfg).map((r) => r.src)).toEqual([3, 4]);
   });
 
-  it('rowContentMatches 单行命中判断', () => {
-    const row = { 姓名: '张三丰', 部门: '研发部' };
-    expect(rowContentMatches({ kind: 'byContent', param: '张三', mode: 'contains' }, row)).toBe(true);
-    expect(rowContentMatches({ kind: 'byContent', param: '张三', mode: 'exact' }, row)).toBe(false);
-    expect(rowContentMatches({ kind: 'byContent', param: '研发', mode: 'contains', column: '部门' }, row)).toBe(true);
-    expect(rowContentMatches({ kind: 'byContent', param: '研发', mode: 'contains', column: '姓名' }, row)).toBe(false);
-    expect(rowContentMatches({ kind: 'byContent', param: '', mode: 'contains' }, row)).toBe(false);
-  });
-
-  it('rowRemoveRuleLabel 展示标签', () => {
+  it('rowRemoveRuleLabel 展示标签（已收敛，无 byContent）', () => {
     expect(rowRemoveRuleLabel({ kind: 'byIndex', param: '2,5,8-10' })).toBe('按行号删除: 2,5,8-10');
     expect(rowRemoveRuleLabel({ kind: 'duplicateHeader', param: '' })).toBe('删除重复标题行（值与列名全同的行）');
-    expect(rowRemoveRuleLabel({ kind: 'byContent', param: '张三', mode: 'contains' })).toBe('删除含「张三」的行（全部列）');
-    expect(rowRemoveRuleLabel({ kind: 'byContent', param: '张三', mode: 'exact', column: '姓名' })).toBe(
-      '删除等于「张三」的行（姓名列）'
-    );
   });
 });
 
-describe('applyTransformPreview / applyTransform：行删除置于变换首步（D88）', () => {
+describe('applyTransformPreview / applyTransform：行删除置于变换首步（D88/D96 顺序）', () => {
   it('duplicateHeader 先行删除后，后续列格式化/映射生效，预览保留原始行号', () => {
     const data = [
       { 姓名: '姓名', 年龄: '年龄' },
@@ -257,6 +226,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
     ];
     const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'duplicateHeader', param: '' }],
+      filters: [],
       formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
       processes: [],
@@ -274,6 +244,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
     const data = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }];
     const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'byIndex', param: '2' }],
+      filters: [],
       formats: [],
       clean: [],
       processes: [],
@@ -284,11 +255,121 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
     expect(rows.map((r) => r.src)).toEqual([1, 3, 4, 5]);
     expect(rows.map((r) => r.row)).toEqual([{ a: 1 }, { a: 3 }, { a: 4 }, { a: 5 }]);
   });
+});
 
-  it('无删除规则时与 applyTransform 一致（空 removeRows）', () => {
-    const data = [{ a: 1 }, { a: 2 }];
-    const cfg: DataTransformConfig = { formats: [], clean: ['removeEmpty'], processes: [], mappings: [], derived: [] };
-    expect(applyTransform(data, cfg)).toEqual(applyTransformPreview(data, cfg).map((r) => r.row));
+describe('D96 行筛选：cellPassesFilter / rowMatchesFilter', () => {
+  const row = { 姓名: '张三', 部门: '研发部', 薪资: '12000' };
+
+  it('单列：eq/neq/contains/notContains/startsWith/endsWith（大小写敏感）', () => {
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'eq', value: '张三' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'eq', value: '李四' })).toBe(false);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'neq', value: '李四' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '部门', op: 'contains', value: '研发' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '部门', op: 'notContains', value: '市场' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'contains', value: '张' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'contains', value: 'ZHANG' })).toBe(false); // 大小写敏感
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'startsWith', value: '张' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'endsWith', value: '三' })).toBe(true);
+  });
+
+  it('数字比较（gt/gte/lt/lte）先数值化；非数值回落字符串比较', () => {
+    expect(rowMatchesFilter(row, { column: '薪资', op: 'gt', value: '10000' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '薪资', op: 'gte', value: '12000' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '薪资', op: 'lt', value: '10000' })).toBe(false);
+    // 非数值回落字符串比较（'张三' > 'abc' 按码位）
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'gt', value: 'abc' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'lt', value: 'abc' })).toBe(false);
+  });
+
+  it('empty/notEmpty：空串/空白/缺列判定', () => {
+    expect(rowMatchesFilter({ a: '' }, { column: 'a', op: 'empty', value: '' })).toBe(true);
+    expect(rowMatchesFilter({ a: '  ' }, { column: 'a', op: 'empty', value: '' })).toBe(true); // 空白视为空
+    expect(rowMatchesFilter({ a: 'x' }, { column: 'a', op: 'empty', value: '' })).toBe(false);
+    expect(rowMatchesFilter({ a: 'x' }, { column: 'a', op: 'notEmpty', value: '' })).toBe(true);
+    expect(rowMatchesFilter({ b: '1' }, { column: 'a', op: 'empty', value: '' })).toBe(true); // 缺列视为空
+    expect(cellPassesFilter('  ', 'empty', '')).toBe(true);
+  });
+
+  it('regex：正则匹配，非法正则不匹配', () => {
+    expect(rowMatchesFilter(row, { column: '姓名', op: 'regex', value: '^张.+' })).toBe(true);
+    expect(rowMatchesFilter(row, { column: '部门', op: 'regex', value: '(' })).toBe(false);
+  });
+
+  it('任意列（D97）：contains=任一命中；notContains/neq=无任一命中（承接 byContent 迁移语义）', () => {
+    const rowAny = { 姓名: '张三', 部门: '研发部' };
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'contains', value: '研发' })).toBe(true);
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'notContains', value: '测试' })).toBe(true);
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'notContains', value: '研发' })).toBe(false);
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'neq', value: '张三' })).toBe(false);
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'neq', value: '路人' })).toBe(true);
+    expect(rowMatchesFilter(rowAny, { column: ANY_COLUMN, op: 'notEmpty', value: '' })).toBe(true);
+    expect(rowMatchesFilter({ a: '', b: ' ' }, { column: ANY_COLUMN, op: 'notEmpty', value: '' })).toBe(false);
+    expect(rowMatchesFilter({ a: '' }, { column: ANY_COLUMN, op: 'empty', value: '' })).toBe(true);
+  });
+
+  it('applyRowFilter：多规则 AND 保留', () => {
+    const rows = [
+      { 部门: '研发部', 姓名: '张三' },
+      { 部门: '研发部', 姓名: '李四' },
+      { 部门: '市场部', 姓名: '王五' }
+    ];
+    const rules: RowFilterRule[] = [
+      { column: '部门', op: 'contains', value: '研发' },
+      { column: '姓名', op: 'startsWith', value: '张' }
+    ];
+    expect(applyRowFilter(rows, rules)).toEqual([{ 部门: '研发部', 姓名: '张三' }]);
+  });
+
+  it('countRowsAfterSelection：行删除 + 行筛选后的保留计数（D96 统计口径）', () => {
+    const rows = [
+      { a: 'a', b: 'b' },
+      { 部门: '研发部', 姓名: '张三' },
+      { 部门: '研发部', 姓名: '李四' }
+    ];
+    const cfg: DataTransformConfig = {
+      removeRows: [{ kind: 'duplicateHeader', param: '' }],
+      filters: [{ column: '部门', op: 'eq', value: '研发部' }],
+      formats: [],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: []
+    };
+    expect(countRowsAfterSelection(rows, cfg)).toBe(2);
+  });
+});
+
+describe('D97 迁移与预置：removeEmpty → 预置筛选规则；byContent → 筛选规则', () => {
+  it('presetFilterEmptyRows / isPresetEmptyFilter', () => {
+    const preset = presetFilterEmptyRows();
+    expect(preset).toEqual({ column: ANY_COLUMN, op: 'notEmpty', value: '' });
+    expect(isPresetEmptyFilter(preset)).toBe(true);
+    expect(isPresetEmptyFilter({ column: ANY_COLUMN, op: 'notEmpty', value: 'x' })).toBe(false);
+  });
+
+  it('rowFilterFromRemove：exact → 任意列 ≠ X；contains → 任意列 不包含 X；限定列保留', () => {
+    expect(rowFilterFromRemove({ kind: 'byContent', param: '张三', mode: 'exact' })).toEqual({
+      column: ANY_COLUMN,
+      op: 'neq',
+      value: '张三'
+    });
+    expect(rowFilterFromRemove({ kind: 'byContent', param: '研发', mode: 'contains' })).toEqual({
+      column: ANY_COLUMN,
+      op: 'notContains',
+      value: '研发'
+    });
+    expect(rowFilterFromRemove({ kind: 'byContent', param: '研发', mode: 'contains', column: '部门' })).toEqual({
+      column: '部门',
+      op: 'notContains',
+      value: '研发'
+    });
+  });
+
+  it('rowFilterRuleLabel：`姓名 等于 张三` / `任意列 不包含 测试`', () => {
+    expect(rowFilterRuleLabel({ column: '姓名', op: 'eq', value: '张三' })).toBe('姓名 等于 张三');
+    expect(rowFilterRuleLabel({ column: ANY_COLUMN, op: 'notContains', value: '测试' })).toBe('任意列 不包含 测试');
+    expect(rowFilterRuleLabel({ column: '薪资', op: 'gt', value: '10000' })).toBe('薪资 大于 10000');
+    expect(rowFilterRuleLabel({ column: 'a', op: 'notEmpty', value: '' })).toBe('a 非空');
   });
 });
 
@@ -298,14 +379,15 @@ describe('applyColumnProcess：单行列处理', () => {
       tags: ['a', 'b', 'c']
     });
     expect(applyColumnProcess({ tags: 'x;y' }, { column: 'tags', op: 'split', param: '', param2: '' })).toEqual({
-      tags: ['x;y'] // 空分隔符 → split('')? 实为默认 ',' 拆分 → 未命中则整串
+      tags: ['x;y']
     });
   });
 
   it('merge 与另一列按连接符合并（忽略空段）', () => {
-    expect(
-      applyColumnProcess({ 名: '张', 姓: '三' }, { column: '名', op: 'merge', param: '姓', param2: '-' })
-    ).toEqual({ 名: '张-三', 姓: '三' });
+    expect(applyColumnProcess({ 名: '张', 姓: '三' }, { column: '名', op: 'merge', param: '姓', param2: '-' })).toEqual({
+      名: '张-三',
+      姓: '三'
+    });
     expect(applyColumnProcess({ 名: '张', 姓: '' }, { column: '名', op: 'merge', param: '姓', param2: '-' })).toEqual({
       名: '张',
       姓: ''
@@ -319,12 +401,12 @@ describe('applyColumnProcess：单行列处理', () => {
   });
 
   it('regexExtract 取首个捕获组，无匹配置空，非法正则保持原值', () => {
-    expect(applyColumnProcess({ code: 'ID-1234-X' }, { column: 'code', op: 'regexExtract', param: '(\\d{4})', param2: '' })).toEqual({
-      code: '1234'
-    });
-    expect(applyColumnProcess({ code: 'abc' }, { column: 'code', op: 'regexExtract', param: '(\\d{4})', param2: '' })).toEqual({
-      code: ''
-    });
+    expect(
+      applyColumnProcess({ code: 'ID-1234-X' }, { column: 'code', op: 'regexExtract', param: '(\\d{4})', param2: '' })
+    ).toEqual({ code: '1234' });
+    expect(
+      applyColumnProcess({ code: 'abc' }, { column: 'code', op: 'regexExtract', param: '(\\d{4})', param2: '' })
+    ).toEqual({ code: '' });
     expect(applyColumnProcess({ code: 'abc' }, { column: 'code', op: 'regexExtract', param: '(', param2: '' })).toEqual({
       code: 'abc'
     });
@@ -337,7 +419,6 @@ describe('applyColumnProcess：单行列处理', () => {
   });
 
   it('applyColumnProcesses 依序执行多条规则', () => {
-    // fillDefault 先把空值填 'X'，随后 map 把 'X' → 'Y'（顺序即生效顺序）
     const out = applyColumnProcesses(
       [{ a: '' }],
       [
@@ -384,23 +465,14 @@ describe('autoMapColumns / unmappedColumns：列映射助手', () => {
 });
 
 describe('applyDerivedFields / deriveValue：派生字段', () => {
-  it('genderFromID：18 位倒数第 3 位（index16）奇偶 → 性别', () => {
-    expect(deriveValue('genderFromID', '110101199001011233')).toBe('男'); // index16 = '3'（奇）
-    expect(deriveValue('genderFromID', '110101199001011223')).toBe('女'); // index16 = '2'（偶）
+  it('genderFromID / birthFromID / md5Short / 时间类 / 未知预设', () => {
+    expect(deriveValue('genderFromID', '110101199001011233')).toBe('男');
+    expect(deriveValue('genderFromID', '110101199001011223')).toBe('女');
     expect(deriveValue('genderFromID', '123')).toBe('');
-  });
-
-  it('birthFromID：提取 YYYY-MM-DD', () => {
     expect(deriveValue('birthFromID', '110101199003071233')).toBe('1990-03-07');
     expect(deriveValue('birthFromID', 'bad')).toBe('');
-  });
-
-  it('md5Short：MD5 前 10 位；空源为空', () => {
     expect(deriveValue('md5Short', 'abc')).toBe('900150983c');
     expect(deriveValue('md5Short', '')).toBe('');
-  });
-
-  it('nowTimestamp / currentYear：时间相关', () => {
     expect(deriveValue('nowTimestamp', 'x')).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
     expect(deriveValue('currentYear', '')).toBe(`${new Date().getFullYear()}`);
     expect(deriveValue('unknownPreset', 'x')).toBe('');
@@ -424,11 +496,12 @@ describe('applyDerivedFields / deriveValue：派生字段', () => {
   });
 });
 
-describe('applyTransform：整套变换链路', () => {
+describe('applyTransform：整套变换链路（JS 语义层）', () => {
   it('格式化 → 清洗 → 处理 → 映射 → 派生 依序生效', () => {
     const records = [{ 姓名: ' 张三 ', 性别: '男', extra: 'x' }];
     const out = applyTransform(records, {
       formats: [{ column: '姓名', op: 'trim', param: '' }],
+      filters: [],
       clean: [],
       processes: [],
       mappings: [
@@ -438,6 +511,219 @@ describe('applyTransform：整套变换链路', () => {
       derived: [{ field: '年份', rule: 'currentYear', source: '' }]
     });
     expect(out).toEqual([{ 姓名: '张三', 性别: '男', 年份: `${new Date().getFullYear()}` }]);
+  });
+});
+
+describe('D98 编译/反编译：标记段与往返', () => {
+  const engine = new TemplateEngine();
+
+  function sampleConfig(): DataTransformConfig {
+    return {
+      removeRows: [
+        { kind: 'byIndex', param: '2,5' },
+        { kind: 'duplicateHeader', param: '' }
+      ],
+      filters: [
+        { column: '部门', op: 'contains', value: '研发' },
+        presetFilterEmptyRows()
+      ],
+      formats: [
+        { column: '姓名', op: 'trim', param: '' },
+        { column: '身份证号', op: 'toIDCard', param: '' }
+      ],
+      processes: [{ column: 'tags', op: 'split', param: ',', param2: '' }],
+      mappings: [{ source: '身份证号码', target: '身份证号', type: 'text' }],
+      derived: [
+        { field: '性别', rule: 'genderFromID', source: '身份证号' },
+        { field: '年份', rule: 'currentYear', source: '' }
+      ],
+      clean: ['dedupe']
+    };
+  }
+
+  it('configToHandlebars 生成含 ipro 标记段的 preprocess 文本', () => {
+    const hb = configToHandlebars(sampleConfig());
+    expect(hb).toContain('{{!-- ipro:begin:row-remove --}}');
+    expect(hb).toContain('{{!-- ipro:end:derived --}}');
+    expect(hb).toContain('(inRange _index "2,5")');
+    // duplicateHeader 为跨行引擎开关，不进入编译段
+    expect(hb).not.toContain('duplicateHeader');
+  });
+
+  it('handlebarsToConfig(configToHandlebars(cfg)) 往返还原（段编码部分）', () => {
+    const cfg = sampleConfig();
+    const hb = configToHandlebars(cfg);
+    const back = handlebarsToConfig(hb);
+    // 段编码部分一致
+    expect(back.removeRows).toEqual([{ kind: 'byIndex', param: '2,5' }]);
+    expect(back.filters).toEqual(cfg.filters);
+    expect(back.formats).toEqual(cfg.formats);
+    expect(back.processes).toEqual(cfg.processes);
+    expect(back.mappings).toEqual(cfg.mappings);
+    expect(back.derived).toEqual(cfg.derived);
+    expect(back.clean).toEqual([]); // 引擎开关不入段（由 frontmatter 承载）
+  });
+
+  it('segmentsToPreprocess / extractSegments / upsertSegments：保留段外用户代码', () => {
+    const user = '{{!-- 用户手写预处理 --}}\n{{set "_folder" "人员档案"}}\n';
+    const seg = configToSegments(sampleConfig());
+    const merged = upsertSegments(user, seg);
+    expect(merged).toContain('用户手写预处理');
+    expect(merged).toContain('ipro:begin:row-remove');
+    const extracted = extractSegments(merged);
+    expect(extracted['row-remove']).toBeDefined();
+    expect(extracted.derived).toBeDefined();
+    // 再次 upsert（模拟重复保存）不产生重复段
+    const again = upsertSegments(merged, configToSegments(sampleConfig()));
+    expect(again.match(/ipro:begin:row-remove/g) ?? []).toHaveLength(1);
+  });
+
+  it('applyWizardTransform：真实 Handlebars 渲染（行号删除/筛选/格式化/派生），预览与导入统一路径', async () => {
+    const data = [
+      { 姓名: '姓名', 部门: '部门', 身份证号: 'x', tags: 'a,b' }, // duplicateHeader
+      { 姓名: ' 张三 ', 部门: '研发部', 身份证号: '110101199001011237', tags: 'a,b' },
+      { 姓名: ' 李四 ', 部门: '市场部', 身份证号: '110101199001011223', tags: 'c' }
+    ];
+    const cfg: DataTransformConfig = {
+      removeRows: [{ kind: 'byIndex', param: '1' }],
+      filters: [{ column: '部门', op: 'contains', value: '研发' }],
+      formats: [{ column: '姓名', op: 'trim', param: '' }],
+      clean: [],
+      processes: [],
+      mappings: [{ source: '身份证号', target: '身份证号', type: 'text' }],
+      derived: [{ field: '性别', rule: 'genderFromID', source: '身份证号' }]
+    };
+    const rows = await applyWizardTransform(engine, data, cfg);
+    expect(rows.map((r) => r.src)).toEqual([2]);
+    expect(rows[0].row.姓名).toBe('张三');
+    expect(rows[0].row.性别).toBe('男');
+    expect(rows[0].row._index).toBe(2);
+  });
+
+  it('applyWizardTransform：行筛选任意列 + 派生 md5Short 空源防护', async () => {
+    const data = [
+      { 姓名: '张三', 备注: '测试备注' },
+      { 姓名: '李四', 备注: '' }
+    ];
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [{ column: ANY_COLUMN, op: 'notContains', value: '测试' }],
+      formats: [],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: [{ field: '备注_hash', rule: 'md5Short', source: '备注' }]
+    };
+    const rows = await applyWizardTransform(engine, data, cfg);
+    expect(rows.map((r) => r.src)).toEqual([2]);
+    expect(rows[0].row.备注_hash).toBeUndefined(); // 空源不产出
+  });
+
+  it('applyWizardTransform 与 JS 语义层对同一简单链路结果一致', async () => {
+    const data = [
+      { 姓名: ' 张三 ', 部门: '研发部' },
+      { 姓名: ' 李四 ', 部门: '市场部' }
+    ];
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [{ column: '部门', op: 'contains', value: '研发' }],
+      formats: [{ column: '姓名', op: 'trim', param: '' }],
+      clean: [],
+      processes: [],
+      mappings: [],
+      derived: []
+    };
+    const real = (await applyWizardTransform(engine, data, cfg)).map((r) => {
+      const { _index: _omit, ...rest } = r.row; // 真实渲染含 _index 保留字段，比较前去除
+      void _omit;
+      return rest;
+    });
+    const js = applyTransform(data, cfg);
+    expect(real).toEqual(js);
+  });
+});
+
+describe('编译段与 JS 筛选语义一致性（rowMatchesFilter vs applyWizardTransform 真实渲染）', () => {
+  const engine = new TemplateEngine();
+  const rows = [
+    { a: 'x', b: '10', c: 'foo' },
+    { a: '', b: '20', c: 'bar' },
+    { a: 'abc', b: '', c: 'foo' },
+    { a: 'hello', b: '5', c: 'x y z' }
+  ];
+  const rules: RowFilterRule[] = [
+    { column: 'a', op: 'eq', value: 'x' },
+    { column: 'a', op: 'neq', value: 'x' },
+    { column: 'a', op: 'contains', value: 'e' },
+    { column: 'a', op: 'notContains', value: 'e' },
+    { column: 'a', op: 'startsWith', value: 'he' },
+    { column: 'a', op: 'endsWith', value: 'bc' },
+    { column: 'a', op: 'empty', value: '' },
+    { column: 'a', op: 'notEmpty', value: '' },
+    { column: 'b', op: 'gt', value: '9' },
+    { column: 'b', op: 'lte', value: '5' },
+    { column: 'a', op: 'regex', value: '^h' },
+    { column: ANY_COLUMN, op: 'contains', value: 'x' },
+    { column: ANY_COLUMN, op: 'notContains', value: 'zzz' },
+    { column: ANY_COLUMN, op: 'neq', value: 'foo' },
+    { column: ANY_COLUMN, op: 'notEmpty', value: '' }
+  ];
+
+  for (const rule of rules) {
+    it(`行筛选规则 ${rowFilterRuleLabel(rule)}：JS 与 Handlebars 渲染一致`, async () => {
+      const cfg: DataTransformConfig = {
+        removeRows: [],
+        filters: [rule],
+        formats: [],
+        clean: [],
+        processes: [],
+        mappings: [],
+        derived: []
+      };
+      const kept = await applyWizardTransform(engine, rows, cfg);
+      const expected = applyRowFilter(rows, [rule]);
+      const stripped = kept.map((t) => {
+        const { _index: _omit, ...rest } = t.row; // 真实渲染含 _index 保留字段，比较前去除
+        void _omit;
+        return rest;
+      });
+      expect(stripped).toEqual(expected);
+    });
+  }
+});
+
+describe('编译段真实渲染：列格式化/列处理/派生映射与 JS 语义层对拍（D98）', () => {
+  const engine = new TemplateEngine();
+  const data = [{ 姓名: ' 张三 ', 金额: '1,234', 生日: '1990-03-07', tags: 'a,b,c', 性别: '男', code: 'ID-88-X', 备注: '' }];
+
+  it('格式化/处理/派生编译段渲染结果与 JS 层一致（去 _index 后）', async () => {
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [],
+      formats: [
+        { column: '姓名', op: 'trim', param: '' },
+        { column: '金额', op: 'toNumber', param: '' },
+        { column: '生日', op: 'toDate', param: '' }
+      ],
+      clean: [],
+      processes: [
+        { column: 'tags', op: 'split', param: ',', param2: '' },
+        { column: '性别', op: 'map', param: '男=M;女=F', param2: '' },
+        { column: 'code', op: 'regexExtract', param: '(\\d{2,})', param2: '' },
+        { column: '备注', op: 'fillDefault', param: 'NA', param2: '' }
+      ],
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }],
+      derived: [{ field: '年份', rule: 'currentYear', source: '' }]
+    };
+    const real = await applyWizardTransform(engine, data, cfg);
+    expect(real[0].row.姓名).toBe('张三');
+    expect(real[0].row.金额).toBe(1234);
+    expect(real[0].row.tags).toEqual(['a', 'b', 'c']);
+    expect(real[0].row.性别).toBe('M');
+    expect(real[0].row.code).toBe('88');
+    expect(real[0].row.备注).toBe('NA');
+    expect(real[0].row.年份).toBe(`${new Date().getFullYear()}`);
+    // 注：真实渲染（set 复制）保留未映射列，与旧 JS 层「仅保留映射列」语义不同（D98 对齐模板自包含）
   });
 });
 
@@ -457,6 +743,15 @@ describe('dryRunStats：Dry Run 统计（R10）', () => {
 
   it('空集', () => {
     expect(dryRunStats([])).toEqual({ created: 0, updated: 0, skipped: 0, failed: 0 });
+  });
+});
+
+describe('emptyTransform：默认配置', () => {
+  it('含 filters 空数组（D96 字段）', () => {
+    const t = emptyTransform();
+    expect(t.filters).toEqual([]);
+    expect(t.removeRows).toEqual([]);
+    expect(t.clean).toEqual([]);
   });
 });
 
@@ -489,3 +784,4 @@ describe('展示格式化工具', () => {
     expect(formatTimeAgo(Date.now() - 45 * day)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
+

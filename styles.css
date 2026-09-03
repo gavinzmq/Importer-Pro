@@ -600,6 +600,43 @@
   margin-top: 16px;
 }
 
+/* ── Step 3 区块归类（D94：模板元信息/行配置/列配置）与行筛选（D96/D97） ── */
+.ipw-sec-label {
+  margin-top: 14px;
+  font-weight: 600;
+}
+.ipw-template-ops {
+  margin-top: 10px;
+  gap: 12px;
+  align-items: center;
+}
+.ipw-template-ops .ipw-link,
+.ipw-template-ops .ipw-btn {
+  margin: 0;
+}
+.ipw-output-example {
+  font-size: 12px;
+  margin: 4px 0 2px;
+}
+.ipw-example-path.is-error {
+  color: var(--text-error);
+}
+.ipw-mini.is-active {
+  color: var(--text-on-accent);
+  background-color: var(--interactive-accent);
+}
+.ipw-rule-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: 0 6px;
+  margin-left: 6px;
+}
+.ipw-filter-list-box {
+  margin-top: 6px;
+}
+
 /* ── 响应式（ui/layout.md §8） ──────────────────────────────── */
 @media (max-width: 840px) {
   .ipw-body {

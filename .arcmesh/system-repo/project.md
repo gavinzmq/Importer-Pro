@@ -1,8 +1,8 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.13.0"
-last_updated: "2026-09-03"
+version: "1.17.0"
+last_updated: "2026-09-04"
 status: "active"
 owner: "core-team"
 tags: ["obsidian", "plugin", "importer", "excel", "handlebars"]
@@ -149,8 +149,8 @@ arcmesh:
 | **架构设计** | ✅ 完成 | 100% |
 | **技术选型** | ✅ 完成 | 100% |
 | **核心开发** | ✅ 完成（v0.1 骨架：解析/模板/管道/生成/API） |
-| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；**外部文件（Vault 外）端到端导入已落地（D81）**；Step 3 在 dev vault 联调中；**Excel 健壮性/表头行/行删除工具（D86–D88）已实现**（decisions/2026-09-03-excel-step3-row-tools.md）；**UX 打磨三项（D91–D93）已实现**：Step 3 区块局部刷新与滚动保持（L1 仅预览 / L2 区块内 / L3 数据源级依赖链，`.ipw-body` 持久不回顶）、空模板引导新建（D92 `TemplateScanner.createTemplate` 生成骨架并自动选中，无需手动建模板文件）、删除行按精确/模糊内容（D93 `byContent`，可限定列），见 decisions/2026-09-03-ui-ux-polish.md） |
-| **测试** | 🟡 进行中（Vitest 单元已接入：`helpers`/`wizard-data`/`parsers`/`file-input`/`template-scanner` 纯函数共 72 例，含 D93 `byContent` 行删除与 D92 模板骨架/ID/重名后缀用例；CI `ci:test` 消费；本地不跑门禁） |
+| **UI 开发** | 🟡 进行中（设置页完成；导入向导 Step 1–4 按 `ui/layout.md` 落地，Step 4 已含 R09 暂停/恢复/停止/断点续跑 + R10 Dry Run 预检确认；**外部文件（Vault 外）端到端导入已落地（D81）**；Step 3 在 dev vault 联调中；**Excel 健壮性/表头行/行删除工具（D86–D88）已实现**（decisions/2026-09-03-excel-step3-row-tools.md）；**UX 打磨三项（D91–D93）已实现**：Step 3 区块局部刷新与滚动保持（L1 仅预览 / L2 区块内 / L3 数据源级依赖链，`.ipw-body` 持久不回顶）、空模板引导新建（D92 `TemplateScanner.createTemplate` 生成骨架并自动选中，无需手动建模板文件）、删除行内容级删除（D93 `byContent`，于 D97 收敛并入行筛选），见 decisions/2026-09-03-ui-ux-polish.md；**Step 3 归类重构五项（D94–D98，2026-09-04 已实现）**：区块按影响粒度归类（模板级 模板元信息→行级 行配置→列级 列配置→字段级 派生→结果 预览，编辑/新建模板按钮迁入模板元信息）、模板元信息新增**输出位置及命名规则**与 [💾 保存到模板]、Step 3 配置写回模板（`ITemplateScanner.readTemplateConfig/saveTemplateConfig`，模板即配置源，`TEMPLATE_005`）、新增 **Excel 式行筛选**（13 种条件、AND 保留语义、删除优先）、**行能力收敛（D97）**（删除行仅保留行号/重复标题行，`byContent` 与「去除空行」并入行筛选）、**Handlebars 执行载体（D98）**：UI 第三步全部功能编译为模板 preprocess 的 Handlebars 标记段（ipro 段），导入与预览统一由 `renderPreprocess` 渲染、不调用 JS 变换函数（`_index` 注入、wizard-data 重定位为编译/反编译层、跨行操作与解析参数为唯一例外），逻辑抽离 UI 只调用（decisions/2026-09-04-step3-template-config-restructure.md）。**实现落点（2026-09-04）**：wizard-data 增 `RowFilterRule`/筛选纯函数与 `configToHandlebars`/`handlebarsToConfig`/`upsertSegments` 编译层；template-scanner 增 `readTemplateConfig`/`saveTemplateConfig`（frontmatter 旧配置一次性迁移、写仅 `paths.templates`、失败 `TEMPLATE_005`）；builtin 补齐编译段 Helper 白名单（`strContains`/`col`/`cellOp`/`isEmptyRow`/`regexTest`/`toDate` 等，`inRange` 支持行号集合）；pipeline 注入 `_index` 与引擎跨行开关；import-modal Step 3 按区块归类重构 + 行筛选 UI + [💾 保存到模板] + 输出位置/命名输入与实时示例 + 预览/Step 4 统一真实渲染（Vitest 98 例全绿）） |
+| **测试** | 🟡 进行中（Vitest 单元已接入：`helpers`/`wizard-data`/`parsers`/`file-input`/`template-scanner` 纯函数共 98 例，含 D94–D98 行筛选/迁移/编译·反编译往返与真实渲染一致性用例、模板配置读写往返；CI `ci:test` 消费；本地不跑门禁） |
 | **文档** | 🟡 进行中 |
 | **发布** | ⬜ 待开始（目标 v1.0.0，2026-11-01） |
 
@@ -200,4 +200,4 @@ arcmesh:
 
 ---
 
-*版本: 1.13.0 | 最后更新: 2026-09-03*
+*版本: 1.17.0 | 最后更新: 2026-09-04*

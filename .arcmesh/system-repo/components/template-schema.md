@@ -1,8 +1,8 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.1.0"
-last_updated: "2026-09-03"
+version: "1.4.0"
+last_updated: "2026-09-04"
 status: "active"
 ---
 
@@ -25,8 +25,11 @@ status: "active"
 | `version` |  | 模板自身版本 |
 | `description` |  | 描述 |
 | `match` |  | `{ enabled, patterns: [{ type: regex\|glob\|exact, value }] }` 自动匹配规则 |
-| `output` |  | `{ folder, note_name, conflict_strategy, incremental_mode }` 输出默认值 |
-| `mapping` |  | 列映射 `[{ source, target }]`，缺省同名映射 |
+| `output` |  | `{ folder, note_name, conflict_strategy, incremental_mode }` **输出位置及命名规则**（D94）：`folder` 输出文件夹、`note_name` 文件名表达式 |
+| `row` |  | 行配置（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9）：`{ header_row, clean, remove, filter }`——`clean` 为跨行引擎开关（dedupe/filterInvalid），见 §9 |
+| `columns` |  | 列配置（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
+| `mapping` |  | 列映射 `[{ source, target }]`，缺省同名映射（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
+| `derived` |  | 派生字段预设 `[{ field, rule, source }]`（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
 | `validation` |  | 校验规则列表 `[{ field, type, message, options? }]` |
 | `notes` |  | 多笔记类型配置 `TemplateNoteSpec[]`（见 architecture.md §7） |
 
@@ -42,6 +45,7 @@ status: "active"
 | `_valid` | boolean | 是否通过校验 | Validator |
 | `_errors` | string[] | 错误列表 | Validator |
 | `_warnings` | string[] | 警告列表 | Validator |
+| `_index` | number | 解析后原始行号（1-based，D98 引擎注入，供行号删除等编译段使用） | DataPipeline |
 | `_folder` | string | 目标文件夹 | NoteGenerator |
 | `_status` | string | valid / warning / error | DataPipeline |
 | `_hash` | string | 哈希值（默认文件名） | NoteGenerator |
@@ -108,6 +112,70 @@ status: "active"
 
 约束：创建仅写入 `paths.templates` 目录（STANDARDS §7 安全标准）；失败抛 `TEMPLATE_004`（新增错误码）；创建成功自动刷新模板索引并选中新模板，无需重开向导。
 
+## 9. Step 3 配置编译为 Handlebars（D98）
+
+导入向导 Step 3 的全部配置在 [💾 保存到模板] 时**编译为 preprocess 模板的 Handlebars 代码段**（模板自包含、可迁移、可手改），由 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写（architecture §2.7/§2.10）；导入与预览统一由 `TemplateEngine.renderPreprocess` 执行，**不调用 JS 变换函数**。
+
+**标记段格式**：每个区块一个标记段，以成对注释包裹；无配置的区块省略整段。
+
+```handlebars
+{{!-- ipro:begin:row-remove --}}
+{{#if (inRange _index "2,5,8-10")}}{{set "_skip" true}}{{/if}}
+{{!-- ipro:end:row-remove --}}
+```
+
+段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-format`（列格式化）/ `column-process`（列处理）/ `column-mapping`（列映射）/ `derived`（派生字段）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+
+**编译映射**（向导状态 → Handlebars，目标代码**仅引用内置 Helper 白名单**）：
+
+| 向导配置 | 编译产物 |
+| :--- | :--- |
+| 行筛选（多规则 AND，保留=全部匹配） | `{{#unless (and 条件1 条件2 …)}}{{set "_skip" true}}{{/unless}}`；条件由 op → 内置 Helper（eq/neq/strContains/strStartsWith/strEndsWith/isEmpty/isNotEmpty/gt/gte/lt/lte/regexTest） |
+| 行筛选·任意列 | `col "*"` 内置 Helper 返回整行列值（任一列命中即通过，D97） |
+| 删除行·按行号 | `{{#if (inRange _index "2,5,8-10")}}{{set "_skip" true}}{{/if}}`（`_index` 引擎注入，§3） |
+| 行清洗·去除空行（预置规则） | `{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}` |
+| 列格式化 | `{{set "身份证号" (toIDCard 身份证号)}}` 等，按 `ColumnFormatOp` 映射 Helper |
+| 列处理 | `{{set "姓名" (trim 姓名)}}` 等，按 `ColumnProcessOp` 映射 Helper |
+| 列映射 | `{{set "身份证号" (lookup this "身份证号码")}}`（类型 `ignore` 的列编译为删除该字段或跳过映射） |
+| 派生字段 | `{{set "性别" (genderFromID 身份证号)}}`（`rule` id → 内置 Helper） |
+| 输出位置及命名 | **不生成代码段**——渲染时由 `output.folder` / `output.note_name`（Handlebars 表达式，§2）求值 |
+
+编译产物禁止引用外部 Helper，保证模板跨库可迁移；编译所需 Helper（`strContains`/`strStartsWith`/`strEndsWith`/`isEmpty`/`isNotEmpty`/`inRange`/`isEmptyRow`/`regexTest`/`col`）计入内置 Helper 白名单。
+
+**结构示例**（preprocess 块内，编译产物）：
+
+```handlebars
+{{!-- ipro:begin:row-remove --}}
+{{#if (inRange _index "2,5,8-10")}}{{set "_skip" true}}{{/if}}
+{{!-- ipro:end:row-remove --}}
+
+{{!-- ipro:begin:row-filter --}}
+{{#unless (strContains (col "部门") "技术")}}{{set "_skip" true}}{{/unless}}
+{{#unless (not (strContains (col "*") "测试"))}}{{set "_skip" true}}{{/unless}}
+{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}
+{{!-- ipro:end:row-filter --}}
+
+{{!-- ipro:begin:column-format --}}
+{{set "身份证号" (toIDCard 身份证号)}}
+{{!-- ipro:end:column-format --}}
+
+{{!-- ipro:begin:column-mapping --}}
+{{set "身份证号" (lookup this "身份证号码")}}
+{{!-- ipro:end:column-mapping --}}
+
+{{!-- ipro:begin:derived --}}
+{{set "性别" (genderFromID 身份证号)}}
+{{!-- ipro:end:derived --}}
+```
+
+**读写规则**：
+
+- **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
+- **读取（反编译）**：进入 Step 3 时解析 preprocess 标记段回填 UI（覆盖向导默认值）；段内代码被用户深度手改致无法反编译时，该区块回退默认值、保留代码不阻断。
+- **兼容迁移（D95→D98）**：读取旧模板时，frontmatter `row` / `columns` / `mapping` / `derived`（含 D97 的 `byContent`→neq/notContains、`removeEmpty`→预置规则）一次性编译进 preprocess 标记段；下次保存不再写这些 frontmatter 字段。`match` / `output` / `row.clean`（跨行引擎开关）保留 frontmatter。
+- **执行语义**：全部行/列/派生逻辑由 `renderPreprocess` 逐行执行，`_skip` 行由 DataPipeline 跳过；**跨行操作**（去重 `dedupe`、删除重复标题行 `duplicateHeader`）单行 Handlebars 无法表达，由引擎在渲染前按 `row.clean` 开关处理（D98 例外）；`row.header_row` 为解析级参数（ParseOptions），仅表格类数据源生效。
+- 执行顺序（D96/D97）：行删除 → 行筛选 → 列格式化 → 行清洗 → 列处理 → 列映射 → 派生，与编译段的代码顺序一致。
+
 ---
 
-*版本: 1.1.0 | 最后更新: 2026-09-03*
+*版本: 1.4.0 | 最后更新: 2026-09-04*

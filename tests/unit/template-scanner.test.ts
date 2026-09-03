@@ -6,7 +6,13 @@
  * createTemplate 的 vault 写入路径不在单测范围（Obsidian 闭源，无法无头运行）。
  */
 import { describe, expect, it } from 'vitest';
-import { nextAvailableFileName, newTemplateId, renderTemplateSkeleton } from '../../src/core/scanner/template-scanner';
+import {
+  composeStep3Snapshot,
+  nextAvailableFileName,
+  newTemplateId,
+  parseStep3Snapshot,
+  renderTemplateSkeleton
+} from '../../src/core/scanner/template-scanner';
 
 describe('newTemplateId（D92）', () => {
   it('tpl_ 前缀 + 时间戳短码，随时间不同', () => {
@@ -76,5 +82,121 @@ describe('renderTemplateSkeleton（D92，template-schema §8 骨架）', () => {
     });
     expect(out).toContain('- 员工 ID: {{[员工 ID]}}');
     expect(out).toContain('- 人员.编号: {{[人员.编号]}}');
+  });
+});
+
+describe('parseStep3Snapshot / composeStep3Snapshot（D95/D98 模板配置读写纯函数）', () => {
+  // 旧式模板：frontmatter 含 byContent 删除与 removeEmpty 清洗（D97 迁移输入）
+  const LEGACY = `---
+name: '员工档案模板'
+template_id: tpl_x
+match:
+  patterns:
+    - type: glob
+      value: '*.csv'
+output:
+  folder: '人员档案'
+  note_name: '{{_hash}}'
+row:
+  clean:
+    - removeEmpty
+  remove:
+    - kind: byContent
+      param: '测试'
+      mode: contains
+---
+
+\`\`\`handlebars
+{{!-- 用户手写预处理 --}}
+\`\`\`
+
+\`\`\`handlebars
+- {{姓名}}
+\`\`\`
+`;
+
+  it('读取：frontmatter 元信息 + byContent/removeEmpty 一次性迁移为筛选规则', () => {
+    const snap = parseStep3Snapshot(LEGACY);
+    expect(snap).not.toBeNull();
+    if (!snap) return;
+    expect(snap.name).toBe('员工档案模板');
+    expect(snap.matchType).toBe('glob');
+    expect(snap.matchPattern).toBe('*.csv');
+    expect(snap.outputFolder).toBe('人员档案');
+    expect(snap.outputNoteName).toBe('{{_hash}}');
+    // byContent(contains) → 任意列 不包含；removeEmpty → 预置 notEmpty 规则
+    const filter = snap.transform.filters;
+    expect(filter.some((f) => f.op === 'notContains' && f.value === '测试' && f.column === '*')).toBe(true);
+    expect(filter.some((f) => f.column === '*' && f.op === 'notEmpty')).toBe(true);
+  });
+
+  it('写入：配置编译进 preprocess 段 + frontmatter 仅保留元信息/引擎开关，段外用户代码保留', () => {
+    const snap = {
+      name: '新模板名',
+      matchType: 'regex' as const,
+      matchPattern: '^员工',
+      outputFolder: '输出目录',
+      outputNoteName: '{{_hash}}',
+      headerRow: 2,
+      transform: {
+        removeRows: [{ kind: 'duplicateHeader' as const, param: '' }],
+        filters: [{ column: '*', op: 'notEmpty' as const, value: '' }],
+        formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
+        clean: ['dedupe' as const],
+        processes: [],
+        mappings: [],
+        derived: []
+      }
+    };
+    const next = composeStep3Snapshot(LEGACY, snap);
+    expect(next).toContain('ipro:begin:row-filter');
+    expect(next).toContain('ipro:begin:column-format');
+    expect(next).toContain('用户手写预处理'); // 段外用户代码保留
+    expect(next).toContain('- {{姓名}}'); // 第二个代码块（content）保留
+    // frontmatter：name/output 更新；row 仅引擎开关；旧 byContent/removeEmpty/columns/mapping/derived 不产出
+    expect(next).toContain('name: 新模板名');
+    expect(next).toContain('^员工');
+    expect(next).toContain('folder: 输出目录');
+    expect(next).not.toContain('byContent');
+    expect(next).not.toContain('removeEmpty');
+    expect(next).not.toContain('columns:');
+    // row.remove 仅保留 duplicateHeader；row.clean 收敛 dedupe；header_row 写入
+    expect(next).toContain('header_row: 2');
+    expect(next).toContain('duplicateHeader');
+  });
+
+  it('写入 → 读回：段配置往返还原（模板 = 配置源）', () => {
+    const snap = {
+      name: '模板',
+      matchType: 'glob' as const,
+      matchPattern: '*.csv',
+      outputFolder: '出',
+      outputNoteName: '{{_hash}}',
+      headerRow: 0,
+      transform: {
+        removeRows: [{ kind: 'byIndex' as const, param: '3' }],
+        filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
+        formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
+        clean: [],
+        processes: [{ column: 'tags', op: 'split' as const, param: ',', param2: '' }],
+        mappings: [{ source: '身份证号码', target: '身份证号', type: 'text' as const }],
+        derived: [{ field: '性别', rule: 'genderFromID' as const, source: '身份证号' }]
+      }
+    };
+    const raw = composeStep3Snapshot(LEGACY, snap);
+    const back = parseStep3Snapshot(raw);
+    expect(back).not.toBeNull();
+    if (!back) return;
+    expect(back.transform.removeRows).toEqual([{ kind: 'byIndex', param: '3' }]);
+    expect(back.transform.filters).toEqual(snap.transform.filters);
+    expect(back.transform.formats).toEqual(snap.transform.formats);
+    expect(back.transform.processes).toEqual(snap.transform.processes);
+    expect(back.transform.mappings).toEqual(snap.transform.mappings);
+    expect(back.transform.derived).toEqual(snap.transform.derived);
+    expect(back.outputFolder).toBe('出');
+  });
+
+  it('无 template_id 的文本不可解析（防御）', () => {
+    expect(parseStep3Snapshot('---\nname: x\n---\n```handlebars\n```')).toBeNull();
   });
 });
