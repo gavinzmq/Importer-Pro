@@ -17,6 +17,7 @@ import { ImportService } from '../core/import-service';
 import { TemplateScanner } from '../core/scanner/template-scanner';
 import { ParserRegistry } from '../core/parser/registry';
 import type { DataRecord, FileInfo, ImportHistoryEntry, ImportResult, PluginSettings } from '../types';
+import { ImporterProError } from '../utils/errors';
 import { extOf } from '../utils/path';
 import { PauseController } from '../core/pause-controller';
 import { FilePickerFactory, pickOptionsForSource } from './platform';
@@ -584,8 +585,11 @@ export class ImportModal extends Modal {
     try {
       const parser = this.deps.parsers.getForFile(info);
       // 表单枚举（仅 Excel 提供，ui/layout.md §5.3）
-      const getSheets = (parser as unknown as { getSheetNames?: (f: FileInfo) => Promise<string[]> }).getSheetNames;
-      this.sheetNames = getSheets ? await getSheets(info) : [];
+      // ⚠ 必须成员调用保留 this：getSheetNames 内部访问 this.ctx；若先解构成局部函数再调用
+      // （getSheets(info)）会丢 this → 抛 TypeError「Cannot read properties of undefined (reading 'ctx')」，
+      // 即外部 Excel 第三步误报 IO_002 的根因。
+      const withSheets = parser as unknown as { getSheetNames?: (f: FileInfo) => Promise<string[]> };
+      this.sheetNames = typeof withSheets.getSheetNames === 'function' ? await withSheets.getSheetNames(info) : [];
       if (this.sheetNames.length > 1 && !this.sheetNames.includes(this.sheetName)) {
         this.sheetName = this.sheetNames[0];
       }
@@ -601,7 +605,13 @@ export class ImportModal extends Modal {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.parseError = `IO_002 文件读取失败：${msg}`;
+      // 错误分类：仅原生异常（blob/Vault 读取的 DOMException/TypeError 等）标 IO_002「文件读取失败」；
+      // ImporterProError 保留其真实错误码（如 PARSE_001 不支持格式），避免把解析/格式问题误报为读取失败误导定位。
+      if (e instanceof ImporterProError) {
+        this.parseError = `${e.code} ${e.message}`;
+      } else {
+        this.parseError = `IO_002 文件读取失败：${msg}`;
+      }
       this.parsed = [];
     }
   }
