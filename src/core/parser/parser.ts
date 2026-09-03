@@ -11,7 +11,11 @@ export interface IDataParser {
   getColumns(file: FileInfo): Promise<string[]>;
 }
 
-/** 解析上下文：注入 Vault 读取能力 */
+/**
+ * 解析上下文：注入读取能力。
+ * - Vault 内文件：经 `app.vault` 按 FileInfo.path 读取；
+ * - 外部文件（FileInfo 携带 `blob` 句柄，D81）：按需从句柄 arrayBuffer()/text()，不依赖 Vault/本地 fs，跨端一致。
+ */
 export class ParserContext {
   constructor(public app: App) {}
 
@@ -19,16 +23,18 @@ export class ParserContext {
     return this.app.vault;
   }
 
-  async readBinary(path: string): Promise<ArrayBuffer> {
-    const file = this.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error(`文件不存在: ${path}`);
-    return this.vault.readBinary(file);
+  async readBinary(file: FileInfo): Promise<ArrayBuffer> {
+    if (file.blob) return await file.blob.arrayBuffer();
+    const vaultFile = this.vault.getAbstractFileByPath(file.path);
+    if (!(vaultFile instanceof TFile)) throw new Error(`文件不存在: ${file.path}`);
+    return this.vault.readBinary(vaultFile);
   }
 
-  async readText(path: string): Promise<string> {
-    const file = this.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error(`文件不存在: ${path}`);
-    return this.vault.read(file);
+  async readText(file: FileInfo): Promise<string> {
+    if (file.blob) return await file.blob.text();
+    const vaultFile = this.vault.getAbstractFileByPath(file.path);
+    if (!(vaultFile instanceof TFile)) throw new Error(`文件不存在: ${file.path}`);
+    return this.vault.read(vaultFile);
   }
 }
 
@@ -74,19 +80,23 @@ export abstract class BaseParser implements IDataParser {
   constructor(protected ctx: ParserContext) {}
 
   canParse(file: FileInfo): boolean {
-    return this.supportedFormats.includes(extOf(file.path));
+    // 移动端外部文件 path 可能为空 → 回落 file.extension（外部格式匹配走扩展名字段）
+    const ext = extOf(file.path) || file.extension;
+    return this.supportedFormats.includes(ext);
   }
 
   abstract doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]>;
 
   async parse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const key = `${file.path}|${options?.sheetName ?? ''}`;
-    if (!options?.sheetName) {
+    // 外部文件（携带 blob 句柄）不预加载内容且可能被用户重选/覆盖 → 每次按需解析，不做结果缓存；
+    // Vault 内文件保留 LRU 缓存（键并入 name:size，避免不同来源文件同 key 误命中）。
+    const key = `${file.path}|${file.name}:${file.size}|${options?.sheetName ?? ''}`;
+    if (!file.blob && !options?.sheetName) {
       const cached = this.cache.get(key);
       if (cached) return cached;
     }
     const records = await this.doParse(file, options);
-    this.cache.set(key, records);
+    if (!file.blob) this.cache.set(key, records);
     return records;
   }
 

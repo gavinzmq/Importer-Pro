@@ -6,7 +6,7 @@ export class HTMLParser extends BaseParser {
   readonly supportedFormats = ['html', 'htm'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const text = await this.ctx.readText(file.path);
+    const text = await this.ctx.readText(file);
     const doc = new DOMParser().parseFromString(text, 'text/html');
     const table = doc.querySelector('table');
     if (!table) {

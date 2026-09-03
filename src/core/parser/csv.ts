@@ -7,7 +7,7 @@ export class CSVParser extends BaseParser {
   readonly supportedFormats = ['csv', 'tsv'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const buf = await this.ctx.readBinary(file.path);
+    const buf = await this.ctx.readBinary(file);
     const text = decodeAuto(buf);
     const delimiter = file.extension === 'tsv' ? '\t' : undefined;
     const result = Papa.parse<DataRecord>(text, {

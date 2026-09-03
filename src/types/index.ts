@@ -15,10 +15,15 @@ export type DataRecord = Record<string, any>;
 
 /** 待解析文件的统一描述 */
 export interface FileInfo {
-  path: string; // Vault 内相对路径
+  path: string; // 文件路径：Vault 内为相对路径；外部文件为绝对路径（移动端为文件提供方标识/空串）
   name: string; // 文件名（含扩展名）
   extension: string; // 小写扩展名，如 "xlsx"
   size: number; // 字节数
+  /**
+   * 可选按需读取句柄（仅外部文件携带，桌面/移动端一致）：选择文件时持有的 DOM File/Blob，
+   * 内容不预加载进内存；解析/预览时按需 arrayBuffer()/text()。缺省（Vault 内文件/API 构造）经 path 走 Vault 读取。
+   */
+  blob?: File | Blob;
 }
 
 export interface ParseOptions {

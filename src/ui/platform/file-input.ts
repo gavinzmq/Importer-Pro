@@ -9,7 +9,11 @@ import type { FilePickerOptions } from './types';
 
 const EXT_RE = /\.([^.]+)$/;
 
-/** 从 DOM File 构造 FileInfo（外部文件 path 语义见类型注释） */
+/**
+ * 从 DOM File 构造 FileInfo（外部文件 path 语义见类型注释）。
+ * 同时携带 File/Blob 句柄（`blob`）作为外部文件的按需读取源：内容不预加载，
+ * 向导 Step 3 解析/预览时经 ParserContext 按需 arrayBuffer()/text()（桌面/移动端一致，D81）。
+ */
 export function toFileInfo(file: File, resolvePath: boolean): FileInfo {
   const m = EXT_RE.exec(file.name);
   const extension = m ? m[1].toLowerCase() : '';
@@ -19,7 +23,7 @@ export function toFileInfo(file: File, resolvePath: boolean): FileInfo {
     const p = (file as unknown as { path?: string }).path;
     if (typeof p === 'string' && p.length > 0) path = p;
   }
-  return { name: file.name, extension, size: file.size, path };
+  return { name: file.name, extension, size: file.size, path, blob: file };
 }
 
 /** 构造 input.accept（如 ['xlsx','xls'] → '.xlsx,.xls'）；空数组返回 '' */
@@ -45,10 +49,16 @@ export function pickViaFileInput(
     input.multiple = options.multiple === true;
 
     let settled = false;
+    let cancelTimer: number | null = null;
+    const toFileInfos = (fs: FileList | null): FileInfo[] | null => {
+      const selected = Array.from(fs ?? []);
+      return selected.length > 0 ? selected.map((f) => toFileInfo(f, resolvePath)) : null;
+    };
     const cleanup = (): void => {
       input.removeEventListener('change', onChange);
       input.removeEventListener('cancel', onCancel);
       window.removeEventListener('focus', onFocusFallback);
+      if (cancelTimer !== null) window.clearTimeout(cancelTimer);
       input.remove();
     };
     const finish = (files: FileInfo[] | null): void => {
@@ -58,16 +68,25 @@ export function pickViaFileInput(
       resolve(files);
     };
     const onChange = (): void => {
-      const selected = Array.from(input.files ?? []);
-      finish(selected.length > 0 ? selected.map((f) => toFileInfo(f, resolvePath)) : null);
+      finish(toFileInfos(input.files));
     };
     const onCancel = (): void => {
-      // Electron / Chromium 113+：系统对话框取消时触发
-      finish(null);
+      // Electron / Chromium 113+：系统对话框取消时触发；个别版本存在"已选文件仍派发
+      // cancel"的缺陷 → 先核对 files，确有选中则按成功结算而非误判取消。
+      finish(toFileInfos(input.files));
     };
     const onFocusFallback = (): void => {
-      // 无 cancel 事件的平台（部分 iOS WebView）：窗口回归前台且未触发 change → 视为取消
-      finish(null);
+      // 平台差异（Windows 实测）：系统对话框关闭、窗口回归前台时 focus 可能先于
+      // input 的 change 派发。此时 input.files 通常已就绪 → 先按已选文件结算；
+      // 未就绪则短暂延后判取消，避免把已选文件误判为"取消"导致选择丢失。
+      if (settled) return;
+      const picked = toFileInfos(input.files);
+      if (picked) {
+        finish(picked);
+        return;
+      }
+      if (cancelTimer !== null) window.clearTimeout(cancelTimer);
+      cancelTimer = window.setTimeout(() => finish(null), 200);
     };
 
     input.addEventListener('change', onChange);
@@ -75,6 +94,6 @@ export function pickViaFileInput(
     document.body.appendChild(input);
     input.click();
     // 延迟注册前台兜底，避免对话框弹出瞬间误判取消
-    window.setTimeout(() => window.addEventListener('focus', onFocusFallback, { once: true }), 400);
+    window.setTimeout(() => window.addEventListener('focus', onFocusFallback), 400);
   });
 }

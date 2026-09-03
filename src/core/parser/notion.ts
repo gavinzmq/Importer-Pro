@@ -9,7 +9,7 @@ export class NotionParser extends BaseParser {
   readonly supportedFormats = ['zip'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const buf = await this.ctx.readBinary(file.path);
+    const buf = await this.ctx.readBinary(file);
     const zip = await JSZip.loadAsync(buf);
     const csvFiles = Object.values(zip.files).filter((f) => f.name.endsWith('.csv'));
     const jsonFiles = Object.values(zip.files).filter((f) => f.name.endsWith('.json'));

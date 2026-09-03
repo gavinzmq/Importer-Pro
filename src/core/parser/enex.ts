@@ -6,7 +6,7 @@ export class EnexParser extends BaseParser {
   readonly supportedFormats = ['enex'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const text = await this.ctx.readText(file.path);
+    const text = await this.ctx.readText(file);
     const doc = new DOMParser().parseFromString(text, 'application/xml');
     const notes = Array.from(doc.getElementsByTagName('note'));
     const rows: DataRecord[] = notes.map((note) => ({

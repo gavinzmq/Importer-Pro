@@ -2,7 +2,7 @@
  * 导入向导 Modal（4 步：来源选择 → 文件管理 → 模板配置 → 进度执行）
  * 权威布局：.arcmesh/ui/layout.md（Step1 §3 / Step2 §4 / Step3 §5 / Step4 §6–7）
  * 文件选择平台抽象（IFilePicker + FilePickerFactory）：architecture §5 / §9.7
- * Step 2 单列表（会话+历史、路径引用）：decisions D66–D68
+ * Step 2 单列表（会话+历史、路径引用）：decisions D66–D68；外部文件端到端导入：D81（decisions/2026-09-03-external-file-e2e.md）
  */
 import {
   App,
@@ -74,20 +74,22 @@ const SOURCE_GROUPS: Array<{ group: string; icon: string; items: SourceItem[] }>
   }
 ];
 
-/* ── Step 2 会话条目（D66–D68：仅记录路径引用，不预加载内容） ── */
+/* ── Step 2 会话条目（D66–D68：仅记录路径引用/句柄，不预加载内容；D81：外部文件 e2e） ── */
 interface SessionEntry {
   id: string; // 去重键：Vault 内=相对路径；外部=绝对路径/移动端标识（去重含历史）
   file: FileInfo;
-  vaultPath: string | null; // Vault 相对路径（可解析/导入）；null = 外部文件（本里程碑仅排队）
+  vaultPath: string | null; // Vault 相对路径（可解析/导入）；null = 外部文件（携带 blob 句柄按需读取）
   selected: boolean;
 }
 
 /* ── Step 3 当前配置对象 ── */
 interface Step3Target {
-  vaultPath: string;
+  vaultPath: string | null; // Vault 相对路径；null = 外部文件（解析经 file.blob，D81 起可端到端导入）
   label: string;
   isHistory: boolean;
   history?: ImportHistoryEntry;
+  /** 数据源 FileInfo：Vault 内由 prepareParse 按 vaultPath 重建；外部文件沿用所选 FileInfo（含 blob 句柄） */
+  file?: FileInfo;
 }
 
 export interface ImportModalDeps {
@@ -127,7 +129,6 @@ export class ImportModal extends Modal {
   // Step 2 状态（D66：会话+历史合并单列表）
   private session: SessionEntry[] = [];
   private selectedId: string | null = null;
-  private externalSelected = false; // 选中的是外部文件（仅排队，本里程碑不可解析/导入）
 
   // Step 3 状态
   private step3: Step3Target | null = null;
@@ -324,6 +325,7 @@ export class ImportModal extends Modal {
       if (s.file.extension) meta.createSpan({ cls: 'ipw-file-ext', text: `.${s.file.extension}` });
       meta.createSpan({ cls: 'ipw-pending', text: '[待导入]' });
       if (s.vaultPath) meta.createSpan({ cls: 'ipw-vault-path', text: s.vaultPath });
+      else meta.createSpan({ cls: 'ipw-vault-path', text: '外部文件' });
       const remove = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕', attr: { title: '移除' } });
       remove.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -356,20 +358,27 @@ export class ImportModal extends Modal {
       meta.createSpan({ cls: 'ipw-count', text: `${formatCount(h.succeeded)} 条` });
       meta.createSpan({ text: formatTimeAgo(h.startedAt) });
       const ops = row.createDiv({ cls: 'ipw-row-ops' });
-      const bImport = ops.createEl('button', { cls: 'ipw-mini', text: '🔄 直接导入' });
-      bImport.addEventListener('click', () => void this.importHistoryDirect(h));
-      const bEdit = ops.createEl('button', { cls: 'ipw-mini', text: '📝 修改模板' });
-      bEdit.addEventListener('click', () => {
-        this.step3 = {
-          vaultPath: normalizePath(h.sourceFile),
-          label: basenameOf(h.sourceFile) || h.sourceFile,
-          isHistory: true,
-          history: h
-        };
-        this.templateId = h.templateId;
-        this.step = 3;
-        void this.render();
-      });
+      // 仅 Vault 内仍可访问的来源支持「直接导入/修改模板」；外部文件（句柄不跨会话）或原文件已删的历史仅保留记录
+      const histFile = this.app.vault.getAbstractFileByPath(normalizePath(h.sourceFile));
+      const importable = histFile instanceof TFile;
+      if (!importable) {
+        meta.createSpan({ cls: 'ipw-muted', text: '（外部文件/原文件不可用，请重新选择后导入）' });
+      } else {
+        const bImport = ops.createEl('button', { cls: 'ipw-mini', text: '🔄 直接导入' });
+        bImport.addEventListener('click', () => void this.importHistoryDirect(h));
+        const bEdit = ops.createEl('button', { cls: 'ipw-mini', text: '📝 修改模板' });
+        bEdit.addEventListener('click', () => {
+          this.step3 = {
+            vaultPath: normalizePath(h.sourceFile),
+            label: basenameOf(h.sourceFile) || h.sourceFile,
+            isHistory: true,
+            history: h
+          };
+          this.templateId = h.templateId;
+          this.step = 3;
+          void this.render();
+        });
+      }
       const bDel = ops.createEl('button', { cls: 'ipw-mini ipw-danger', text: '🗑 删除' });
       bDel.addEventListener('click', () => {
         if (!window.confirm(`从导入历史中删除「${basenameOf(h.sourceFile)}」？`)) return;
@@ -417,7 +426,6 @@ export class ImportModal extends Modal {
     if (existing) {
       existing.selected = true;
       this.selectedId = existing.id;
-      this.externalSelected = existing.vaultPath === null;
       void this.render();
       return;
     }
@@ -427,15 +435,15 @@ export class ImportModal extends Modal {
       return;
     }
 
+    // Vault 内文件映射为相对路径后不再携带 blob（解析走 Vault）；外部文件保留 blob 句柄（Step 3 按需解析）
     const entry: SessionEntry = {
       id,
-      file: vaultPath ? { ...file, path: vaultPath } : file,
+      file: vaultPath ? { name: file.name, extension: file.extension, size: file.size, path: vaultPath } : file,
       vaultPath,
       selected: true
     };
     this.session.push(entry);
     this.selectedId = entry.id;
-    this.externalSelected = vaultPath === null;
     void this.render();
   }
 
@@ -449,7 +457,7 @@ export class ImportModal extends Modal {
       const normBase = base.replace(/\\/g, '/').toLowerCase();
       const normPath = file.path.replace(/\\/g, '/');
       if (!normPath.toLowerCase().startsWith(normBase + '/') && normPath.toLowerCase() !== normBase) {
-        return null; // Vault 外 → 外部文件（本里程碑仅排队，e2e 待 R01）
+        return null; // Vault 外 → 外部文件（D81 起可端到端解析/导入，读取经 file.blob）
       }
       const rel = normPath.slice(base.length).replace(/^\/+/, '');
       const resolved = this.app.vault.getAbstractFileByPath(normalizePath(rel));
@@ -465,33 +473,29 @@ export class ImportModal extends Modal {
     if (!sel) return;
     if (sel.vaultPath) {
       this.step3 = { vaultPath: sel.vaultPath, label: sel.file.name, isHistory: false };
-      this.externalSelected = false;
     } else {
-      // 外部文件：仅排队，本里程碑不支持解析/预览（D65/D66 边界，e2e 待 R01）
-      this.step3 = null;
-      this.externalSelected = true;
+      // 外部文件（D65/D66/D75 边界已解除，D81）：携带 blob 句柄进入 Step 3，可解析/预览并完成导入
+      this.step3 = { vaultPath: null, file: sel.file, label: sel.file.name, isHistory: false };
     }
     this.step = 3;
     void this.render();
   }
 
+  /** 来源标注：Vault 内=相对路径；外部=绝对路径（移动端无路径时回落文件名），供历史记录/日志使用 */
+  private sourceLabelFor(t: Step3Target): string {
+    if (t.vaultPath) return t.vaultPath;
+    return t.file?.path || t.label;
+  }
+
   /* ── Step 3：模板配置（7 区块，ui/layout.md §5） ─────────── */
 
   private async renderStep3(el: HTMLElement): Promise<void> {
-    // 外部文件仅排队 → 直接给出引导，不进入配置
-    if (this.externalSelected || (!this.step3 && this.selectedId)) {
-      el.createDiv({
-        cls: 'ipw-banner',
-        text: '该文件为 Vault 外的外部文件（路径引用）。本里程碑支持排队与选中，端到端解析/导入将随 roadmap R01 提供。请选择 Vault 内文件或从历史记录快速导入。'
-      });
-      return;
-    }
     if (!this.step3) {
       el.createDiv({ cls: 'ipw-banner', text: '请先在 Step 2 选择一个可导入的文件。' });
       return;
     }
 
-    await this.prepareParse(); // 解析当前文件（含表单/行数/列）
+    await this.prepareParse(); // 解析当前文件（含表单/行数/列；Vault 内按路径读取，外部经 blob 句柄）
     await this.loadTemplates();
 
     // 区块 1：文件信息条
@@ -548,22 +552,35 @@ export class ImportModal extends Modal {
     const t = this.step3;
     if (!t) return;
     this.parseError = null;
-    const file = this.app.vault.getAbstractFileByPath(t.vaultPath);
-    if (!(file instanceof TFile)) {
-      this.parseError = 'IO_002 文件读取失败：原文件不可访问，请返回重新选择。';
+    const resetFail = (msg: string): void => {
+      this.parseError = msg;
       this.parsed = [];
       this.parsedInfo = null;
       this.sheetNames = [];
       this.sheetName = '';
+    };
+
+    // 数据源 FileInfo：Vault 内按路径重建（读取走 Vault）；外部文件沿用所选 FileInfo（携带 blob 句柄，按需读取）
+    let info: FileInfo | null = null;
+    if (t.vaultPath) {
+      const file = this.app.vault.getAbstractFileByPath(t.vaultPath);
+      if (!(file instanceof TFile)) {
+        resetFail('IO_002 文件读取失败：原文件不可访问，请返回重新选择。');
+        return;
+      }
+      info = { path: file.path, name: file.name, extension: extOf(file.path), size: file.stat.size };
+    } else if (t.file) {
+      if (!t.file.blob) {
+        resetFail('IO_002 文件读取失败：外部文件句柄不可用，请返回 Step 2 重新选择该文件。');
+        return;
+      }
+      info = t.file;
+    } else {
+      resetFail('IO_002 文件读取失败：缺少可读取的数据源，请返回重新选择。');
       return;
     }
-    const info: FileInfo = {
-      path: file.path,
-      name: file.name,
-      extension: extOf(file.path),
-      size: file.stat.size
-    };
     this.parsedInfo = info;
+    if (!info) return; // 防御：确保数据源非空后进入解析
     try {
       const parser = this.deps.parsers.getForFile(info);
       // 表单枚举（仅 Excel 提供，ui/layout.md §5.3）
@@ -1038,7 +1055,7 @@ export class ImportModal extends Modal {
     if (this.step4Dry === null) {
       const status = el.createDiv({ cls: 'ipw-run-status', text: '🔍 正在预检（Dry Run），计算将新建/更新/跳过…' });
       const dry = await this.deps.service.importRecords(this.templateId, this.currentRecords(), {
-        sourceLabel: target.vaultPath,
+        sourceLabel: this.sourceLabelFor(target),
         dryRun: true
       });
       if (!this.contentEl.isConnected) return; // 向导已关闭，放弃后续渲染
@@ -1155,7 +1172,7 @@ export class ImportModal extends Modal {
       status.setText('⏹ 正在停止…（保留已写入的笔记）');
     });
 
-    const sourceLabel = target.vaultPath;
+    const sourceLabel = this.sourceLabelFor(target); // Vault 相对路径 / 外部绝对路径（历史记录来源标注）
     if (startAt > 0) pushLog('info', `↩️ 已停止于第 ${formatCount(startAt)} 个笔记，本次从断点继续…`);
     pushLog('info', `开始导入 ${sourceLabel}，共 ${formatCount(records.length)} 条记录…`);
 

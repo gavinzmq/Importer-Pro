@@ -5,7 +5,7 @@ export class JSONParser extends BaseParser {
   readonly supportedFormats = ['json'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const text = await this.ctx.readText(file.path);
+    const text = await this.ctx.readText(file);
     const parsed = JSON.parse(text) as unknown;
     const rows: DataRecord[] = Array.isArray(parsed)
       ? (parsed as DataRecord[])

@@ -6,7 +6,7 @@ export class AppleNotesParser extends BaseParser {
   readonly supportedFormats = ['notes'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const text = await this.ctx.readText(file.path);
+    const text = await this.ctx.readText(file);
     const doc = new DOMParser().parseFromString(text, 'text/html');
     const title = doc.querySelector('title')?.textContent?.trim() || file.name.replace(/\.notes$/i, '');
     const content = doc.body?.textContent?.trim() || text.trim();

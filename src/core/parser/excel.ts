@@ -6,7 +6,7 @@ export class ExcelParser extends BaseParser {
   readonly supportedFormats = ['xlsx', 'xls'];
 
   async doParse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
-    const data = await this.ctx.readBinary(file.path);
+    const data = await this.ctx.readBinary(file);
     const workbook = XLSX.read(data, { type: 'array' });
     const sheetName = options?.sheetName ?? workbook.SheetNames[0];
     if (!sheetName) return [];
@@ -17,7 +17,7 @@ export class ExcelParser extends BaseParser {
 
   /** 枚举工作表名（Step 3 区块 2"数据表单选择"按需调用；ui/layout.md §5.3） */
   async getSheetNames(file: FileInfo): Promise<string[]> {
-    const data = await this.ctx.readBinary(file.path);
+    const data = await this.ctx.readBinary(file);
     const workbook = XLSX.read(data, { type: 'array' });
     return workbook.SheetNames; 
   }
