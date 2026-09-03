@@ -1,7 +1,7 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.3.0"
+version: "1.3.1"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -82,6 +82,10 @@ arcmesh:
 - **质量门禁**：ESLint 零容忍、测试覆盖率 ≥80%
 - **自动发布**：标签触发自动发布到 GitHub Releases
 
+### 🐛 修复
+
+- **修复 Step 3 Excel 误报 `IO_002`（D85）**：表单枚举 `getSheetNames` 原被解构为局部函数调用而丢失 `this`，内部访问 `this.ctx` 抛 `TypeError`，使（外部）Excel 进入 Step 3 必现「IO_002 文件读取失败」。现改为成员调用保留 `this`；并收紧解析阶段错误分类——`ImporterProError` 保留真实错误码（如 `PARSE_001`），仅原生读取异常标 `IO_002`（见 decisions/2026-09-03-step3-sheetnames-ctx-fix.md）。
+
 ---
 
-*版本: 1.3.0 | 最后更新: 2026-09-03*
+*版本: 1.3.1 | 最后更新: 2026-09-03*

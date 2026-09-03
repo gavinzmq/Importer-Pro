@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.10.0"
+version: "1.10.1"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -592,6 +592,8 @@ interface PluginSettings {
 | `MERGE_` | 合并 | `MERGE_001` 无法合并的内容 |
 | `API_` | API 调用参数 | `API_001` 参数非法 |
 | `SECURITY_` | 安全（路径越界等） | `SECURITY_001` 路径越出 Vault |
+
+> **错误分类口径**（D85）：向导 Step 3 解析阶段仅**原生异常**（`FileInfo.blob`/Vault 读取的 `DOMException`/`TypeError` 等）标 `IO_002 文件读取失败`；`ImporterProError`（如 `PARSE_001` 不支持格式、`PARSE_002` 解析失败）保留真实错误码前缀展示，不误标为读取失败。实现见 decisions/2026-09-03-step3-sheetnames-ctx-fix.md。
 
 ### 9.4 CSV 编码处理
 
