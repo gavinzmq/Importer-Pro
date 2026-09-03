@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.8.1"
+version: "1.8.2"
 last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
@@ -257,7 +257,7 @@ export interface IValidator {
     → API 暴露 → 其他插件查询
 ```
 
-> 历史记录持久化在插件 `data.json` 的 `importHistory` 字段；每次导入追加一条，超出 20 条时裁剪最旧记录。
+> 历史记录持久化在插件 `data.json` 的 `importHistory` 字段；**仅成功导入**的会话条目写入一条，超出 20 条时裁剪最旧记录；**未导入的会话条目不落历史**——向导关闭即移除。
 >
 > 文件引用：导入向导所选文件仅记录路径引用（§2.8），DataParser 按需从原路径读取；插件不预加载、不复制文件，亦无临时缓存需清理。
 
@@ -281,7 +281,7 @@ export interface IValidator {
 
 > **钩子 vs 事件**：钩子（Hook，见 `hooks/`）是核心流程内的**同步扩展点**，可修改上下文并影响后续流程；事件（`IEventBus`）是**异步广播**，订阅方只读观察、不阻塞主流程。`IExporter` 为后续导出功能预留，v1.0.0 不提供内置导出实现。
 >
-> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后 Step 2 会话队列仅记录路径引用（§2.8）并追加条目、自动选中（D66–D68）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
+> **UI 平台能力抽象（接口 + 反射工厂）**：平台差异能力（文件选择等）一律先定义 `I` 前缀接口，再由 `FilePickerFactory` 等反射工厂提供实例——工厂维护 `Map<platform, ctor>` 注册表，实现类（`DesktopFilePicker` / `MobileFilePicker`）在模块加载时反射注册，工厂按平台（唯一判定入口 `Platform.isDesktop` / `Platform.isMobile`）实例化；UI 组件仅依赖接口、不散落平台分支。选择契约：`pickFile(options)` 返回 `Promise<FileInfo | null>`（取消返回 `null` 且不改向导状态），`accept` 按 Step 1 数据源映射过滤，读取失败错误码 `IO_002`。选中成功后 Step 2 文件列表（会话 + 历史合并）追加会话条目、自动选中（去重含历史条目），并仅记录路径引用（§2.8）（D66–D68）。交互布局见 [../ui/layout.md](../ui/layout.md) §4。
 
 ## 6. 目录结构
 
@@ -355,10 +355,11 @@ interface FileInfo {
   size: number;        // 字节数
 }
 
-/** Step 2 会话队列条目（待导入文件，仅记录路径引用） */
+/** Step 2 文件列表会话条目（本次选择的文件，仅记录路径引用） */
 interface ImportFileEntry {
-  id: string;      // 去重标识：Vault 内 = 相对路径；外部 = 绝对路径/移动端文件标识
+  id: string;      // 去重标识：Vault 内 = 相对路径；外部 = 绝对路径/移动端文件标识（去重含历史条目）
   file: FileInfo;  // 文件元信息（路径引用，不预加载内容）
+  // 生命周期：未导入 → 向导关闭即移除、不落历史；导入成功 → 转为 ImportHistoryEntry 保留
 }
 
 interface ParseOptions {
@@ -609,4 +610,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.8.1 | 最后更新: 2026-09-03_
+_版本: 1.8.2 | 最后更新: 2026-09-03_

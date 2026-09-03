@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.4.1"
+version: "1.4.2"
 last_updated: "2026-09-03"
 status: "active"
 ---
@@ -80,7 +80,7 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 
 ### 待导入文件 (Pending Import File)
 
-Step 2 会话队列中的条目（`ImportFileEntry`），选择文件后自动追加并选中（已存在则仅选中）；仅记录路径引用，解析/预览按需从原路径读取（见 [architecture.md](system-repo/architecture.md) §2.8）。
+Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择文件后自动追加并选中（列表已存在同文件——含历史条目——则仅选中不新增）；仅记录路径引用，解析/预览按需从原路径读取；未导入自动删除，导入成功转历史条目（见 [architecture.md](system-repo/architecture.md) §2.8、[layout.md](ui/layout.md) §4）。
 
 ---
 
@@ -136,7 +136,7 @@ Step 2 会话队列中的条目（`ImportFileEntry`），选择文件后自动�
 
 ### 导入历史 (Import History)
 
-每次导入的概要记录（模板、源文件、耗时、成功/失败数），持久化于插件 `data.json`，保留最近 20 次。
+每次**成功导入**的概要记录（模板、源文件、耗时、成功/失败数），持久化于插件 `data.json`，保留最近 20 次；未导入的会话条目不落历史。
 
 ### 增量更新 (Incremental Update)
 
@@ -336,4 +336,4 @@ Step 2 会话队列中的条目（`ImportFileEntry`），选择文件后自动�
 
 ---
 
-*版本: 1.4.1 | 最后更新: 2026-09-03*
+*版本: 1.4.2 | 最后更新: 2026-09-03*
