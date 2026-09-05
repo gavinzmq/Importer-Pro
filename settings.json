@@ -1,0 +1,24 @@
+{
+    "github.copilot.enable": {
+        "*": true, // 默认对所有文件开启
+        "plaintext": false,
+        "markdown": false,
+        "*.json": false,
+        "*.yaml": false,
+        "*.env": false,
+        "*.lock": false,
+        "**/node_modules/**": false,
+        "**/dist/**": false,
+        "**/build/**": false,
+        "*.test.ts": false, // 可考虑关闭测试文件
+        "*.spec.ts": false
+    },
+    // 2. 使用 "focused" 上下文模式，仅关注当前文件和最近引用的文件
+    "copilot.next.contextMode": "focused",
+    // 3. 高级优化：禁用自动导入，减少不必要的 Token 消耗
+    "github.copilot.advanced.autoImports": false,
+    // 4. 高级优化：设置触发延迟 (毫秒)，避免频繁请求
+    "github.copilot.advanced.triggerDelayMs": 300,
+    "deepseek-copilot.experimental.stabilizeToolList": true
+    // "github.copilot.chat.advanced.model": "gpt-4o"
+}
