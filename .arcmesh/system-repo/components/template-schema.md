@@ -195,6 +195,8 @@ status: "active"
 
 > **D113（2026-09-05 已实现）实现口径注记**：设置链以收敛范围落地——`ColumnMapping.settings` 只承载**列格式化 / 列处理**步骤（`MappingSetting`，组内复用既有 op/参数），列侧仅产 `column-mapping` 段；`类型` 快捷转换（toIDCard/toNumber/toDate）为隐含前置步骤并与同语义首条设置去重；**≥2 步以 pipe 表达**（`PIPE_STAGE_WHITELIST` 增 `strTrim`/`strSplit`/`fillDefault`）。**派生预设仍以 rule 行编译进 `derived` 段**（D108「类型/规则 · 派生字段」下拉承载，不并入 settings chips——与上方 D105 草案差异）。旧 `column-format`/`column-process` 段与旧 frontmatter `columns.format/process` 读取折叠为设置链（按列合并、toIDCard/toNumber/toDate 折为类型快捷）。决策与实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D113）。
 
+> **D117（2026-09-05 已实现）实现口径注记**：「类型」列收敛为 **FrontMatter 类型**（文本/数字/日期/布尔/忽略；数字/日期/布尔隐含 `toNumber`/`toDate`/`toBoolean`，新增 `toBoolean` 阶段，见 template-engine 白名单）；「身份证」不再作类型（`toIDCard` 收进「添加设置·列格式化」设置；旧 column-mapping 段隐含 toIDCard 首步读回折为 format toIDCard 设置、toNumber/toDate/toBoolean 读回为类型）。「添加设置」= 列格式化/列处理/**列派生** 三组下拉；**派生仍编译进 `derived` 段**（入口由 D108「类型/规则·派生字段」下拉改为「添加设置·列派生」，D117 起派生行可携带类型隐含转换与格式化/处理设置——派生产出后经直调/pipe 后续链；无后续时保持既有单步/pipe 形态）。决策与实现见 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117）。
+
 **读写规则**：
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
@@ -205,4 +207,4 @@ status: "active"
 
 ---
 
-*版本: 1.11.0 | 最后更新: 2026-09-05*
+*版本: 1.12.0 | 最后更新: 2026-09-05*

@@ -26,6 +26,9 @@ import {
   ANY_COLUMN,
   applyWizardTransform,
   ColumnMapping,
+  DerivedRuleId,
+  MappingSetting,
+  MappingType,
   countRowsAfterSelection,
   DataTransformConfig,
   DERIVED_PRESETS,
@@ -147,8 +150,10 @@ export class ImportModal extends Modal {
   private outputNoteName = '{{_hash}}';
   /** D95：已回填配置的「模板+文件」键（Step3↔4 往返不重复回填，保留未保存编辑） */
   private s3ConfigKey: string | null = null;
-  /** D113：当前展开「⚙️ 添加设置」行内编辑器的映射行下标（-1 = 无）；改动后复位 */
-  private mappingEditingRow = -1;
+  /** D117：展开「设置」面板的映射行下标集合（操作列 ⏵/⏷ 显隐；增删行后近似按新下标复位） */
+  private mappingPanelsOpen = new Set<number>();
+  /** D117：待确认参数的「添加设置」草稿（下拉选中需参数步骤后显示；确认/取消即清空） */
+  private pendingSettingDraft: { index: number; group: 'format' | 'process'; op: string } | null = null;
 
   // D91：Step 3 区块局部刷新——.ipw-body 容器持久，各区块仅重建自身内容（含滚动保持）
   // D94/D108 归类：template（模板元信息）/ rows（行配置）/ columns（列配置：格式化/处理/列映射·派生合并单表）
@@ -1229,17 +1234,21 @@ export class ImportModal extends Modal {
   }
 
   /**
-   * 区块 5：列映射（列级，D105/D113 收敛）：单一「列映射」表（映射与派生合并；行内「⚙️ 添加设置」链做
-   * 列格式化/列处理——不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链）。
+   * 区块 5：列映射（列级，D105/D108/D113 收敛，D117 统一管线 UI）：单一「列映射」表（映射与派生合并；
+   * 「类型」= FrontMatter 类型；「添加设置」下拉 = 列格式化 / 列处理 / 列派生；行下设置面板可编辑/显隐。
+   * 不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链）。
    */
   private renderColumnsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.columns = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
-    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 行内添加设置链）' });
+    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 类型 + 添加设置链）' });
     const cols = this.columns();
 
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
-    mapCard.createDiv({ cls: 'ipw-card-title', text: '📋 列映射（映射与派生；「⚙️ 添加设置」可追加格式化/处理步骤，≥2 步按序执行）' });
+    mapCard.createDiv({
+      cls: 'ipw-card-title',
+      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「添加设置」下拉加入 列格式化 / 列处理 / 列派生 步骤）'
+    });
     this.renderMappingCard(mapCard, cols);
   }
 
@@ -1321,22 +1330,24 @@ export class ImportModal extends Modal {
   }
 
   /**
-   * 区块 5「列映射」卡片（D105/D113）：映射与派生同一张表 + 行内「添加设置」设置链（格式化/处理 chips）。
-   * 行的「类型/规则」选派生预设即为派生计算行；底部按钮 = 添加映射行 / 自动映射 / 删除所有自动映射 / 清除所有。
-   * 数据模型：cfg.mappings 统一行（rule 有值=派生；settings 行内设置链；origin='auto'=自动映射生成）。
+   * 区块 5「列映射」卡片（D117 统一管线 UI）：列 = 来源 / 目标字段 / 类型(FrontMatter) / 添加设置(下拉) / 操作(⏵显隐设置 + ✕)。
+   * 行模型 = cfg.mappings 统一行：rule 有值=派生（经「添加设置 · 列派生」下拉创建/切换）；settings = 格式化/处理设置链；
+   * 「类型」= FrontMatter 类型（文本/数字/日期/布尔/忽略，数字·日期·布尔隐含转换）；origin='auto'=自动映射生成。
+   * 每行下方「设置面板」列出已添加设置（派生预设 + 格式化/处理，可编辑参数/删除），由操作列 ⏵/⏷ 显隐。
    */
   private renderMappingCard(host: HTMLElement, cols: string[]): void {
     const head = host.createDiv({ cls: 'ipw-grid ipw-grid-head ipw-map-head' });
     head.createSpan({ text: '来源' });
     head.createSpan({ text: '目标字段' });
-    head.createSpan({ text: '类型/规则' });
+    head.createSpan({ text: '类型' });
     head.createSpan({ text: '添加设置' });
     head.createSpan({ text: '操作' });
 
     if (this.transform.mappings.length === 0) {
       host.createDiv({
         cls: 'ipw-muted ipw-note',
-        text: '（暂无映射，将保留全部列；把行的「类型/规则」选为派生预设即可按来源计算新字段；「⚙️ 添加设置」给映射行追加格式化/处理步骤）'
+        text:
+          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 步骤——选「列派生」即成为派生计算行）'
       });
     }
 
@@ -1367,7 +1378,6 @@ export class ImportModal extends Modal {
       }
       src.addEventListener('change', () => {
         this.transform.mappings[i].source = src.value;
-        this.mappingEditingRow = -1;
         this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建（其余行可选来源随之变化）+ 预览刷新
       });
 
@@ -1383,42 +1393,39 @@ export class ImportModal extends Modal {
         this.refreshPreviewOnly(); // D91 L1：目标字段名影响预览表头
       });
 
-      // ── 类型/规则：映射类型（分组「类型」）+ 派生预设（分组「派生字段」） ──
-      const kind = row.createEl('select', { cls: 'ipw-select' });
-      const gMap = kind.createEl('optgroup', { attr: { label: '类型' } });
-      for (const o of MAPPING_TYPE_LABELS) gMap.createEl('option', { value: o.value, text: o.label });
-      const gDer = kind.createEl('optgroup', { attr: { label: '派生字段' } });
-      for (const p of DERIVED_PRESETS) gDer.createEl('option', { value: p.id, text: p.label });
-      kind.value = isDerived ? (m.rule as string) : m.type;
-      kind.addEventListener('change', () => {
+      // ── 类型（D117：FrontMatter 类型；数字/日期/布尔隐含转换；身份证移除→「添加设置·列格式化」） ──
+      const typeSel = row.createEl('select', { cls: 'ipw-select' });
+      for (const o of MAPPING_TYPE_LABELS) typeSel.createEl('option', { value: o.value, text: o.label });
+      typeSel.value = m.type;
+      typeSel.addEventListener('change', () => {
         const mp = this.transform.mappings[i];
-        const selPreset = DERIVED_PRESETS.find((p) => p.id === kind.value);
-        if (selPreset) {
-          // 派生预设：rule 有值；无源预设清空来源；目标为空/未改名时给默认产出字段名
-          mp.rule = selPreset.id;
-          mp.type = 'text';
-          if (!selPreset.needsSource) mp.source = '';
-          else if (!mp.source) mp.source = cols[0] ?? '';
-          if (!mp.target || mp.target === mp.source) {
-            mp.target = deriveFieldName(selPreset.id, mp.source || '');
-          }
-        } else {
-          // 映射类型：清除 rule
-          mp.rule = undefined;
-          mp.type = kind.value as ColumnMapping['type'];
-        }
-        this.mappingEditingRow = -1;
-        this.refreshStep3Blocks(['columns']); // D91：L2（来源选项随类型变化）+ 预览刷新
+        mp.type = typeSel.value as MappingType;
+        this.refreshStep3Blocks(['columns']); // D91：L2 + 预览刷新（忽略=不产出）
       });
 
-      // ── 添加设置（D113）：行内设置链 chips（仅映射行；派生行不适用） ──
-      const settingsCell = row.createDiv({ cls: 'ipw-settings-cell' });
-      this.renderMappingSettingsCell(settingsCell, m, i, row);
+      // ── 添加设置（D117 下拉：列格式化 / 列处理 / 列派生，选择即加入该行设置链） ──
+      const addCell = row.createDiv({ cls: 'ipw-add-setting-cell' });
+      this.renderMappingAddSelect(addCell, i);
 
-      // ── 操作（独立单元格容器：自动来源标记 + 删除行） ──
+      // ── 操作（独立单元格容器：⏵/⏷ 设置面板显隐 + 自动标记 + 删除行） ──
       const cellOps = row.createDiv({ cls: 'ipw-cell-ops' });
       if (m.origin === 'auto') {
         cellOps.createSpan({ cls: 'ipw-origin', text: '自动' });
+      }
+      const itemCount = (isDerived ? 1 : 0) + (m.settings?.length ?? 0);
+      const open = this.mappingPanelsOpen.has(i);
+      const toggle = cellOps.createEl('button', {
+        cls: 'ipw-icon-btn',
+        text: open ? '⏷' : '⏵',
+        attr: { title: open ? '隐藏已添加设置' : '显示已添加设置' }
+      });
+      toggle.addEventListener('click', () => {
+        if (this.mappingPanelsOpen.has(i)) this.mappingPanelsOpen.delete(i);
+        else this.mappingPanelsOpen.add(i);
+        this.refreshStep3Blocks(['columns']);
+      });
+      if (!open && itemCount > 0) {
+        cellOps.createSpan({ cls: 'ipw-settings-count', text: `${itemCount}` });
       }
       const del = cellOps.createEl('button', {
         cls: 'ipw-icon-btn',
@@ -1427,13 +1434,13 @@ export class ImportModal extends Modal {
       });
       del.addEventListener('click', () => {
         this.transform.mappings.splice(i, 1);
-        this.mappingEditingRow = -1;
+        this.mappingPanelsOpen.delete(i);
         this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建 + 预览刷新
       });
 
-      // ── 行内设置编辑器（D113：展开为网格内整行，grid-column 1/-1） ──
-      if (!isDerived && this.mappingEditingRow === i) {
-        this.renderMappingSettingsEditor(row, m, i);
+      // ── 行下设置面板（D117：已添加设置列表 + 参数编辑/删除；展开时渲染，grid-column 1/-1） ──
+      if (open) {
+        this.renderMappingSettingsPanel(row, m, i);
       }
     });
 
@@ -1465,6 +1472,8 @@ export class ImportModal extends Modal {
     clear.addEventListener('click', () => {
       if (!window.confirm('清空全部列映射与派生字段？（仅清除本向导会话，已保存到模板的配置不受影响）')) return;
       this.transform.mappings = [];
+      this.mappingPanelsOpen.clear();
+      this.pendingSettingDraft = null;
       this.refreshStep3Blocks(['columns']);
     });
 
@@ -1473,71 +1482,139 @@ export class ImportModal extends Modal {
       cls: 'ipw-muted ipw-note',
       text:
         `💡 可用源列: ${freeCols.join(' / ') || '(无未映射列)'}。` +
-        `派生字段 = 把行的「类型/规则」选为派生预设（时间戳/年份可留空来源）；` +
+        `「类型」为目标字段的 FrontMatter 类型（数字/日期/布尔自动转换，忽略=不产出）；` +
+        `「添加设置」下拉加入 列格式化/列处理/列派生 步骤（选「列派生」即按预设计算该字段）；` +
         `标记「自动」的行由 🧹自动映射 生成，「🗑 删除所有自动映射」仅删除此类行。`
     });
   }
 
-  /** D113：渲染某映射行的「添加设置」chips（格式化/处理步骤；派生行不适用显示「—」） */
-  private renderMappingSettingsCell(cell: HTMLElement, m: ColumnMapping, index: number, _row: HTMLElement): void {
+  /** D117：渲染行「添加设置」下拉（列格式化 / 列处理 / 列派生三组）；参数类步骤进入面板草稿 */
+  private renderMappingAddSelect(cell: HTMLElement, index: number): void {
+    const sel = cell.createEl('select', { cls: 'ipw-select ipw-add-setting-sel' });
+    sel.createEl('option', { value: '', text: '＋ 添加设置…' });
+    const gFmt = sel.createEl('optgroup', { attr: { label: '列格式化' } });
+    for (const o of FORMAT_OP_LABELS) gFmt.createEl('option', { value: o.value, text: o.label });
+    const gPrc = sel.createEl('optgroup', { attr: { label: '列处理' } });
+    for (const o of PROCESS_OP_LABELS) gPrc.createEl('option', { value: o.value, text: o.label });
+    const gDer = sel.createEl('optgroup', { attr: { label: '列派生' } });
+    for (const p of DERIVED_PRESETS) gDer.createEl('option', { value: p.id, text: p.label });
+
+    sel.addEventListener('change', () => {
+      const val = sel.value;
+      sel.value = ''; // 复位占位，允许再次选择
+      if (!val) return;
+      if (DERIVED_PRESETS.some((p) => p.id === val)) {
+        this.applyDerivePreset(index, val as DerivedRuleId);
+        return;
+      }
+      const fmt = FORMAT_OP_LABELS.some((o) => o.value === val);
+      const prc = PROCESS_OP_LABELS.some((o) => o.value === val);
+      const group: 'format' | 'process' | null = fmt ? 'format' : prc ? 'process' : null;
+      if (!group) return;
+      const spec = settingParamSpec(
+        ({ group, op: val, param: '', param2: '' } as unknown) as MappingSetting
+      );
+      if (spec.needParam) {
+        // 需参数：打开设置面板并显示参数草稿
+        this.pendingSettingDraft = { index, group, op: val };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      // 无参数：直接加入该行设置链
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      const setting: MappingSetting =
+        group === 'format'
+          ? ({ group: 'format', op: val, param: '' } as unknown as MappingSetting)
+          : ({ group: 'process', op: val, param: ',', param2: val === 'merge' ? ' ' : '' } as unknown as MappingSetting);
+      mp.settings.push(setting);
+      this.mappingPanelsOpen.add(index);
+      this.refreshStep3Blocks(['columns']); // 追加设置项 + 预览刷新
+    });
+  }
+
+  /** D117：把行设为/切换为派生预设（rule 行；目标默认产出名、无源预设清空来源；打开设置面板展示派生项） */
+  private applyDerivePreset(index: number, presetId: DerivedRuleId): void {
+    const mp = this.transform.mappings[index];
+    const preset = DERIVED_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    const wasDerivedDefault =
+      !!mp.rule && !!mp.target && mp.target === deriveFieldName(mp.rule, mp.source || '');
+    mp.rule = presetId;
+    if (mp.type === 'ignore') mp.type = 'text'; // 忽略无法产出
+    if (!preset.needsSource) mp.source = '';
+    else if (!mp.source) mp.source = this.columns()[0] ?? '';
+    if (!mp.target || mp.target === mp.source || wasDerivedDefault) {
+      mp.target = deriveFieldName(presetId, mp.source || '');
+    }
+    this.mappingPanelsOpen.add(index);
+    this.refreshStep3Blocks(['columns']); // D91：L2（来源/产出名变化）+ 预览刷新
+  }
+
+  /** D117：行下「设置」面板（已添加设置：派生预设项 + 格式化/处理项，可编辑参数/删除；含待确认草稿） */
+  private renderMappingSettingsPanel(row: HTMLElement, m: ColumnMapping, index: number): void {
+    const panel = row.createDiv({ cls: 'ipw-map-panel' });
+    const count = (m.rule ? 1 : 0) + (m.settings?.length ?? 0);
+    panel.createDiv({ cls: 'ipw-muted ipw-map-panel-title', text: `已添加设置 (${count})` });
+
+    const draft = this.pendingSettingDraft;
+    if (draft && draft.index === index) {
+      this.renderSettingDraftForm(panel, index, draft.group, draft.op);
+    }
+
+    const list = panel.createDiv({ cls: 'ipw-map-settings-list' });
     if (m.rule) {
-      cell.createSpan({ cls: 'ipw-muted', text: '—' });
-      return;
+      const preset = DERIVED_PRESETS.find((p) => p.id === m.rule);
+      const item = list.createDiv({ cls: 'ipw-map-setting-item' });
+      const chip = item.createDiv({ cls: 'ipw-chip ipw-chip-derive', attr: { title: '该行由「列派生」预设计算产出' } });
+      chip.createSpan({ text: `列派生 · ${preset?.label ?? m.rule}` });
+      const x = chip.createEl('button', { cls: 'ipw-chip-x', text: '✕', attr: { title: '移除派生预设（回到普通映射行）' } });
+      x.addEventListener('click', () => {
+        const mp = this.transform.mappings[index];
+        mp.rule = undefined;
+        mp.type = 'text';
+        if (!mp.target) mp.target = mp.source;
+        this.refreshStep3Blocks(['columns']);
+      });
     }
-    const settings = m.settings ?? [];
-    if (settings.length === 0) {
-      cell.createSpan({ cls: 'ipw-muted', text: '(无)' });
-    }
-    settings.forEach((s, j) => {
-      const chip = cell.createDiv({ cls: 'ipw-chip', attr: { title: mappingSettingLabel(s) } });
+    (m.settings ?? []).forEach((s, j) => {
+      const item = list.createDiv({ cls: 'ipw-map-setting-item' });
+      const chip = item.createDiv({ cls: 'ipw-chip' });
       chip.createSpan({ text: mappingSettingLabel(s) });
+      const spec = settingParamSpec(s);
+      if (spec.needParam) {
+        const edit = chip.createEl('button', { cls: 'ipw-chip-x', text: '✎', attr: { title: '编辑参数' } });
+        edit.addEventListener('click', () => this.renderSettingEditForm(item, index, j, s));
+      }
       const x = chip.createEl('button', { cls: 'ipw-chip-x', text: '✕', attr: { title: '删除该设置' } });
       x.addEventListener('click', () => {
         const mp = this.transform.mappings[index];
         mp.settings = (mp.settings ?? []).filter((_, k) => k !== j);
-        this.mappingEditingRow = -1;
         this.refreshStep3Blocks(['columns']);
       });
     });
-    const addBtn = cell.createEl('button', { cls: 'ipw-mini', text: '⚙️' });
-    addBtn.setAttribute('title', '添加设置（格式化/处理）');
-    addBtn.addEventListener('click', () => {
-      this.mappingEditingRow = this.mappingEditingRow === index ? -1 : index;
-      this.refreshStep3Blocks(['columns']); // 展开/收起行内编辑器
-    });
+    if (!m.rule && (m.settings?.length ?? 0) === 0 && !(draft && draft.index === index)) {
+      list.createDiv({ cls: 'ipw-muted ipw-note', text: '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生）' });
+    }
   }
 
-  /** D113：行内「⚙️ 添加设置」编辑器（分组选择 + 参数 + 添加/取消） */
-  private renderMappingSettingsEditor(row: HTMLElement, m: ColumnMapping, index: number): void {
-    const editor = row.createDiv({ cls: 'ipw-settings-editor' });
-    editor.createSpan({ cls: 'ipw-muted', text: '添加设置:' });
-    const gSel = editor.createEl('select', { cls: 'ipw-select' });
-    gSel.createEl('option', { value: 'format', text: '列格式化' });
-    gSel.createEl('option', { value: 'process', text: '列处理' });
-    const opSel = editor.createEl('select', { cls: 'ipw-select' });
-    const fillOps = (group: string): void => {
-      opSel.empty();
-      const list = group === 'format' ? FORMAT_OP_LABELS : PROCESS_OP_LABELS;
-      for (const o of list) opSel.createEl('option', { value: o.value, text: o.label });
-    };
-    fillOps('format');
-    gSel.addEventListener('change', () => fillOps(gSel.value));
-    const param = editor.createEl('input', {
+  /** D117：设置面板内渲染「添加设置」参数草稿（下拉选中需参数步骤后出现） */
+  private renderSettingDraftForm(panel: HTMLElement, index: number, group: 'format' | 'process', op: string): void {
+    const draftRow = panel.createDiv({ cls: 'ipw-settings-editor' });
+    draftRow.createSpan({ cls: 'ipw-muted', text: `添加 ${group === 'format' ? '列格式化' : '列处理'}·` });
+    const label =
+      (group === 'format' ? FORMAT_OP_LABELS : PROCESS_OP_LABELS).find((o) => o.value === op)?.label ?? op;
+    draftRow.createSpan({ text: label });
+    const spec = settingParamSpec(({ group, op, param: '', param2: '' } as unknown) as MappingSetting);
+    const param = draftRow.createEl('input', {
       cls: 'ipw-input',
       type: 'text',
-      placeholder: '参数（可选）'
+      value: op === 'split' ? ',' : '',
+      attr: { placeholder: spec.placeholder }
     });
-    opSel.addEventListener('change', () => {
-      const spec = settingParamSpec({ group: gSel.value as 'format' | 'process', op: opSel.value as any, param: '' } as any);
-      param.placeholder = spec.placeholder;
-      param.hidden = !spec.needParam;
-    });
-    opSel.dispatchEvent(new Event('change'));
-    const ok = editor.createEl('button', { cls: 'ipw-mini ipw-primary', text: '添加' });
+    const ok = draftRow.createEl('button', { cls: 'ipw-mini ipw-primary', text: '添加' });
     ok.addEventListener('click', () => {
-      const group = gSel.value as 'format' | 'process';
-      const op = opSel.value as any;
-      const spec = settingParamSpec({ group, op, param: '' } as any);
       const p = param.value.trim();
       if (spec.needParam && p === '') {
         new Notice('请填写参数');
@@ -1545,19 +1622,52 @@ export class ImportModal extends Modal {
       }
       const mp = this.transform.mappings[index];
       mp.settings = mp.settings ?? [];
-      if (group === 'format') {
-        mp.settings.push({ group: 'format', op, param: p });
-      } else {
-        mp.settings.push({ group: 'process', op, param: p || ',', param2: op === 'merge' ? ' ' : '' });
-      }
-      this.mappingEditingRow = -1;
-      this.refreshStep3Blocks(['columns']); // 追加 chip + 预览刷新
+      const setting: MappingSetting =
+        group === 'format'
+          ? ({ group: 'format', op, param: p } as unknown as MappingSetting)
+          : ({ group: 'process', op, param: p || ',', param2: op === 'merge' ? ' ' : '' } as unknown as MappingSetting);
+      mp.settings.push(setting);
+      this.pendingSettingDraft = null;
+      this.mappingPanelsOpen.add(index);
+      this.refreshStep3Blocks(['columns']); // 追加设置项 + 预览刷新
     });
-    const cancel = editor.createEl('button', { cls: 'ipw-mini', text: '取消' });
+    const cancel = draftRow.createEl('button', { cls: 'ipw-mini', text: '取消' });
     cancel.addEventListener('click', () => {
-      this.mappingEditingRow = -1;
+      this.pendingSettingDraft = null;
       this.refreshStep3Blocks(['columns']);
     });
+  }
+
+  /** D117：设置面板内编辑某设置参数（就地展开输入；保存后刷新） */
+  private renderSettingEditForm(item: HTMLElement, index: number, j: number, s: MappingSetting): void {
+    const editor = item.createDiv({ cls: 'ipw-map-edit' });
+    const spec = settingParamSpec(s);
+    const param = editor.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      value: s.param,
+      attr: { placeholder: spec.placeholder }
+    });
+    const ok = editor.createEl('button', { cls: 'ipw-mini ipw-primary', text: '保存' });
+    ok.addEventListener('click', () => {
+      const mp = this.transform.mappings[index];
+      const list = mp.settings ?? [];
+      const cur = list[j];
+      if (!cur) return;
+      const p = param.value.trim();
+      if (spec.needParam && p === '') {
+        new Notice('请填写参数');
+        return;
+      }
+      const next: MappingSetting =
+        cur.group === 'format'
+          ? { group: 'format', op: cur.op, param: p }
+          : { group: 'process', op: cur.op, param: p || ',', param2: cur.param2 };
+      mp.settings = [...list.slice(0, j), next, ...list.slice(j + 1)];
+      this.refreshStep3Blocks(['columns']);
+    });
+    const cancel = editor.createEl('button', { cls: 'ipw-mini', text: '取消' });
+    cancel.addEventListener('click', () => this.refreshStep3Blocks(['columns']));
   }
 
   private previewEl: HTMLElement | null = null;

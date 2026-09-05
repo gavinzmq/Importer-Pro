@@ -60,8 +60,10 @@ export interface ColumnProcessRule {
 /** 派生预设 id（rule 有值即派生计算行；见 DERIVED_PRESETS） */
 export type DerivedRuleId = 'genderFromID' | 'birthFromID' | 'md5Short' | 'nowTimestamp' | 'currentYear';
 
-/** 列映射行类型（目标类型：文本/身份证/数字/日期/忽略；快捷转换，D107/D113） */
-export type MappingType = 'text' | 'idcard' | 'number' | 'date' | 'ignore';
+/** 列映射行「类型」列（D117：FrontMatter 目标类型）：文本/数字/日期/布尔/忽略。
+ *  数字/日期/布尔隐含前置转换（toNumber/toDate/toBoolean，文本=无、忽略=不产出）；非 FrontMatter 类型
+ *  的「身份证」不再作为类型项（toIDCard 走「添加设置·列格式化」）。 */
+export type MappingType = 'text' | 'number' | 'date' | 'boolean' | 'ignore';
 
 /** 行来源标记：仅「🧹 自动映射」生成行为 'auto'（供「🗑 删除所有自动映射」精确删除；UI 局部状态，不随模板持久化） */
 export type MappingOrigin = 'auto' | 'manual';
@@ -78,11 +80,12 @@ export type MappingSetting =
   | { group: 'process'; op: ColumnProcessOp; param: string; param2: string };
 
 /**
- * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表；D113 增 settings 行内设置链）。
- * - rule 缺省 = 纯列映射：把 source 复制/更名到 target（type=ignore 则不产出）；type 快捷转换
- *   （idcard/number/date）与 settings 链组成该行值管线（0 步=复制、1 步=直调、≥2 步=pipe）。
+ * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表；D113 增 settings 行内设置链；D117 统一管线）。
+ * - rule 缺省 = 纯映射行：把 source 复制/更名到 target（type=ignore 则不产出）；type 隐含转换
+ *   （number/date/boolean）与 settings 链组成该行值管线（0 步=复制、1 步=直调、≥2 步=pipe）。
  * - rule 有值 = 派生计算行：按预设从 source 计算并写入 target 字段（等价旧 DerivedRule；
- *   needsSource=false 的预设——nowTimestamp/currentYear——source 可留空）；派生行不携带 settings（D113）。
+ *   needsSource=false 的预设——nowTimestamp/currentYear——source 可留空）；D117 起派生行亦可携带
+ *   settings（格式化/处理）与类型隐含转换，作为派生产出后的后续管线步骤（经 derived 段编译）。
  * - origin='auto' 表示由「自动映射」生成。
  */
 export interface ColumnMapping {
@@ -91,7 +94,7 @@ export interface ColumnMapping {
   type: MappingType;
   /** 派生预设 id（有值即按预设计算产出 target） */
   rule?: DerivedRuleId;
-  /** 行内「添加设置」链（D113）：格式化/处理步骤，按序作用于本行值；仅 rule 缺省的映射行携带 */
+  /** 行内「添加设置」链（D113，D117 扩展）：格式化/处理步骤，按序作用于本行值；D117 起派生行亦可携带（派生产出后执行） */
   settings?: MappingSetting[];
   /** 行来源标记：自动映射生成 = 'auto'；手动添加/回填缺省 = 'manual' */
   origin?: MappingOrigin;
@@ -107,9 +110,8 @@ export function rowHasSettings(m: ColumnMapping): boolean {
   return !!m.settings && m.settings.length > 0;
 }
 
-/** 类型快捷转换是否等效某设置首步（去重口径，D107/D113）：toIDCard/toNumber/toDate 视作同语义 */
+/** 类型隐含转换是否等效某设置首步（去重口径，D107/D113/D117）：toNumber/toDate 视作同语义（type 优先保留） */
 export function typeQuickConversionEquals(type: MappingType, setting: MappingSetting): boolean {
-  if (type === 'idcard' && setting.group === 'format' && setting.op === 'toIDCard') return true;
   if (type === 'number' && setting.group === 'format' && setting.op === 'toNumber') return true;
   if (type === 'date' && setting.group === 'format' && setting.op === 'toDate') return true;
   return false;
@@ -372,11 +374,12 @@ export const PROCESS_OP_LABELS: ReadonlyArray<{ value: ColumnProcessOp; label: s
   { value: 'fillDefault', label: '填充默认值' }
 ];
 
+/** FrontMatter 类型标签（D117：文本/数字/日期/布尔/忽略；身份证等转换走「添加设置·列格式化」） */
 export const MAPPING_TYPE_LABELS: ReadonlyArray<{ value: MappingType; label: string }> = [
   { value: 'text', label: '文本' },
-  { value: 'idcard', label: '身份证' },
   { value: 'number', label: '数字' },
   { value: 'date', label: '日期' },
+  { value: 'boolean', label: '布尔' },
   { value: 'ignore', label: '忽略' }
 ];
 
@@ -459,6 +462,20 @@ export function formatCellValue(value: unknown, op: ColumnFormatOp, param: strin
     default:
       return value;
   }
+}
+
+/**
+ * 布尔值单元格换算（D117：FrontMatter 类型「布尔」的隐含转换；语义与 builtin toBoolean Helper 对齐）：
+ * 空/空白 → ''（不产出）；可识别真值（true/1/是/yes/y/真）→ true、假值（false/0/否/no/n/假）→ false；
+ * 无法识别 → 保持原值（交由模板决定，避免误判丢弃）。
+ */
+export function toBooleanCell(v: unknown): unknown {
+  if (v === undefined || v === null) return '';
+  const s = String(v).trim().toLowerCase();
+  if (s === '') return '';
+  if (['true', '1', 'yes', 'y', '是', '真'].includes(s)) return true;
+  if (['false', '0', 'no', 'n', '否', '假'].includes(s)) return false;
+  return v;
 }
 
 function formatISODate(d: Date): string {
@@ -627,9 +644,9 @@ export function applyColumnProcesses(records: DataRecord[], rules: ColumnProcess
 export function applyMappingChainValue(value: unknown, type: MappingType, settings?: MappingSetting[]): unknown {
   let v = value;
   const applyQuick = (x: unknown): unknown => {
-    if (type === 'idcard') return formatCellValue(x, 'toIDCard', '');
     if (type === 'number') return formatCellValue(x, 'toNumber', '');
     if (type === 'date') return formatCellValue(x, 'toDate', '');
+    if (type === 'boolean') return toBooleanCell(x);
     return x;
   };
   const applySetting = (x: unknown, s: MappingSetting): unknown => {
@@ -696,7 +713,8 @@ export function applyColumnMappings(records: DataRecord[], mappings: ColumnMappi
     const key = m.target || m.rule;
     out = out.map((r) => {
       const source = m.source && m.source in r ? String(r[m.source] ?? '') : '';
-      return { ...r, [key]: deriveValue(m.rule as DerivedRuleId, source) };
+      // D117：派生行亦可携带类型隐含转换/格式化·处理设置（派生产出后按链执行）
+      return { ...r, [key]: applyMappingChainValue(deriveValue(m.rule as DerivedRuleId, source), m.type, m.settings) };
     });
   }
   return out;
@@ -770,7 +788,7 @@ function applyMappingsRuntime(records: DataRecord[], mappings: ColumnMapping[]):
       } else {
         const key = m.target || m.rule;
         const source = m.source && m.source in r ? String(r[m.source] ?? '') : '';
-        next[key] = deriveValue(m.rule as DerivedRuleId, source);
+        next[key] = applyMappingChainValue(deriveValue(m.rule as DerivedRuleId, source), m.type, m.settings);
       }
     }
     return next;
@@ -963,11 +981,11 @@ interface StepSpec {
   args: string[];
 }
 
-/** 类型快捷转换 → 步骤（D107/D113）：身份证/数字/日期为隐含前置 toXxx；文本=无 */
+/** 类型隐含转换 → 步骤（D107/D113，D117）：数字/日期/布尔为隐含前置 toNumber/toDate/toBoolean；文本=无 */
 function typeQuickStep(type: MappingType): StepSpec | null {
-  if (type === 'idcard') return { helper: 'toIDCard', args: [] };
   if (type === 'number') return { helper: 'toNumber', args: [] };
   if (type === 'date') return { helper: 'toDate', args: [] };
+  if (type === 'boolean') return { helper: 'toBoolean', args: [] };
   return null;
 }
 
@@ -1066,39 +1084,61 @@ function mappingBody(mappings: ColumnMapping[]): string {
   return lines.join('\n');
 }
 
-/** 派生字段段体（仅 rule 行）：预设 id → 内置 Helper；多步变换编译为 pipe 管道形态（D99–D101）；needsSource=false 的预设 source 留空 */
+/** 派生行派生产出后的后续管线（D117：类型隐含转换 + settings 格式化/处理，按序经直调/pipe 包装；
+ *  无后续步骤时返回 base 原样，保证既有派生编译形态不变） */
+function derivePostExpr(base: string, type: MappingType, settings?: MappingSetting[]): string {
+  const steps: StepSpec[] = [];
+  const quick = typeQuickStep(type);
+  if (quick) steps.push(quick);
+  for (const s of settings ?? []) {
+    if (typeQuickConversionEquals(type, s)) continue;
+    const spec = settingStep(s);
+    if (spec) steps.push(spec);
+  }
+  if (steps.length === 0) return base;
+  if (steps.length === 1) return stepDirect(steps[0], base);
+  return `(pipe ${base} ${steps.map(stepStage).join(' ')})`;
+}
+
+/** 派生字段段体（仅 rule 行）：预设 id → 内置 Helper；多步变换编译为 pipe 管道形态（D99–D101）；needsSource=false 的预设 source 留空；
+ *  D117：派生行可携带类型隐含转换 / settings（格式化·处理）作为派生产出后的后续管线（derivePostExpr） */
 function derivedBody(rows: ColumnMapping[]): string {
   const lines: string[] = [];
   for (const m of rows) {
     if (!m.rule || m.type === 'ignore') continue;
     const key = hbQuote(m.target || m.rule);
     const srcVal = `(lookup this ${hbQuote(m.source)})`;
+    const hasPost = m.type !== 'text' || (m.settings?.length ?? 0) > 0;
+    let expr: string | null = null;
+    let guard = false;
     switch (m.rule) {
       case 'genderFromID':
-        lines.push(`{{set ${key} (genderFromID ${srcVal})}}`);
+        expr = `(genderFromID ${srcVal})`;
         break;
       case 'birthFromID':
-        lines.push(`{{set ${key} (birthFromID ${srcVal})}}`);
+        expr = `(birthFromID ${srcVal})`;
         break;
       case 'md5Short':
         // 空源不产出（避免对空串计算哈希）；md5→substring(0,10) 为 ≥2 步，编译为 pipe（D99）
-        lines.push(
-          `{{#if (isNotEmpty ${srcVal})}}{{set ${key} ${pipeExpr(srcVal, [
-            { name: 'md5', args: [] },
-            { name: 'substring', args: [hbQuote('0'), hbQuote('10')] }
-          ])}}}{{/if}}`
-        );
+        expr = pipeExpr(srcVal, [
+          { name: 'md5', args: [] },
+          { name: 'substring', args: [hbQuote('0'), hbQuote('10')] }
+        ]);
+        guard = true;
         break;
       case 'nowTimestamp':
-        lines.push(`{{set ${key} (now)}}`);
+        expr = '(now)';
         break;
       case 'currentYear':
         // now→substring(0,4) 为 ≥2 步，编译为 pipe（源为无源预设的 (now)）
-        lines.push(`{{set ${key} ${pipeExpr('(now)', [{ name: 'substring', args: [hbQuote('0'), hbQuote('4')] }])}}}`);
+        expr = pipeExpr('(now)', [{ name: 'substring', args: [hbQuote('0'), hbQuote('4')] }]);
         break;
       default:
         break; // 未知预设：跳过
     }
+    if (expr === null) continue;
+    if (hasPost) expr = derivePostExpr(expr, m.type, m.settings);
+    lines.push(guard ? `{{#if (isNotEmpty ${srcVal})}}{{set ${key} ${expr}}}{{/if}}` : `{{set ${key} ${expr}}}`);
   }
   return lines.filter(Boolean).join('\n');
 }
@@ -1322,7 +1362,8 @@ export function foldLegacyColumnOps(
   };
   for (const r of formatRules) {
     const row = rowOf(r.column);
-    if (r.op === 'toIDCard') row.type = 'idcard';
+    // D117：toIDCard 非 FrontMatter 类型 → 折叠为「添加设置·列格式化」设置；toNumber/toDate 折为类型隐含转换
+    if (r.op === 'toIDCard') pushSetting(row, { group: 'format', op: 'toIDCard', param: '' });
     else if (r.op === 'toNumber') row.type = 'number';
     else if (r.op === 'toDate') row.type = 'date';
     else if (r.op === 'trim') pushSetting(row, { group: 'format', op: 'trim', param: '' });
@@ -1368,12 +1409,13 @@ function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
     steps.push({ helper: call.name, args: call.args.slice(1) });
   }
   if (source === null) return null;
-  // canonical：首步为快捷转换（toIDCard/toNumber/toDate）→ type；其余进 settings
+  // canonical：首步为类型隐含转换（toNumber/toDate/toBoolean）→ type；其余进 settings。
+  // toIDCard 不再作类型快捷（非 FrontMatter 类型，D117）→ 作为「添加设置·列格式化」设置步骤进入 settings。
   let type: MappingType = 'text';
   const rest = [...steps];
   const head = rest[0];
-  if (head && (head.helper === 'toIDCard' || head.helper === 'toNumber' || head.helper === 'toDate')) {
-    type = head.helper === 'toIDCard' ? 'idcard' : head.helper === 'toNumber' ? 'number' : 'date';
+  if (head && (head.helper === 'toNumber' || head.helper === 'toDate' || head.helper === 'toBoolean')) {
+    type = head.helper === 'toNumber' ? 'number' : head.helper === 'toDate' ? 'date' : 'boolean';
     rest.shift();
   }
   const settings: MappingSetting[] = [];
@@ -1434,6 +1476,109 @@ function decodeMappingBody(body: string): ColumnMapping[] {
   return out;
 }
 
+/** 派生变换操作白名单（decode 扁平化用；含 derive 生产者/格式化/处理/类型隐含转换） */
+const DERIVED_TRANSFORM_OPS = new Set([
+  'genderFromID',
+  'birthFromID',
+  'md5',
+  'substring',
+  'strTrim',
+  'strSplit',
+  'toString',
+  'toNumber',
+  'toDate',
+  'toBoolean',
+  'toIDCard',
+  'replaceText',
+  'merge',
+  'mapValue',
+  'regexExtract',
+  'fillDefault'
+]);
+
+/** 派生段表达式 → 扁平链（D117：支持派生 base + 后续类型/设置直调或 pipe；兼容 D99 旧嵌套括号形态） */
+interface DerivedFlat {
+  input: 'lookup' | 'now';
+  source: string;
+  ops: Array<{ name: string; args: string[] }>;
+}
+
+function flattenDerivedValue(expr: string): DerivedFlat | null {
+  const call = parseParenCall(expr);
+  if (!call) return null;
+  if (call.name === 'lookup') {
+    const col = stripQuotes(call.args[1] ?? '');
+    return col === '' ? null : { input: 'lookup', source: col, ops: [] };
+  }
+  if (call.name === 'now') return { input: 'now', source: '', ops: [] };
+  if (call.name === 'pipe') {
+    const base = flattenDerivedValue(call.args[0] ?? '');
+    if (!base) return null;
+    const stages: Array<{ name: string; args: string[] }> = [];
+    for (const a of call.args.slice(1)) {
+      const sc = parseParenCall(a);
+      if (!sc || sc.name !== 'stage') return null;
+      stages.push({ name: stripQuotes(sc.args[0] ?? ''), args: sc.args.slice(1) });
+    }
+    return { input: base.input, source: base.source, ops: [...base.ops, ...stages] };
+  }
+  // 直调：(f 值来源 参数…) —— 值来源可继续扁平化，f 追加为一步
+  if (DERIVED_TRANSFORM_OPS.has(call.name) && call.args.length >= 1) {
+    const inner = flattenDerivedValue(call.args[0] ?? '');
+    if (inner) {
+      return {
+        input: inner.input,
+        source: inner.source,
+        ops: [...inner.ops, { name: call.name, args: call.args.slice(1) }]
+      };
+    }
+  }
+  return null;
+}
+
+/** 反编译一条派生段 set 行（D108/D99 兼容 + D117 后续设置/类型）→ 统一映射行 */
+function decodeDerivedLine(expr: string, target: string): ColumnMapping | null {
+  const flat = flattenDerivedValue(expr);
+  if (!flat) return null;
+  let ops = flat.ops;
+  let rule: DerivedRuleId | '' = '';
+  if (flat.input === 'now') {
+    if (ops.length > 0 && ops[0].name === 'substring' && stripQuotes(ops[0].args[0] ?? '') === '0' && stripQuotes(ops[0].args[1] ?? '') === '4') {
+      rule = 'currentYear'; // now→substring(0,4)
+      ops = ops.slice(1);
+    } else {
+      rule = 'nowTimestamp'; // 其余（含后续设置/类型）以 now 为源
+    }
+  } else {
+    if (ops[0]?.name === 'genderFromID') {
+      rule = 'genderFromID';
+      ops = ops.slice(1);
+    } else if (ops[0]?.name === 'birthFromID') {
+      rule = 'birthFromID';
+      ops = ops.slice(1);
+    } else if (ops[0]?.name === 'md5' && ops[1]?.name === 'substring' && stripQuotes(ops[1].args[0] ?? '') === '0' && stripQuotes(ops[1].args[1] ?? '') === '10') {
+      rule = 'md5Short';
+      ops = ops.slice(2);
+    } else {
+      return null; // 未知生产者
+    }
+  }
+  // 剩余 ops → 首步类型隐含转换（toNumber/toDate/toBoolean）→ type；其余 → settings（格式化/处理）
+  let type: MappingType = 'text';
+  if (ops.length > 0 && (ops[0].name === 'toNumber' || ops[0].name === 'toDate' || ops[0].name === 'toBoolean')) {
+    type = ops[0].name === 'toNumber' ? 'number' : ops[0].name === 'toDate' ? 'date' : 'boolean';
+    ops = ops.slice(1);
+  }
+  const settings: MappingSetting[] = [];
+  for (const op of ops) {
+    const s = stepSpecToSetting({ helper: op.name, args: op.args });
+    if (s) settings.push(s);
+  }
+  const row: ColumnMapping = { source: flat.source, target, type, rule };
+  if (settings.length > 0) row.settings = settings;
+  return row;
+}
+
 function decodeDerivedBody(body: string): ColumnMapping[] {
   const out: ColumnMapping[] = [];
   for (const line of body.split('\n')) {
@@ -1441,32 +1586,8 @@ function decodeDerivedBody(body: string): ColumnMapping[] {
     if (!t) continue;
     const set = parseSetLine(t);
     if (!set) continue;
-    const call = parseParenCall(set.expr);
-    if (!call) continue;
-    let rule: DerivedRuleId | '' = '';
-    if (call.name === 'genderFromID') rule = 'genderFromID';
-    else if (call.name === 'birthFromID') rule = 'birthFromID';
-    else if (call.name === 'now') rule = 'nowTimestamp';
-    else if (call.name === 'substring') {
-      // 旧嵌套括号形态（D99 起仍兼容回填）：(substring (md5 …) 0 10) / (substring (now) 0 4)
-      const arg0 = parseParenCall(call.args[0] ?? '');
-      if (arg0?.name === 'md5') rule = 'md5Short';
-      else if (arg0?.name === 'now') rule = 'currentYear';
-    } else if (call.name === 'pipe') {
-      // pipe 管道形态（D99–D101）：首参为源表达式，后续为 (stage "名" 参数…) 阶段链；
-      // 阶段名位于各 stage 子表达式的首参（如 (stage "md5") → "md5"）
-      const srcExpr = call.args[0] ?? '';
-      const stages = call.args
-        .slice(1)
-        .map((a) => parseParenCall(a))
-        .filter((s): s is { name: string; args: string[] } => s !== null);
-      const stageNames = stages.map((s) => stripQuotes(s.args[0] ?? ''));
-      if (stageNames.includes('md5')) rule = 'md5Short'; // md5Short 编译 = pipe 源 (stage md5) (stage substring 0 10)
-      else if (stageNames.includes('substring') && parseParenCall(srcExpr)?.name === 'now') rule = 'currentYear';
-    }
-    if (!rule) continue;
-    // 派生段行反编译为带 rule 的统一映射行（field → target；source 为空即无源预设）
-    out.push({ source: colOf(set.expr) ?? '', target: set.key, type: 'text', rule });
+    const row = decodeDerivedLine(set.expr, set.key);
+    if (row) out.push(row);
   }
   return out;
 }

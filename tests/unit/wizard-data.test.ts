@@ -36,6 +36,7 @@ import {
   handlebarsToConfig,
   isDuplicateHeaderRow,
   isPresetEmptyFilter,
+  MAPPING_TYPE_LABELS,
   parseRowNumbers,
   presetFilterEmptyRows,
   removeAutoMappings,
@@ -44,6 +45,7 @@ import {
   rowMatchesFilter,
   rowRemoveRuleLabel,
   segmentsToPreprocess,
+  toBooleanCell,
   unmappedColumns,
   upsertSegments,
   emptyTransform,
@@ -869,6 +871,100 @@ describe('D99 pipe 值型变换管道：编译/反编译/真实渲染', () => {
       '{{#if (isNotEmpty (lookup this "备注"))}}{{set "h2" (substring (md5 (lookup this "备注")) 0 10)}}{{/if}}';
     const out = await engine.renderPreprocess(`${pipe}\n${nested}`, { 备注: 'abc' });
     expect(out.h1).toBe(out.h2);
+  });
+});
+
+describe('D117：FrontMatter 类型收敛 + 派生行可携带设置（统一管线）', () => {
+  const engine = new TemplateEngine();
+
+  function cfgOf(mappings: ColumnMapping[]): DataTransformConfig {
+    return { removeRows: [], filters: [], clean: [], mappings };
+  }
+
+  it('toBooleanCell：空/真值/假值/不可识别', () => {
+    expect(toBooleanCell('')).toBe('');
+    expect(toBooleanCell('   ')).toBe('');
+    expect(toBooleanCell('是')).toBe(true);
+    expect(toBooleanCell('YES')).toBe(true);
+    expect(toBooleanCell('1')).toBe(true);
+    expect(toBooleanCell('0')).toBe(false);
+    expect(toBooleanCell('否')).toBe(false);
+    expect(toBooleanCell('启用')).toBe('启用'); // 不可识别保持原值
+  });
+
+  it('类型列选项 = FrontMatter 类型（含布尔、无身份证）', () => {
+    expect(MAPPING_TYPE_LABELS.map((o) => o.value)).toEqual(['text', 'number', 'date', 'boolean', 'ignore']);
+  });
+
+  it('布尔/数字类型隐含 toBoolean/toNumber：编译直调 + 真实渲染与 JS 一致 + 往返', async () => {
+    const cfg = cfgOf([
+      { source: 'flag', target: 'flag', type: 'boolean' },
+      { source: 'count', target: 'count', type: 'number' }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(toBoolean (lookup this "flag"))');
+    expect(hb).toContain('(toNumber (lookup this "count"))');
+    const data = [{ flag: '是', count: '1,234' }];
+    const real = await applyWizardTransform(engine, data, cfg);
+    expect(real[0].row.flag).toBe(true);
+    expect(real[0].row.count).toBe(1234);
+    expect(applyColumnMappings(data, cfg.mappings)[0]).toEqual({ flag: true, count: 1234 });
+    // 空值布尔 → ''（不产出 false）
+    const blank = await applyWizardTransform(engine, [{ flag: '  ', count: '' }], cfg);
+    expect(blank[0].row.flag).toBe('');
+    expect(blank[0].row.count).toBe('');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+  });
+
+  it('toIDCard 不再作类型：旧单步 toIDCard 映射行反编译折叠为「添加设置·列格式化」设置', () => {
+    const oldPre = [
+      '{{!-- ipro:begin:column-mapping --}}',
+      '{{set "身份证号" (toIDCard (lookup this "身份证号"))}}',
+      '{{!-- ipro:end:column-mapping --}}'
+    ].join('\n');
+    expect(handlebarsToConfig(oldPre).mappings).toEqual([
+      { source: '身份证号', target: '身份证号', type: 'text', settings: [{ group: 'format', op: 'toIDCard', param: '' }] }
+    ]);
+  });
+
+  it('派生行可携带设置（1 步直调）：genderFromID + trim 编译/渲染/往返', async () => {
+    const cfg = cfgOf([
+      { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID', settings: [{ group: 'format', op: 'trim', param: '' }] }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(strTrim (genderFromID (lookup this "身份证号")))');
+    const rows = await applyWizardTransform(engine, [{ 身份证号: '110101199001011237' }], cfg);
+    expect(rows[0].row.性别).toBe('男'); // 合法校验位身份证（男）
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+  });
+
+  it('派生行 ≥2 步设置 → pipe（genderFromID + trim + 首字符）编译/渲染/往返', async () => {
+    const cfg = cfgOf([
+      {
+        source: '身份证号',
+        target: '性别首字',
+        type: 'text',
+        rule: 'genderFromID',
+        settings: [
+          { group: 'format', op: 'trim', param: '' },
+          { group: 'format', op: 'substring', param: '0,1' }
+        ]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(pipe (genderFromID (lookup this "身份证号")) (stage "strTrim") (stage "substring" "0" "1"))');
+    const rows = await applyWizardTransform(engine, [{ 身份证号: '110101199001011237' }], cfg);
+    expect(rows[0].row.性别首字).toBe('男');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+  });
+
+  it('无源派生 + 类型（currentYear 数字化）：直调包裹编译/往返/渲染', async () => {
+    const cfg = cfgOf([{ source: '', target: '年份', type: 'number', rule: 'currentYear' }]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(toNumber (pipe (now) (stage "substring" "0" "4")))');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const rows = await applyWizardTransform(engine, [{}], cfg);
+    expect(rows[0].row.年份).toBe(new Date().getFullYear()); // 数字化的当前年份
   });
 });
 

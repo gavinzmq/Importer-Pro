@@ -71,7 +71,7 @@ export interface ITemplateEngine {
 - 阶段名**仅限内置白名单**（编译产物可引用集合）；外部 Helper 不自动入注册表（D98 模板跨库可迁移 / STANDARDS §7 防注入）。
 - 不修改任何现有 Helper 签名；旧嵌套括号写法（如 `(substring (md5 …) 0 10)`）引擎仍可执行，**永久兼容**。
 
-**内置阶段白名单**（权威；2026-09-05 实现时按编译层使用面定稿为 20 个，与 builtin `PIPE_STAGE_WHITELIST` 一致；`upper`/`lower` 随 D102–D104 改名 `uppercase`/`lowercase`）：`md5` / `sha256` / `hashShort` / `substring` / `trim` / `uppercase` / `lowercase` / `replace` / `replaceText` / `toNumber` / `toString` / `toDate` / `toIDCard` / `merge` / `mapValue` / `regexExtract` / `default` / `genderFromID` / `birthFromID` / `multiply`。编译/反编译规范见 template-schema.md §9，决策与实现见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101，v1.1.0 已实现）。
+**内置阶段白名单**（权威；2026-09-05 实现时按编译层使用面定稿为 20 个、D117 增 `toBoolean` 至 21 个，与 builtin `PIPE_STAGE_WHITELIST` 一致；`upper`/`lower` 随 D102–D104 改名 `uppercase`/`lowercase`）：`md5` / `sha256` / `hashShort` / `substring` / `trim` / `uppercase` / `lowercase` / `replace` / `replaceText` / `toNumber` / `toString` / `toDate` / `toBoolean` / `toIDCard` / `merge` / `mapValue` / `regexExtract` / `default` / `genderFromID` / `birthFromID` / `multiply`。编译/反编译规范见 template-schema.md §9，决策与实现见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101，v1.1.0 已实现）与 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117 增 `toBoolean`）。
 
 ## 依赖
 
@@ -90,4 +90,4 @@ const result = await engine.renderPreprocess(
 
 ---
 
-*版本: 1.5.0 | 最后更新: 2026-09-05*
+*版本: 1.7.0 | 最后更新: 2026-09-05*

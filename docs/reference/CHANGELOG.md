@@ -1,7 +1,7 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.16.0"
+version: "1.17.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -43,6 +43,7 @@ arcmesh:
 - **Step 3 区块 5/6 合并实现：列映射与派生合并单表（2026-09-05，D108 已实现）**：区块 5「列映射」与原区块 6「派生字段」合并为**一张统一列映射表**——行内「类型/规则」下拉含两组（`类型`：文本/身份证/数字/日期/忽略；`派生字段`：性别/生日/MD5 短哈希/时间戳/年份），某行选派生预设即派生计算行（无源预设可留空来源、自动取默认产出名）；按钮行 = `添加映射行` / `自动映射` / `删除所有自动映射` / `清除所有`，行来源显式标记 `origin`（`auto` = 自动映射生成），`删除所有自动映射` 仅删除 `auto` 行（手动/回填/派生行保留）；原「📋 预设规则 SuggestModal」与独立派生区块删除（派生行删除 = 行内 ✕）。数据模型：`cfg.mappings` 统一行（`rule?` 有值即派生，取代旧 `derived` 数组），编译按 rule 拆 `column-mapping`/`derived` 段、反编译按段合并，旧模板两段与旧 frontmatter `derived` 兼容读取/一次性迁移。落点：`wizard-data`/`template-scanner`/`import-modal`/`styles` 与单测同步（Vitest 102 例全绿）。D105「添加设置」行内设置链（chips + `pipe`）仍为后续增强、未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md
 - **补齐"已定义未实现"代码批次（2026-09-05，D112/D114/D115/D116 已实现）**：① **模板 `output` 运行时求值（D112）**——`TemplateConfig.output` 提升（template-scanner 解析），`DataPipeline.shard` 对每条记录基于含 `_hash` 的真实派生数据求值 `output.folder`/`note_name` 写 `_folder`/`_fileName`（importFile/importData 走模板 output、向导走 `outputOverride` 实时值）；**`note_name` 首次在真实导入生效**（此前恒为 `_hash`，向导旧做法用样例 `_hash` 预渲染 `_folder`，现统一收口到 shard 求值）。新增 `engine.renderExpression`、`ImportRecordsOptions.outputOverride`；优先级 = 记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。② **API 扩展注册桩补齐（D114）**——新增 `IFileNamer`/`IConflictResolver`/`IExporter` 类型（src/types），`src/extensions/runtime.ts` `ExtensionRuntime`（main 单例注入 NoteGenerator/ApiFacade）；`registerNamer`/`registerConflictResolver` 真实接线到生成写入（`rename` 改写文件名、`resolve` 改写冲突策略，返回 null 回落内置），cache/exporter 登记实例（导出流程 v1.0 未提供）。③ **校验 validation 运行时接入（D115）**——`shard` 逐行执行模板 frontmatter `validation`，回填保留字段 `_valid/_errors/_warnings/_status`（不自动 `_skip`）；`row.clean.filterInvalid` 有规则时按校验失败过滤。④ **轻量清理（D116）**——`warmCache(templateId)` 接线（未索引模板先重扫）、architecture 分层图清理 `GraphicConfigModal` 陈旧引用。单测：pipeline.test 新增 14 例（全量 Vitest **129 例全绿**、type-check 通过）。见 decisions/2026-09-05-unimplemented-gap-fill.md
 - **「添加设置」行内设置链（2026-09-05 第二轮，D113 已实现）**：区块 5 列映射表新增「添加设置」列——映射行可追加**列格式化/列处理 chips**（行内 [⚙️] 展开分组选择 + 参数），chips 按序 = 值管线执行顺序、可 ✕ 删除；`类型` 快捷转换（身份证/数字/日期）为隐含前置步骤并与同语义设置去重。**编译**：每映射行一条 `set`（0 步=复制、1 步=直调、**≥2 步=`(pipe … (stage …)…)`**，`PIPE_STAGE_WHITELIST` 增 strTrim/strSplit/fillDefault）；列侧仅产 `column-mapping` 段，独立「📐 列格式化 / ⚙️ 列处理」卡移除；旧 column-format/column-process 段与旧 frontmatter `columns` 读取**折叠为映射行设置链**（toIDCard/toNumber/toDate 折为类型快捷）。派生仍由「类型/规则 · 派生字段」下拉（D108 rule 行）承载（与 D105 草案「派生入 chips」的偏差见决策 D113）。落点：`wizard-data`（ColumnMapping.settings / 编译映射链 / 链解码 / foldLegacyColumnOps）、`template-scanner`（frontmatter columns 折叠迁移）、`import-modal`（区块 5 重构 + chips/编辑器）、`styles.css`（ipw-chip 等）；单测：wizard-data 85 + template-scanner 12（全量 **130 例全绿**、type-check 通过）
+- **区块 5 列映射 UI 收敛（2026-09-05，D117 已实现）**：「类型/规则」列 →「类型」= **FrontMatter 类型**（文本/数字/日期/布尔/忽略；数字·日期·布尔隐含 `toNumber`/`toDate`/**`toBoolean`** 转换，「身份证」不再作类型、`toIDCard` 收进「添加设置·列格式化」）；「添加设置」由 D113 行内 chips 改为**分组下拉（列格式化/列处理/列派生三组）**——无参项选中即入该行设置链、需参项在**行下设置面板**确认、选「列派生」即把行转派生计算行（目标默认产出名、无源预设可留空、不消费源列、可再叠格式化/处理）；每行下方新增**设置面板**列出已添加设置（可 `✎` 编辑参数、`✕` 删除）；操作列新增 `⏵/⏷` **显隐面板**按钮（收起显示数量角标）；派生入口由 D108「类型/规则·派生字段」下拉迁至「添加设置·列派生」，**派生行可携带类型/格式化·处理设置**（派生产出后经直调/pipe 后续链；无后续保持既有形态）。落点：wizard-data（MappingType 收敛 + `toBooleanCell` + 派生行 settings + `derivePostExpr` + `flattenDerivedValue` 反编译）、builtin（`toBoolean` Helper + 阶段白名单）、import-modal（区块 5 UI 重构）、styles.css、单测 +7（全量 Vitest **137 例全绿**、type-check 通过）。见 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md
 
 #### 图形化配置
 - **4 步导入向导**：来源选择 → 文件管理 → 模板配置 → 进度执行（模板配置内含数据处理/列映射/校验/派生字段/匹配规则/分流/输出/预览）
@@ -99,4 +100,4 @@ arcmesh:
 
 ---
 
-*版本: 1.13.0 | 最后更新: 2026-09-05*
+*版本: 1.17.0 | 最后更新: 2026-09-05*

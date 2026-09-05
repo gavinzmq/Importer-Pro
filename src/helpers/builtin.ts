@@ -26,6 +26,7 @@ export const PIPE_STAGE_WHITELIST = [
   'toNumber',
   'toString',
   'toDate',
+  'toBoolean',
   'toIDCard',
   'merge',
   'mapValue',
@@ -276,6 +277,16 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     const s = v === undefined || v === null ? '' : String(v);
     const n = Number(s.replace(/[,\s]/g, ''));
     return s === '' || Number.isNaN(n) ? v : n;
+  });
+  // toBoolean（D117：FrontMatter「布尔」类型的隐含转换；语义与 wizard toBooleanCell 对齐）：
+  // 空/空白 → ''；可识别真值 true/1/是/yes/y/真 → true、假值 false/0/否/no/n/假 → false；否则保持原值。
+  hb.registerHelper('toBoolean', (v: unknown) => {
+    if (v === undefined || v === null) return '';
+    const s = String(v).trim().toLowerCase();
+    if (s === '') return '';
+    if (['true', '1', 'yes', 'y', '是', '真'].includes(s)) return true;
+    if (['false', '0', 'no', 'n', '否', '假'].includes(s)) return false;
+    return v;
   });
   hb.registerHelper('toString', (v: unknown) => (v === undefined || v === null ? '' : String(v)));
   hb.registerHelper('toDate', (v: unknown) => toDateCell(v));
