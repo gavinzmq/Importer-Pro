@@ -1,7 +1,7 @@
 {
   "id": "importer-pro",
   "name": "Importer Pro",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "minAppVersion": "1.4.0",
   "description": "一次配置，处处使用。通过 Handlebars 模板引擎实现灵活的数据处理与批量笔记生成。",
   "author": "gavinzmq",
