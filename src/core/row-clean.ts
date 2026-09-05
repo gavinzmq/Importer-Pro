@@ -1,22 +1,24 @@
 /**
- * 行清洗引擎（D122/D123）：跨行引擎开关的纯函数实现，core 层单一权威语义。
+ * 行清洗引擎（D122/D123/D124）：跨行引擎开关的纯函数实现，core 层单一权威语义。
  *
- * 能力（D123 收敛；D122 的「合并行」按用户反馈废弃删除）：
- * - 过滤空行（removeEmpty）：所有数据列值 trim 后均为空的行（含第一行；修复旧实现不 trim
- *   导致全空格/首行空行漏判的缺陷，D122）。
+ * 能力（D123 收敛；D124 修订执行顺序——「过滤重复表头行」后移至行筛选之后）：
+ * - 过滤空行（removeEmpty，原语 removeEmptyRows）：所有数据列值 trim 后均为空的行
+ *   （含第一行；修复旧实现不 trim 导致全空格/首行空行漏判的缺陷，D122）。
  * - 过滤重复表头（removeDuplicateHeader）：两种语义——
  *   · applyRowCleaning（API/默认解析路径）：表头已被解析消费为列名，值 == 列名的行；
- *   · applyRowCleaningForHeader（D123 向导 rawRows 路径）：记录为占位列名（`列N`）、表头未定，
- *     以清洗后**首行**（将成为表头的行）为基准，删除其余与其逐值相同的行。
- * - **表头提升（promoteHeaderRow，D123）**：行清洗 + 行筛选后剩余记录的第一行提升为列名
- *   （非空值 → 列名、空值 → 占位列名 `列N`、重复唯一化），该行从数据中移除——
+ *   · removeDuplicateHeaderRows（D124 向导 rawRows 路径）：记录为占位列名（`列N`）、表头未定，
+ *     以**清洗 + 行筛选后剩余第一行**（将成为表头的行）为基准，删除其余与其逐值相同的行。
+ * - **表头提升（promoteHeaderRow，D123）**：行清洗 + 行筛选 + 重复表头过滤后剩余记录的第一行
+ *   提升为列名（非空值 → 列名、空值 → 占位列名 `列N`、重复唯一化），该行从数据中移除——
  *   取代旧「表头行（headerRow，从第 N 行开始读取）」解析级参数。
  *
- * 执行顺序（D123 向导）：行清洗（过滤空行 → 过滤重复表头[首行基准]）→ 行筛选 → 表头提升 → 列映射。
- * 执行载体：跨行操作无法由单行 Handlebars 表达，作为「引擎开关」例外（STANDARDS §114）——
- * 向导路径（Step 3 预览 / Step 4 导入）由 wizard-data applyWizardTransform 调用本模块；
- * API 路径（importFile/importData）由 DataPipeline.applyEngineRowSwitches 读取模板
- * frontmatter `row.clean` 后调用本模块。
+ * 执行顺序（D124，向导表格类）：rawRows 解析 → 过滤空行（removeEmptyRows）→ 行筛选 →
+ * 过滤重复表头行（removeDuplicateHeaderRows，基准 = 清洗+筛选后剩余第一行）→ 表头提升
+ * （promoteHeaderRow）→ 列映射。向导路径（Step 3 预览 / Step 4 导入）由 wizard-data
+ * applyWizardTransform 按序调用原语（阶段 A 行筛选为 Handlebars 段，故行清洗拆为两时机）：
+ *   removeEmptyRows → [行筛选段] → removeDuplicateHeaderRows → promoteHeaderRow；
+ * API 路径（importFile/importData）由 DataPipeline.applyEngineRowSwitches 调用 applyRowCleaning
+ * （值==列名语义，表头已定、无「确定表头」阶段，不需首行基准）。
  */
 import { DataRecord, RowCleanConfig } from '../types';
 
@@ -85,35 +87,36 @@ export function applyRowCleaning(records: DataRecord[], clean?: RowCleanConfig):
 }
 
 /**
- * D123 行清洗引擎（向导 rawRows 路径；顺序 = 过滤空行 → 过滤重复表头）：
- * 记录为占位列名（`列N`），表头尚未确定——先过滤空行（含第一行），再以清洗后**第一行**
- * （即将被提升为表头的行）为基准，删除其余与其逐值相同的行（重复打印的表头）。
+ * D124 空行过滤原语（跨行引擎开关 removeEmpty，向导 rawRows / 任意路径）：
+ * 所有数据列值 trim 后均为空的行过滤（含第一行与前导空行）。
+ * 由调用方按「空行 → 行筛选 → 重复表头」顺序编排（见本文件头注释）。
  */
-export function applyRowCleaningForHeader(records: DataRecord[], clean?: RowCleanConfig): DataRecord[] {
-  if (!clean || records.length === 0) return records;
-  let out = records;
-
-  // 1) 过滤空行（trim 后判定，含第一行）
-  if (clean.removeEmpty) {
-    out = out.filter((r) => !isEmptyRow(r));
-  }
-
-  // 2) 过滤重复表头：与(清洗后)首行（表头行）逐值相同的行；首行本身保留（随后被表头提升消费）
-  if (clean.removeDuplicateHeader && out.length > 1 && !isEmptyRow(out[0])) {
-    const first = out[0];
-    out = out.filter((r, i) => i === 0 || !sameDataRow(first, r));
-  }
-
-  return out;
+export function removeEmptyRows(records: DataRecord[], enabled: boolean): DataRecord[] {
+  if (!enabled || records.length === 0) return records;
+  return records.filter((r) => !isEmptyRow(r));
 }
 
 /**
- * D123：表头提升——把行清洗 + 行筛选后剩余记录的第一行提升为列名：
+ * D124 重复表头过滤原语（跨行引擎开关 removeDuplicateHeader，向导 rawRows 路径）：
+ * 记录为占位列名（`列N`）、表头未定——以当前 `records[0]`（应由调用方保证为
+ * **清洗 + 行筛选后剩余第一行**，即将成为表头的行）为基准，删除其余与其逐值相同的行
+ * （重复打印的表头）；首行本身保留（随后被表头提升 promoteHeaderRow 消费）。
+ * 首行为空行（removeEmpty 未开 / 空行未被筛除）时不误删。
+ */
+export function removeDuplicateHeaderRows(records: DataRecord[], enabled: boolean): DataRecord[] {
+  if (!enabled || records.length <= 1) return records;
+  const first = records[0];
+  if (isEmptyRow(first)) return records;
+  return records.filter((r, i) => i === 0 || !sameDataRow(first, r));
+}
+
+/**
+ * D123：表头提升——把过滤空行 + 行筛选 + 重复表头过滤（D124 顺序）后剩余记录的第一行提升为列名：
  * - 列集合 = 所有记录数据键的并集（按出现顺序）；新列名 = 第一行对应值 trim 后非空 → 该值、
  *   空 → 原占位列名（`列N`）；重名唯一化（追加 `_N`）；
  * - 该第一行从数据中移除（它是表头不是数据）；其余行按新列名重映射（保留字段原样保留）；
  * - 无剩余行 / 无数据列 → 返回 null（无可提升表头）。
- * 仅表格类数据源向导链路调用（rawRows 解析 + 行清洗/筛选后调用）。
+ * 仅表格类数据源向导链路调用（rawRows 解析 + 清洗/筛选后调用，D124 见本文件头执行顺序）。
  */
 export function promoteHeaderRow(records: DataRecord[]): { header: string[]; rows: DataRecord[] } | null {
   if (records.length === 0) return null;

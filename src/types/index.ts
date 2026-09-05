@@ -318,14 +318,17 @@ export interface NoteTypeConfig {
 }
 
 /**
- * 行清洗配置（D122/D123，跨行引擎开关；随模板 frontmatter `row.clean` 保存，不产编译段）：
- * 执行顺序 = 过滤重复表头 → 过滤空行（均在行筛选之前）；「表头行」由行清洗+行筛选后
- * 剩余的第一行提升而来（D123，向导表格类链路）。
+ * 行清洗配置（D122/D123/D124，跨行引擎开关；随模板 frontmatter `row.clean` 保存，不产编译段）：
+ * - 非表格/API 默认解析路径（表头已解析为列名）：顺序 = 过滤重复表头（值==列名）→ 过滤空行，
+ *   均在行筛选之前一次完成（applyRowCleaning）；
+ * - 向导表格类 rawRows 链路（表头未定，D124）：执行顺序 = 过滤空行 → 行筛选 →
+ *   过滤重复表头（removeDuplicateHeaderRows，基准 = 清洗+筛选后剩余第一行）→ 表头提升
+ *   （promoteHeaderRow，D123，语义权威 core/row-clean.ts + wizard-data applyWizardTransform）。
  */
 export interface RowCleanConfig {
   /** 过滤空行（含第一行；单元格 trim 后为空判定） */
   removeEmpty?: boolean;
-  /** 过滤重复表头行（所有非空值与其列名完全相同；基于当前列名判定） */
+  /** 过滤重复表头行（非表格：值与列名完全相同；向导表格类：与将成为表头的行为逐值相同） */
   removeDuplicateHeader?: boolean;
 }
 /** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */

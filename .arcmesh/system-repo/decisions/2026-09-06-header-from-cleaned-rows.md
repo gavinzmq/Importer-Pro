@@ -1,15 +1,22 @@
 ---
-title: "行能力再收敛：删除合并行，表头改为清洗+筛选后剩余第一行（D123，已实现）"
+title: "行能力再收敛：删除合并行，表头改为清洗+筛选后剩余第一行（D123，已实现；执行顺序经 D124 修订）"
 type: "decision"
-version: "1.0.0"
+version: "1.1.0"
 date: "2026-09-06"
 status: "implemented"
 owner: "core-team"
 arcmesh:
   category: "decision"
   priority: 0
-  relates_to: ["../architecture.md", "../project.md", "../components/template-schema.md", "../STANDARDS.md", "../../glossary.md", "../../ui/layout.md", "../../../docs/reference/CHANGELOG.md"]
+  relates_to: ["../architecture.md", "../project.md", "../components/template-schema.md", "../STANDARDS.md", "../../glossary.md", "../../ui/layout.md", "../../../docs/reference/CHANGELOG.md", "2026-09-06-row-clean-order-after-filter.md"]
 ---
+
+> **D124 修订注记（2026-09-06）**：本记录的「执行链 = 行清洗（空行 → 重复表头[首行基准]）→ 行筛选 →
+> 表头提升」已按用户反馈修订——**过滤重复表头行后移至行筛选之后执行**，基准改为
+> **清洗 + 行筛选后剩余第一行**（将成为表头的行）；`applyRowCleaningForHeader` 拆为
+> `removeEmptyRows`/`removeDuplicateHeaderRows` 两原语。详见
+> [2026-09-06-row-clean-order-after-filter.md](2026-09-06-row-clean-order-after-filter.md)（D124）。
+> 下列第 2 节执行链描述为 D123 原始定稿，以 D124 为准。
 
 # 决策记录：行能力再收敛（D123，2026-09-06）
 

@@ -1,17 +1,19 @@
 /**
- * core/row-clean.ts 行清洗引擎单元测试（D122/D123，Vitest；供 CI `ci:test` 消费）
+ * core/row-clean.ts 行清洗引擎单元测试（D122/D123/D124，Vitest；供 CI `ci:test` 消费）
  *
- * 覆盖：空行/重复表头判定与 applyRowCleaning 执行顺序、表头提升 promoteHeaderRow（D123）、
- * 以及 frontmatter `row` 对象新旧结构解析（rowCleanFromFrontmatter）。
+ * 覆盖：空行/重复表头判定与 applyRowCleaning 语义、D124 原语（removeEmptyRows /
+ * removeDuplicateHeaderRows，向导 rawRows 空行 → 筛选 → 重复表头顺序编排）、
+ * 表头提升 promoteHeaderRow（D123）、以及 frontmatter `row` 对象新旧结构解析（rowCleanFromFrontmatter）。
  */
 import { describe, expect, it } from 'vitest';
 import {
   applyRowCleaning,
-  applyRowCleaningForHeader,
   isEmptyCell,
   isEmptyRow,
   isDuplicateHeaderRow,
   promoteHeaderRow,
+  removeDuplicateHeaderRows,
+  removeEmptyRows,
   rowCleanFromFrontmatter
 } from '../../src/core/row-clean';
 
@@ -78,49 +80,58 @@ describe('applyRowCleaning：API/默认解析路径（值 == 列名的重复表�
   });
 });
 
-describe('applyRowCleaningForHeader：向导 rawRows 路径（D123，首行基准重复表头）', () => {
-  it('先过滤空行（含首行），再以清洗后首行为基准删除重复表头行；首行本身保留', () => {
+describe('removeEmptyRows / removeDuplicateHeaderRows：向导 rawRows 原语（D124，空行 → 筛选 → 重复表头）', () => {
+  it('removeEmptyRows：过滤空行（含首行/前导/全空格）；trim 判定', () => {
     const records = [
-      { 列1: '', 列2: ' ' }, // 首行空行 → removeEmpty
-      { 列1: '姓名', 列2: '年龄' }, // 将成为表头的行（保留）
-      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → 删除
-      { 列1: '张三', 列2: '18' },
-      { 列1: '', 列2: '' } // 空行 → removeEmpty
+      { 列1: '', 列2: ' ' }, // 首行空行 → 过滤
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '', 列2: '' } // 空行 → 过滤
     ];
     const snapshot = records.map((r) => ({ ...r }));
-    expect(
-      applyRowCleaningForHeader(records, { removeDuplicateHeader: true, removeEmpty: true })
-    ).toEqual([
-      { 列1: '姓名', 列2: '年龄' },
-      { 列1: '张三', 列2: '18' }
-    ]);
-    expect(records).toEqual(snapshot);
+    expect(removeEmptyRows(records, true)).toEqual([{ 列1: '姓名', 列2: '年龄' }]);
+    expect(records).toEqual(snapshot); // 不修改入参
+    expect(removeEmptyRows(records, false)).toBe(records); // 开关关闭原样返回
   });
 
-  it('仅开重复表头：首行（非空）保留为基准，后续与首行相同的行删除；不同行保留', () => {
+  it('removeDuplicateHeaderRows：以当前首行（应为清洗+筛选后剩余第一行）为基准删重复表头；首行本身保留', () => {
     const records = [
-      { 列1: '姓名', 列2: '年龄' },
-      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '姓名', 列2: '年龄' }, // 将成为表头的行（保留）
+      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → 删除
       { 列1: '张三', 列2: '18' }
     ];
-    expect(applyRowCleaningForHeader(records, { removeDuplicateHeader: true })).toEqual([
+    expect(removeDuplicateHeaderRows(records, true)).toEqual([
       { 列1: '姓名', 列2: '年龄' },
       { 列1: '张三', 列2: '18' }
     ]);
+    expect(removeDuplicateHeaderRows(records, false)).toBe(records); // 开关关闭原样返回
   });
 
-  it('首行为空行且仅开重复表头时不误删（空行交由 removeEmpty）', () => {
+  it('首行为空行时不误删（空行应由 removeEmptyRows 先行过滤）', () => {
     const records = [
       { 列1: '', 列2: '' },
       { 列1: '张三', 列2: '18' }
     ];
-    expect(applyRowCleaningForHeader(records, { removeDuplicateHeader: true })).toEqual(records);
+    expect(removeDuplicateHeaderRows(records, true)).toEqual(records);
   });
 
-  it('无配置 / 空配置原样返回', () => {
-    const records = [{ a: 1 }];
-    expect(applyRowCleaningForHeader(records, {})).toBe(records);
-    expect(applyRowCleaningForHeader(records, undefined)).toBe(records);
+  it('D124 编排（空行 → 筛选 → 重复表头）：先空行后剩余首行即基准；筛选剔除的行不参与重复判定', () => {
+    // 全部物理行（rawRows）：首部空行 + 将成为表头行 + 重复表头 + 数据 + 尾部空行
+    const raw = [
+      { 列1: '', 列2: ' ' }, // 空行 → removeEmptyRows
+      { 列1: '姓名', 列2: '年龄' }, // 将成为表头的行（清洗+筛选后首行 = 基准，保留）
+      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → removeDuplicateHeaderRows 删除
+      { 列1: '张三', 列2: '18' },
+      { 列1: '', 列2: '' } // 空行 → removeEmptyRows
+    ];
+    // 行筛选（JS 语义）：任意列非空（表头/数据行都通过；空行已在 removeEmptyRows 移除）
+    const filtered = raw.filter((r) => Object.values(r).some((v) => String(v ?? '').trim() !== ''));
+    const noEmpty = removeEmptyRows(raw, true);
+    expect(noEmpty.length).toBe(3);
+    const deduped = removeDuplicateHeaderRows(filtered, true);
+    expect(deduped).toEqual([
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ]);
   });
 });
 

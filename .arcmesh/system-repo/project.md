@@ -1,8 +1,8 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.28.0"
-last_updated: "2026-09-05"
+version: "1.29.0"
+last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
 tags: ["obsidian", "plugin", "importer", "excel", "handlebars"]
@@ -170,6 +170,8 @@ arcmesh:
 > ④ **D121 输出策略**：区块 3 增 冲突策略/增量模式 下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。
 > **行能力再收敛（D123，2026-09-06 已实现；decisions/2026-09-06-header-from-cleaned-rows.md）**：用户反馈「合并行没用」与「表头应该是清洗、筛选后剩余第一行，原表头行控件没用」——① **删除「合并行」**功能与代码（类型 MergeRowRule/`row.merge_rows` 读写、UI 编辑器、core 合并逻辑全量移除）；② **删除「表头行（headerRow，从第 N 行开始读取）」解析级控件**——表格类解析改 **rawRows 原始行模式**（全部物理行含空行、占位列名 `列1..N`），**表头 = 行清洗 + 行筛选后剩余第一行**（`promoteHeaderRow` 提升为列名、该行移除）；行清洗收敛为 过滤空行（含第一行，trim 判定）+ 过滤重复表头（向导首行基准 `applyRowCleaningForHeader` / API 值==列名）；执行链 = 清洗 → 行筛选 → 表头提升 → 列映射；行清洗/筛选配置致表头变化时自动补充映射（`onRowConfigChanged`）；统计口径 `countRowsAfterHeader`。旧配置（header_row/merge_rows/dedupe 等）读取忽略、保存不再写出。全量 Vitest **170 例全绿**、type-check 通过。
 >
+> **行清洗执行顺序修订（D124，2026-09-06 已实现；decisions/2026-09-06-row-clean-order-after-filter.md）**：用户反馈「行清洗顺序应为 过滤空行 → 行筛选 → 过滤重复表头行；重复表头行应在所有过滤和筛选后确定表头行了再过滤」——**过滤重复表头行后移至行筛选之后**，基准从 D123「清洗后首行」改为 **清洗 + 行筛选后剩余第一行**（将成为表头的行）。`core/row-clean.ts` 拆 `applyRowCleaningForHeader` 为 **`removeEmptyRows`**（空行，行筛选前）与 **`removeDuplicateHeaderRows`**（重复表头，以当前首行为基准、行筛选后调用）；`applyWizardTransform`/`resolvedHeader`/`countRowsAfterHeader` 按 D124 顺序（空行 → 阶段 A 行筛选 → 重复表头 → 表头提升）编排；非表格/API 路径维持 `applyRowCleaning`（值==列名 + 空行一次完成）。UI 区块 4 文案同步（表格类 = 空行 → 行筛选 → 重复表头；非表格 = 值==列名在筛选前）。单测 row-clean/wizard-data 更新（新增「表头前说明行被筛选排除后，重复表头仍以真实表头行为基准删除」用例）。蓝图同步：architecture 1.28.0 / ui/layout 1.22.0 / template-schema 1.15.0 / CHANGELOG 1.23.0 / project 1.29.0 / glossary 1.10.0。
+>
 > 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
 ## 5. 里程碑
@@ -218,4 +220,4 @@ arcmesh:
 
 ---
 
-*版本: 1.28.0 | 最后更新: 2026-09-06*
+*版本: 1.29.0 | 最后更新: 2026-09-06*

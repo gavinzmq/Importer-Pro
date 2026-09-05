@@ -636,7 +636,7 @@ export class ImportModal extends Modal {
     this.renderTemplateBlock(el);
     el.createDiv({ cls: 'ipw-sep' });
 
-    // 区块 4：行配置（行级：行清洗（重复表头·空行）/ 行筛选 / 校验，D94/D96/D122/D123）
+    // 区块 4：行配置（行级：行清洗（空行·重复表头）/ 行筛选 / 校验，D94/D96/D122/D123/D124）
     this.renderRowsBlock(el);
     el.createDiv({ cls: 'ipw-sep' });
 
@@ -1192,7 +1192,7 @@ export class ImportModal extends Modal {
     }
   }
 
-  /** 区块 4：行配置（行级，D94/D122/D123）：行清洗（重复表头·空行）/ 行筛选 / 校验规则 */
+  /** 区块 4：行配置（行级，D94/D122/D123/D124）：行清洗（空行·重复表头）/ 行筛选 / 校验规则 */
   private renderRowsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.rows = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
@@ -1200,9 +1200,10 @@ export class ImportModal extends Modal {
     const cols = this.columns();
     const filterCols = this.filterColumns();
 
-    // ── 行清洗（D122/D123：过滤空行（含第一行）/ 过滤重复表头；跨行引擎开关，行筛选之前执行） ──
+    // ── 行清洗（D124：表格类 rawRows 顺序 = 过滤空行 → 行筛选 → 过滤重复表头[基准=筛选后首行]；
+    //    非表格 = 过滤重复表头[值==列名] + 过滤空行一次完成；跨行引擎开关，不产编译段） ──
     const cleanCard = wrap.createDiv({ cls: 'ipw-card' });
-    cleanCard.createDiv({ cls: 'ipw-card-title', text: '🧹 行清洗（重复表头 / 空行）' });
+    cleanCard.createDiv({ cls: 'ipw-card-title', text: '🧹 行清洗（空行 / 重复表头）' });
     const cleanCfg = this.transform.clean ?? (this.transform.clean = {});
     const toggleRow = cleanCard.createDiv({ cls: 'ipw-form-row ipw-checks' });
 
@@ -1211,7 +1212,7 @@ export class ImportModal extends Modal {
     toggleRow.createSpan({ text: '过滤空行（含第一行）' });
     emptyCb.addEventListener('change', () => {
       cleanCfg.removeEmpty = emptyCb.checked || undefined;
-      this.onRowConfigChanged(); // D123：表头（列名）可能随清洗结果变化
+      this.onRowConfigChanged(); // D124：空行先行（表格类表头/列名随清洗+筛选+重复表头后变化）
     });
 
     const dupCb = toggleRow.createEl('input', { type: 'checkbox' });
@@ -1219,12 +1220,14 @@ export class ImportModal extends Modal {
     toggleRow.createSpan({ text: '过滤重复表头行' });
     dupCb.addEventListener('change', () => {
       cleanCfg.removeDuplicateHeader = dupCb.checked || undefined;
-      this.onRowConfigChanged();
+      this.onRowConfigChanged(); // D124：表格类在行筛选后以筛选后首行为基准过滤重复表头
     });
 
     cleanCard.createDiv({
       cls: 'ipw-muted ipw-note',
-      text: 'ⓘ 顺序：过滤重复表头 → 过滤空行 → 行筛选。表头 = 行清洗 + 行筛选后剩余的第一行（其值成为列名，空值回落 列N）；重复表头基于当前列名判定。'
+      text: this.isTableSource()
+        ? 'ⓘ 表头（列名）= 过滤空行 + 行筛选后剩余的第一行（其值成为列名，空值回落 列N）；「过滤重复表头行」在行筛选之后执行，以该将成为表头的行为基准删除其后逐值相同的行。'
+        : 'ⓘ 表头已解析为列名；「过滤重复表头行」（值与列名完全相同）与「过滤空行」在行筛选前执行。'
     });
 
     // ── 行筛选（D96：Excel 式包含式，列下拉含「任意列」；D123 表格类按列位置（列1..N）匹配） ──
@@ -1344,8 +1347,8 @@ export class ImportModal extends Modal {
   }
 
   /**
-   * D123：预览/统计的「数据行数」——行清洗 + 行筛选后保留数，
-   * 表格类扣除被提升为表头的第一行（该行不产笔记）并按首行基准过滤重复表头。
+   * D124：预览/统计的「数据行数」——与真实执行同序（空行 → 行筛选 → 重复表头[基准=筛选后首行]），
+   * 表格类再扣除被提升为表头的第一行（该行不产笔记）。
    */
   private dataRowCount(): number {
     if (this.isTableSource()) return countRowsAfterHeader(this.parsed, this.transform);
@@ -1374,7 +1377,7 @@ export class ImportModal extends Modal {
     } else {
       container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)' });
     }
-    // 统计行：行清洗 + 行筛选后的数据行数（D122/D123：表格类扣除表头行）
+    // 统计行：行清洗（空行→重复表头，D124 顺序）+ 行筛选后的数据行数（表格类扣除表头行）
     const kept = this.dataRowCount();
     const stat = container.createDiv({ cls: 'ipw-muted ipw-note' });
     stat.setText(`保留「全部规则均匹配」的行（AND），筛选后 ${formatCount(kept)} / ${formatCount(this.parsed.length)} 行`);

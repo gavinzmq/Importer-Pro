@@ -136,7 +136,7 @@ export class ImportService {
       // 钩子：处理前
       await this.hooks.run('before:process', { records, template });
 
-      // D122 引擎级跨行开关：行清洗（合并行 / 过滤重复表头 / 过滤空行，模板 frontmatter）批量预处理
+      // D122/D124 引擎级跨行开关：行清洗（API/默认解析路径 = applyRowCleaning：过滤重复表头[值==列名] / 过滤空行，模板 frontmatter）批量预处理
       const engineRecords = await this.pipeline.applyEngineRowSwitches(records, template);
 
       // 预处理 + 分流（每记录组装 _notes；index 注入 _index 保留字段——原始行号，供模板 preprocess 引用）

@@ -99,7 +99,7 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：读取模板持久化的 Step 3 配置。
    * preprocess 标记段反编译 → transform；frontmatter 提供元信息（match/output/name）与引擎开关
-   * （行清洗 row.clean，D122/D123；旧 header_row/merge_rows 已废弃忽略）；
+   * （行清洗 row.clean，D122/D123/D124；旧 header_row/merge_rows 已废弃忽略）；
    * 旧模板 frontmatter（byContent 删除 / removeEmpty 清洗 / row.filter / columns / mapping / derived）
    * 一次性迁移入 transform（读取即迁移，保存不再产出旧字段）。
    */
@@ -117,7 +117,7 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回所选模板（模板即配置源）。
    * - 写入仅限 paths.templates 目录（STANDARDS §7）；模板不存在抛 TEMPLATE_001，越界抛 SECURITY_001；
-   * - frontmatter 仅写元信息（name/match/output）与行清洗引擎开关（row.clean，D122/D123），
+   * - frontmatter 仅写元信息（name/match/output）与行清洗引擎开关（row.clean，D122/D123/D124），
    *   列/映射/派生/表头行参数等旧字段不再写入（收敛进编译段/向导内存）；失败抛 TEMPLATE_005。
    */
   async saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void> {
@@ -423,7 +423,7 @@ function ensureFilter(rules: RowFilterRule[], rule: RowFilterRule): void {
   if (!hit) rules.push(rule);
 }
 
-/** 旧 frontmatter 行配置一次性迁移进 transform（D122/D123：删除行/去重/过滤无效数据/合并行废弃；行清洗 = 重复表头/空行） */
+/** 旧 frontmatter 行配置一次性迁移进 transform（D122/D123/D124：删除行/去重/过滤无效数据/合并行废弃；行清洗 = 重复表头/空行） */
 function migrateLegacyRowConfig(transform: Step3TemplateSnapshot['transform'], row: Record<string, any> | undefined): void {
   if (!row || typeof row !== 'object') return;
   const clean: RowCleanConfig = transform.clean ?? (transform.clean = {});
@@ -580,7 +580,7 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   // D118：校验规则写 frontmatter validation（不产编译段——校验契约 = frontmatter，template-schema §2）
   if (Array.isArray(snap.validation) && snap.validation.length > 0) next.validation = snap.validation;
   else delete next.validation;
-  // D122/D123：行清洗（引擎开关）写 frontmatter row.clean（对象）；表头行参数/合并行已废弃不再产出
+  // D122/D123/D124：行清洗（引擎开关）写 frontmatter row.clean（对象）；表头行参数/合并行已废弃不再产出
   const row: Record<string, any> = {};
   const clean = t.clean ?? {};
   const cleanObj: Record<string, any> = {};

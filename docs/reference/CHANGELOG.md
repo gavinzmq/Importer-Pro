@@ -1,7 +1,7 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.22.0"
+version: "1.23.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -50,6 +50,7 @@ arcmesh:
 - **行清洗重构（2026-09-05，D122 已实现）**：用户反馈「删除行没用 / 去重、过滤无效数据没用 / 去除空行对首行与全空格行失效」——① **删除「删除行」功能及代码**（byIndex/duplicateHeader 两类、`row-remove` 编译段、`RowRemoveRule`/`parseRowNumbers` 等全量移除，旧段保存时自动清理）；② **删除「去重 / 过滤无效数据」两开关**（`RowCleanFlag` 废弃）；③ **行清洗重做为三项跨行引擎开关**（语义统一 `src/core/row-clean.ts`，向导与 API 路径同源）：**合并行**（匹配 exact/contains/regex 的连续行合并到其前一条不匹配的行，同名列按连接符拼接、缺列新建、首行匹配原样保留、继承目标行号）/ **过滤重复表头**（值==列名，基于表头行应用后的解析列名）/ **过滤空行（含第一行）**——`isEmptyCell`/`isEmptyRow` 与 `builtin.isEmptyRow` 同步 **trim 判定**，修复全空格/首行空行漏判根因；执行顺序 = 合并行 → 重复表头 → 空行 → 行筛选；配置随 frontmatter `row.clean`（remove_empty/remove_duplicate_header）与 `row.merge_rows` 保存、不产编译段；④ **表头行（解析级）与行清洗「过滤重复表头」（数据级）不重复、均保留**（后者基于前者应用后的列名）；⑤ 旧配置迁移（`removeEmpty`→remove_empty、`duplicateHeader`→remove_duplicate_header、`byContent`→筛选、`dedupe`/`filterInvalid`/`byIndex` 忽略、旧「任意列 非空」预置规则→remove_empty）。落点：`core/row-clean.ts`（新）、`types`（MergeRowRule/RowCleanConfig）、`wizard-data`、`pipeline`、`template-scanner`、`import-modal`（区块 4 行清洗卡重做）、`builtin`。单测：`row-clean.test.ts` 新增 + wizard-data/template-scanner 更新（全量 Vitest **167 例全绿**、type-check 通过）。见 decisions/2026-09-05-row-clean-rework.md
 
 - **行能力再收敛（2026-09-06，D123 已实现）**：用户反馈「合并行没用」与「表头应该是清洗、筛选后剩余第一行，原表头行控件没用」——① **删除「合并行」功能及代码**（`MergeRowRule`/`RowCleanConfig.mergeRows` 类型、`row.merge_rows` frontmatter 读写与迁移、`MERGE_MODE_LABELS`/`mergeRowRuleLabel`/`cellMatchesMergeRule`/`rowMatchesMergeRule`、UI 合并行编辑器 `renderMergeRowsList` 全量移除）；② **删除「表头行（headerRow，从第 N 行开始读取）」解析级控件与参数**——表格类解析改 **`ParseOptions.rawRows` 原始行模式**（Excel `sheet_to_json {header:1,blankrows:true}` / CSV `Papa header:false,skipEmptyLines:false`：全部物理行含前导/内部空行作为记录、占位列名 `列1..N`、剔除尾部幻影行；缓存键 headerRow→rawRows）；③ **表头 = 行清洗 + 行筛选后剩余第一行**（`promoteHeaderRow`：其值 trim 非空 → 列名、空 → 占位列名、重名唯一化，该行从数据移除）；`applyWizardTransform` 增 `opts.promoteHeader`，执行链 = rawRows 解析 → 行清洗（过滤空行[含第一行 trim] → 过滤重复表头[向导首行基准 `applyRowCleaningForHeader`]）→ 行筛选（占位列名 `列1..N` 匹配，任意列不受影响）→ **表头提升** → 列映射/派生/note-output（最终列名）→ 校验回填；`resolvedHeader`/`countRowsAfterHeader` 供 UI 列下拉与「筛选后 X/Y」统计（扣表头行）；行清洗/筛选配置致表头变化时 `onRowConfigChanged` 自动补充映射并 L2 重建列映射区块（D91 分级刷新）；API 直接导入（importFile/importData）保持「第一行为表头」默认语义与值==列名重复表头过滤。旧配置（`header_row`/`merge_rows`/数组式 clean 等）读取忽略或迁移、保存不再写出。落点：`types`（rawRows/RowCleanConfig）、`core/row-clean.ts`（`applyRowCleaningForHeader`/`promoteHeaderRow`）、`csv.ts`/`excel.ts`/`parser.ts`、`wizard-data`、`template-scanner`、`pipeline`、`import-modal`（删表头行卡与合并行 UI、区块 4 重做）、`styles.css`。单测：parsers/row-clean/wizard-data/template-scanner 更新（全量 Vitest **170 例全绿**、type-check 通过）。见 decisions/2026-09-06-header-from-cleaned-rows.md
+- **行清洗执行顺序修订（2026-09-06，D124 已实现）**：用户反馈「行清洗顺序应为 过滤空行 → 行筛选 → 过滤重复表头行；过滤重复表头行应在所有过滤和筛选后确定表头行了再过滤」——**过滤重复表头行后移至行筛选之后执行**，且基准从 D123 的「清洗后首行」改为「**清洗 + 行筛选后剩余第一行**」（即最终将成为表头、随后被提升移除的那一行）。落点：`core/row-clean.ts` 把 `applyRowCleaningForHeader` 拆为两个独立原语 **`removeEmptyRows`**（空行，行筛选前）与 **`removeDuplicateHeaderRows`**（重复表头，以当前首行为基准，行筛选后调用）；`wizard-data` `applyWizardTransform`（promoteHeader 表格类链 = 空行 → 阶段 A 行筛选段 → 重复表头 → 表头提升）、`resolvedHeader`/`countRowsAfterHeader`（UI 列下拉与「筛选后 X/Y」统计）同步新顺序；非表格/API 路径（promoteHeader=false，表头已解析为列名）维持 `applyRowCleaning`（值==列名 + 空行一次完成）；UI 区块 4 行清洗提示文案与顺序说明同步（表格类 = 空行 → 行筛选 → 重复表头，基准 = 将成为表头的行；非表格 = 值==列名在筛选前）。单测：row-clean/wizard-data 更新（新增 D124 编排用例，如「表头前说明行被筛选排除后重复表头仍以真实表头行为基准删除」）。蓝图同步：architecture 1.28.0 / ui/layout 1.22.0 / template-schema 1.15.0 / CHANGELOG 1.23.0 / glossary 1.10.0。见 decisions/2026-09-06-row-clean-order-after-filter.md
 
 #### 图形化配置
 - **4 步导入向导**：来源选择 → 文件管理 → 模板配置 → 进度执行（模板配置内含数据处理/列映射/校验/派生字段/匹配规则/分流/输出/预览）
@@ -106,4 +107,4 @@ arcmesh:
 
 ---
 
-*版本: 1.18.0 | 最后更新: 2026-09-05*
+*版本: 1.23.0 | 最后更新: 2026-09-06*

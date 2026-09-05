@@ -4,10 +4,13 @@
  *
  * - D96 行筛选：RowFilterOp 13 种（Excel 式包含式保留，多规则 AND）；`'*'` 任意列。
  * - D122/D123 行清洗重构：删除行 / 去重 / 过滤无效数据 / 合并行废弃删除；行清洗收敛为
- *   两项跨行引擎开关（过滤重复表头 / 过滤空行，含第一行）——语义统一于 core/row-clean.ts
- *   （applyRowCleaning），执行顺序在行筛选之前，不产编译段、随 frontmatter `row.clean` 保存；
- *   旧配置读取自动迁移。
- * - D123 表头提升：表格类数据源向导链路中「表头 = 行清洗 + 行筛选后剩余的第一行」
+ *   两项跨行引擎开关（过滤空行 / 过滤重复表头，含第一行）——语义统一于 core/row-clean.ts，
+ *   不产编译段、随 frontmatter `row.clean` 保存；旧配置读取自动迁移。
+ * - D124 执行顺序修订：**过滤重复表头行后移至行筛选之后**——表格类向导链
+ *   （promoteHeader=true）按 `空行(removeEmptyRows) → 行筛选段 → 重复表头(removeDuplicateHeaderRows，
+ *   基准=清洗+筛选后剩余第一行) → 表头提升(promoteHeaderRow)` 执行；非表格/默认解析路径
+ *   （promoteHeader=false）仍走 `applyRowCleaning`（值==列名，表头已定、无「确定表头」阶段）。
+ * - D123 表头提升：表格类数据源向导链路中「表头 = 行清洗 + 行筛选 + 重复表头过滤后剩余的第一行」
  *   （promoteHeaderRow，core/row-clean.ts）；原 headerRow 解析级参数废弃删除，
  *   解析改用 rawRows（占位列名 `列1..N`），行筛选按列位置（占位列名）匹配、
  *   列映射/校验/笔记条件基于提升后的最终列名。
@@ -20,7 +23,7 @@ import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, Row
 import type { RowFilterOp, RowFilterRule } from '../types';
 import { md5Hash } from '../utils/crypto';
 import { Validator } from '../core/validator/validator';
-import { applyRowCleaning, applyRowCleaningForHeader, isDuplicateHeaderRow, promoteHeaderRow } from '../core/row-clean';
+import { applyRowCleaning, isDuplicateHeaderRow, promoteHeaderRow, removeDuplicateHeaderRows, removeEmptyRows } from '../core/row-clean';
 export type { NoteTypeConfig };
 export type { RowCleanConfig } from '../types';
 
@@ -42,7 +45,7 @@ export interface ColumnFormatRule {
   param: string;
 }
 
-/** 行清洗开关（D122 收敛：合并行 / 过滤重复表头 / 过滤空行，见 RowCleanConfig） */
+/** 行清洗开关（D122/D124 收敛：过滤重复表头 / 过滤空行，见 RowCleanConfig） */
 
 /** 旧 byContent 删除规则（D93，仅旧模板 frontmatter 兼容迁移输入；写入不再产生，D97） */
 export interface LegacyByContentRule {
@@ -258,8 +261,9 @@ export function compareOpSymbol(op: ComputeCompareOp): string {
 /** Step 3 数据变换总配置（编译层输入；D96 增 filters，D122 clean 重构为 RowCleanConfig；D113 列侧收敛进 mappings.settings） */
 export interface DataTransformConfig {
   /**
-   * 行清洗（D122，跨行引擎开关，不产编译段）：合并行 / 过滤重复表头 / 过滤空行（含第一行），
-   * 语义统一于 core/row-clean.ts；执行顺序在行筛选之前；随模板 frontmatter row.clean 保存。
+   * 行清洗（D122/D124，跨行引擎开关，不产编译段）：过滤空行（含第一行）/ 过滤重复表头，
+   * 语义统一于 core/row-clean.ts；向导表格类按 空行 → 行筛选 → 重复表头 编排（D124，
+   * applyWizardTransform），非表格路径 applyRowCleaning 一次完成；随模板 frontmatter row.clean 保存。
    */
   clean?: RowCleanConfig;
   /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段 */
@@ -645,19 +649,22 @@ export function applyColumnFormats(records: DataRecord[], rules: ColumnFormatRul
   });
 }
 
-/* ── 行清洗（D122/D123：过滤重复表头 / 过滤空行；表头提升；语义权威 = core/row-clean.ts） ── */
+/* ── 行清洗（D122/D123/D124：过滤空行 / 过滤重复表头；表头提升；语义权威 = core/row-clean.ts） ── */
 
-export { applyRowCleaning, applyRowCleaningForHeader, isDuplicateHeaderRow, promoteHeaderRow };
+export { applyRowCleaning, isDuplicateHeaderRow, promoteHeaderRow, removeDuplicateHeaderRows, removeEmptyRows };
 
 /**
- * D123：行清洗 + 行筛选后剩余第一行提升的表头列名（供 UI 列下拉 / 列映射 / 校验字段 / 笔记条件）。
- * 表格类 rawRows（占位列名）用首行基准的重复表头语义（applyRowCleaningForHeader）。
+ * D124：表格类向导 rawRows 链剩余第一行（将成为表头的行）提升的表头列名
+ * （供 UI 列下拉 / 列映射 / 校验字段 / 笔记条件）。顺序与真实执行一致：
+ * removeEmptyRows（空行）→ 行筛选（JS 语义 rowMatchesFilter）→ removeDuplicateHeaderRows
+ * （重复表头，基准 = 清洗+筛选后剩余第一行）→ promoteHeaderRow。
  * 无剩余行 → 返回空数组（UI 回落占位列名）。
  */
 export function resolvedHeader(records: DataRecord[], cfg: DataTransformConfig): string[] {
-  const cleaned = applyRowCleaningForHeader(records, cfg.clean);
-  const kept = cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
-  return promoteHeaderRow(kept)?.header ?? [];
+  const noEmpty = removeEmptyRows(records, cfg.clean?.removeEmpty === true);
+  const kept = noEmpty.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  const deduped = removeDuplicateHeaderRows(kept, cfg.clean?.removeDuplicateHeader === true);
+  return promoteHeaderRow(deduped)?.header ?? [];
 }
 
 /* ── 列处理 ─────────────────────────────────────────────── */
@@ -927,12 +934,14 @@ export interface TransformRow {
 }
 
 /**
- * JS 整链变换并保留原始行号（执行顺序：行清洗（合并行→重复表头→空行）→ 行筛选 → 列映射/派生，D122 收敛）。
+ * JS 整链变换并保留原始行号（非表格/默认解析路径语义，值==列名重复表头；顺序：行清洗
+ * （applyRowCleaning：过滤重复表头[值==列名] → 过滤空行）→ 行筛选 → 列映射/派生）。
  * 仅语义层/单测使用；Step 3 预览与 Step 4 导入一律改用 applyWizardTransform（Handlebars 真实渲染，D98）。
+ * 表格类 rawRows 链路（表头未定）请走 applyWizardTransform { promoteHeader }（D124 顺序）。
  */
 export function applyTransformPreview(records: DataRecord[], cfg: DataTransformConfig): TransformRow[] {
-  // 行清洗（跨行引擎开关：合并行 / 过滤重复表头 / 过滤空行；D122）。
-  // 以 _index 保留原始行号（合并保留目标行号、过滤自然保留；与预览「#」列一致）。
+  // 行清洗（跨行引擎开关 applyRowCleaning：过滤重复表头[值==列名] → 过滤空行；非表格路径）。
+  // 以 _index 保留原始行号（过滤自然保留；与预览「#」列一致）。
   const seeded = records.map((r, i) => ({ ...r, _index: i + 1 }));
   let rows: TransformRow[] = applyRowCleaning(seeded, cfg.clean).map((r) => ({ src: Number(r._index) || 0, row: r }));
   // 行筛选（D96 包含式，保留 AND）
@@ -957,13 +966,15 @@ export function countRowsAfterSelection(records: DataRecord[], cfg: DataTransfor
 }
 
 /**
- * D123：向导表格类（rawRows 占位列名）「数据行数」统计——行清洗（首行基准重复表头）+
- * 行筛选后保留行数，再扣除将被提升为表头的首行（该行不产笔记）。
+ * D124：向导表格类（rawRows 占位列名）「数据行数」统计——与真实执行同序：
+ * 空行（removeEmptyRows）→ 行筛选 → 重复表头（removeDuplicateHeaderRows，基准 = 清洗+筛选后
+ * 剩余第一行）→ 再扣除将被提升为表头的首行（该行不产笔记）。
  */
 export function countRowsAfterHeader(records: DataRecord[], cfg: DataTransformConfig): number {
-  const cleaned = applyRowCleaningForHeader(records, cfg.clean);
-  const kept = cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
-  return Math.max(0, kept.length - 1);
+  const noEmpty = removeEmptyRows(records, cfg.clean?.removeEmpty === true);
+  const kept = noEmpty.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  const deduped = removeDuplicateHeaderRows(kept, cfg.clean?.removeDuplicateHeader === true);
+  return Math.max(0, deduped.length - 1);
 }
 
 /* ── D98 编译层：配置 ↔ Handlebars 标记段 ────────────────── */
@@ -2037,12 +2048,15 @@ export interface PreprocessRenderer {
 
 /**
  * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
- * 行筛选段之前嵌入行清洗引擎开关（过滤重复表头 / 过滤空行，D122/D123）。
+ * 行清洗引擎开关按 D124 修订顺序执行。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
  * D118：opts.rules（向导实时校验规则）阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`
  * （供预览徽标与 `{{_status}}`）。
- * D123：opts.promoteHeader（表格类向导链路）在行筛选后把剩余第一行提升为表头（列名），
- * 该行从数据中移除；阶段 B（列映射/派生/note-output）基于提升后的最终列名执行。
+ * D124：opts.promoteHeader（表格类向导链路，rawRows 占位列名、表头未定）执行链 =
+ *   空行（removeEmptyRows）→ 阶段 A 行筛选（占位列名）→ 重复表头
+ *   （removeDuplicateHeaderRows，基准 = 清洗+筛选后剩余第一行）→ 表头提升（promoteHeaderRow，
+ *   剩余第一行提升为列名并从数据移除）；阶段 B（列映射/派生/note-output）基于提升后的最终列名执行。
+ *   非表格链路（promoteHeader=false，表头已解析为列名）维持 applyRowCleaning（值==列名，一次完成）。
  */
 export async function applyWizardTransform(
   engine: PreprocessRenderer,
@@ -2064,14 +2078,22 @@ export async function applyWizardTransform(
   // 附加原始行号（引擎保留字段 _index，template-schema §3）
   let rows: TransformRow[] = records.map((r, i) => ({ src: i + 1, row: { ...r, _index: i + 1 } }));
 
-  // 行清洗（跨行引擎开关：过滤重复表头 → 过滤空行，行筛选之前；语义 core/row-clean.ts）
-  // D123：表头提升链路（promoteHeader = 表格类 rawRows）用首行基准的重复表头语义。
-  const cleaner = opts.promoteHeader ? applyRowCleaningForHeader : applyRowCleaning;
-  const cleaned = cleaner(
-    rows.map((t) => t.row),
-    cfg.clean
-  );
-  rows = cleaned.map((r) => ({ src: Number(r._index) || 0, row: r }));
+  // 行清洗（跨行引擎开关，语义 core/row-clean.ts）：
+  // D124 表格类（promoteHeader，rawRows 表头未定）——先仅空行（removeEmptyRows），
+  // 重复表头（removeDuplicateHeaderRows）后移至阶段 A 行筛选之后、表头提升之前执行
+  // （基准 = 清洗+筛选后剩余第一行）；非表格/默认解析路径（表头已解析为列名）
+  // 维持 applyRowCleaning（值==列名 + 空行，一次完成、行筛选之前）。
+  if (opts.promoteHeader) {
+    rows = removeEmptyRows(
+      rows.map((t) => t.row),
+      cfg.clean?.removeEmpty === true
+    ).map((r) => ({ src: Number(r._index) || 0, row: r }));
+  } else {
+    rows = applyRowCleaning(
+      rows.map((t) => t.row),
+      cfg.clean
+    ).map((r) => ({ src: Number(r._index) || 0, row: r }));
+  }
 
   // 阶段 A：行筛选（逐行 Handlebars；表格类按占位列名 `列N` 匹配，D123）
   if (phaseA !== '') {
@@ -2082,6 +2104,14 @@ export async function applyWizardTransform(
       kept.push({ src: t.src, row: (out as DataRecord) ?? t.row });
     }
     rows = kept;
+  }
+
+  // D124：表格类重复表头过滤——行筛选之后执行，以清洗+筛选后剩余第一行（将成为表头的行）为基准
+  if (opts.promoteHeader) {
+    rows = removeDuplicateHeaderRows(
+      rows.map((t) => t.row),
+      cfg.clean?.removeDuplicateHeader === true
+    ).map((r) => ({ src: Number(r._index) || 0, row: r }));
   }
 
   // D123：表头提升——剩余第一行提升为列名并从数据移除（其后列映射/派生/校验基于最终列名）

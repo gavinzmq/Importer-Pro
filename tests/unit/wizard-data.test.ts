@@ -624,6 +624,26 @@ describe('D98 编译/反编译：标记段与往返', () => {
     expect(noPromote.length).toBe(4);
   });
 
+  it('applyWizardTransform：D124 重复表头在行筛选之后、以清洗+筛选后首行为基准（表头前的说明行被筛选排除）', async () => {
+    // rawRows 解析：首部说明行（与表头不同）经行筛选排除 → 剩余首行才是真实表头 → 以它为基准删重复表头
+    const data = [
+      { 列1: '-', 列2: '-' }, // 说明行 → 行筛选排除（列1 ≠ '-'）
+      { 列1: '姓名', 列2: '年龄' }, // 清洗+筛选后首行 = 将成为表头的行（提升为列名）
+      { 列1: '张三', 列2: '18' },
+      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → 以筛选后首行（姓名/年龄）为基准删除
+      { 列1: '李四', 列2: '20' }
+    ];
+    const cfg: DataTransformConfig = {
+      clean: { removeEmpty: true, removeDuplicateHeader: true },
+      filters: [{ column: '列1', op: 'neq', value: '-' }],
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }]
+    };
+    const rows = await applyWizardTransform(engine, data, cfg, { promoteHeader: true });
+    expect(rows.map((r) => r.src)).toEqual([3, 5]); // 表头行（原行2）提升移除；重复表头（原行4）删除
+    expect(rows.map((r) => r.row.姓名)).toEqual(['张三', '李四']);
+    expect(rows.map((r) => r.row.年龄)).toEqual(['18', '20']);
+  });
+
   it('resolvedHeader：清洗+筛选后剩余第一行提升的表头列名（供 UI 列下拉）', () => {
     const data = [
       { 列1: '', 列2: '' }, // 空行

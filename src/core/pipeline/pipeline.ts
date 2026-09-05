@@ -50,9 +50,11 @@ export class DataPipeline implements IDataPipeline {
   }
 
   /**
-   * D122/D123 引擎级跨行开关：行清洗（过滤重复表头 / 过滤空行）是单行 Handlebars 无法表达的
-   * 跨行/结构操作，由引擎在逐行 preprocess 渲染前按模板 frontmatter `row.clean` 批量处理
-   * （wizard 路径由 applyWizardTransform 调用同一语义的 core/row-clean.ts）。
+   * D122/D123/D124 引擎级跨行开关：行清洗（过滤重复表头 / 过滤空行）是单行 Handlebars 无法表达的
+   * 跨行/结构操作，由引擎在逐行 preprocess 渲染前按模板 frontmatter `row.clean` 批量处理。
+   * API/默认解析路径（表头已解析为列名）走 applyRowCleaning（值==列名，一次完成）；
+   * 向导表格类 rawRows 路径由 applyWizardTransform 按 D124 顺序（空行 → 行筛选 → 重复表头）调用
+   * core/row-clean.ts 原语（removeEmptyRows / removeDuplicateHeaderRows）。
    */
   async applyEngineRowSwitches(records: DataRecord[], template: TemplateConfig): Promise<DataRecord[]> {
     const raw = (template as unknown as { _raw?: Record<string, any> })._raw ?? {};
