@@ -202,13 +202,15 @@ export class ApiFacade {
     this.cancelToken?.abort();
   }
 
-  // ── 校验 API ──────────────────────────────────────
+  // ── 校验 API（D125 起 @deprecated：校验规则功能废弃删除，保留一个 MINOR 后于 v1.1 移除） ──
+  /** @deprecated D125：校验规则功能废弃删除（v1.1 移除） */
   async validate(templateId: string, data: DataRecord): Promise<ValidationResult> {
     const template = this.scanner.getConfig(templateId);
     const raw = (template as any)?._raw ?? {};
     const rules: ValidationRule[] = raw.validation ?? [];
     return this.pipeline.validate(data, rules);
   }
+  /** @deprecated D125：校验规则功能废弃删除（v1.1 移除） */
   async validateField(
     field: string,
     value: any,
@@ -217,15 +219,18 @@ export class ApiFacade {
     const result = this.validator.validate({ [field]: value }, rules.map((r) => ({ ...r, field })));
     return { valid: result.valid, errors: result.errors };
   }
+  /** @deprecated D125：校验规则功能废弃删除（v1.1 移除） */
   registerValidator(name: string, validator: ValidatorFn): void {
     this.validator.register(name, validator);
     this.extensions.helpers.push(`validator:${name}`);
   }
+  /** @deprecated D125：校验规则功能废弃删除（v1.1 移除） */
   async getValidationRules(templateId: string): Promise<ValidationRule[]> {
     const template = this.scanner.getConfig(templateId);
     const raw = (template as any)?._raw ?? {};
     return raw.validation ?? [];
   }
+  /** @deprecated D125：校验规则功能废弃删除（v1.1 移除） */
   listValidators(): string[] {
     return this.validator.list();
   }

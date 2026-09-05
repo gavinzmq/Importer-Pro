@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.28.0"
+version: "1.30.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -36,7 +36,7 @@ arcmesh:
 │  ┌────────────┐   ┌────────────────┐   ┌─────────────┐   ┌──────────────┐  │
 │  │ DataParser │ → │TemplateScanner │ → │DataPipeline │ → │TemplateEngine│  │
 │  └────────────┘   └────────────────┘   └─────────────┘   └──────────────┘  │
-│       解析文件        匹配模板            校验/分流/派生     双阶段渲染       │
+│       解析文件        匹配模板            分流/派生       双阶段渲染       │
 │                                                            │                │
 │                                                            ▼                │
 │                                                   ┌───────────────────┐    │
@@ -114,7 +114,7 @@ export interface ITemplateEngine {
 
 ```text
 
-原始数据 → 预处理模板 → 转换后数据（校验/分流/派生字段）
+原始数据 → 预处理模板 → 转换后数据（分流/派生字段）
     → 内容模板（按 noteType 渲染）→ Markdown
     → 组装 _notes: NoteSpec[]（交给 NoteGenerator）
 ```
@@ -227,11 +227,11 @@ export interface ITemplateScanner {
 }
 
 export interface IDataPipeline {
-  validate(record: DataRecord, rules: ValidationRule[]): ValidationResult;
   shard(record: DataRecord, template: TemplateConfig): Promise<NoteSpec[]>;
   derive(record: DataRecord): DataRecord;
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（保留一个 MINOR 供旧校验 API 使用，v1.1 移除） */
 export interface IValidator {
   register(name: string, validator: ValidatorFn): void;
   list(): string[];
@@ -244,14 +244,14 @@ export interface IValidator {
 | 模块 | 职责 | 输入 → 输出 |
 | :--- | :--- | :--- |
 | `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖）；**D95 起兼任模板配置读写**（`readTemplateConfig` / `saveTemplateConfig`：Step 3 向导配置写回模板 frontmatter，模板即配置源） | `fileName` → `TemplateInfo` |
-| `DataPipeline` | 校验（错误分流）、按条件分流到 noteType、生成派生字段与 `_notes` | `DataRecord` → `NoteSpec[]` |
-| `Validator` | 字段级/记录级校验规则执行 | `DataRecord` + `rules` → `ValidationResult` |
+| `DataPipeline` | 按条件分流到 noteType、生成派生字段与 `_notes`（D125 起不再承担校验） | `DataRecord` → `NoteSpec[]` |
+| `Validator` | **D125 起 @deprecated**：字段级/记录级校验规则执行（校验规则功能已废弃删除，保留至 v1.1 供 API 兼容） | `DataRecord` + `rules` → `ValidationResult` |
 
 > **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。
 >
-> **校验 validation 运行时接入（D115，2026-09-05 已实现）**：模板声明 frontmatter `validation` 时，`DataPipeline.shard` 逐行执行并经 `Validator` 回填保留字段 `_valid/_errors/_warnings/_status`（template-schema §3）；不自动 `_skip`（是否跳过由模板决定）。实现见同决策（D115）。
+> **校验规则功能废弃（D125，2026-09-06 已实现）**：用户反馈「校验规则没用」——D115 运行时接入（`DataPipeline.shard` 逐行校验并回填 `_valid/_errors/_warnings/_status`）与 D118 向导校验规则卡删除；frontmatter `validation` 契约移除（旧模板读取忽略、保存不写出）；保留字段 `_valid`/`_errors` 移除、`_warnings`（D119 条件警告附言）与 `_status`（模板可写）保留；公开校验 API 标 @deprecated 保留一个 MINOR；向导来源下拉 → 目标字段自动清洗（`sourceToTargetName`）、「输出到」增「所有笔记」（noteType `'all'`）。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md（v1.1.0）。
 >
-> **Step 3 能力补齐对齐 EXAMPLES（D118–D121，2026-09-05 设计定稿，实现待排）**：① 校验规则 UI（D118）——向导区块 4「校验规则」卡写 frontmatter `validation`（8 种内置规则），预览经 `applyWizardTransform` 注入校验回填 `_valid/_errors/_status` 标记（运行时复用 D115，无新代码路径）；② 计算/条件/链接（D119）——区块 5「添加设置」增计算（算术直调/stage、条件 `(if (cmp …) A B)`、条件警告附言）与链接（smartLink 附言）组，白名单增 add/subtract/divide；③ 多笔记输出（D120）——新编译段 `note-output`（`push _notes`），映射行 `noteType` 归属笔记，`_template` 内容渲染为阶段二；④ 输出策略（D121）——`output.conflict_strategy`/`incremental_mode`/`match.priority` 写 frontmatter（output 两字段 D112 已消费；`MatchRule` 增 `priority?`，自动匹配按优先级降序）。决策见 decisions/2026-09-05-step3-examples-parity.md。
+> **Step 3 能力补齐对齐 EXAMPLES（D118–D121，2026-09-05 已实现；D118 于 D125 废弃删除）**：① 校验规则 UI（D118）——**D125 废弃删除**（连同 D115 运行时接入与 frontmatter `validation`）；② 计算/条件/链接（D119）——区块 5「添加设置」增计算（算术直调/stage、条件 `(if (cmp …) A B)`、条件警告附言）与链接（smartLink 附言）组，白名单增 add/subtract/divide；③ 多笔记输出（D120）——新编译段 `note-output`（`push _notes`），映射行 `noteType` 归属笔记（D125 增「所有笔记」，已实现），`_template` 内容渲染为阶段二；④ 输出策略（D121）——`output.conflict_strategy`/`incremental_mode`/`match.priority` 写 frontmatter（output 两字段 D112 已消费；`MatchRule` 增 `priority?`，自动匹配按优先级降序）。决策见 decisions/2026-09-05-step3-examples-parity.md。
 
 ### 2.8 文件引用策略（路径引用）
 
@@ -298,7 +298,7 @@ export interface IValidator {
 | **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；D124 执行顺序在过滤空行之后、过滤重复表头之前（`空行 → 行筛选 → 重复表头 → 列格式化`，向导表格类）；类型 `RowFilterRule` / `RowFilterOp` 见 §7；`RowFilterRule.column` 支持 `'*'` 任意列；旧 byContent 删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」，D97） |
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
 | **列侧收敛：列映射 + 行内设置链（D105–D107）** | Step 3 区块 7 → 6：区块 5 = 单一列映射表（目标字段/来源/类型/添加设置/操作），删除区块 6 派生（预览顺延区块 6）；列格式化/列处理/派生并入列映射行 `settings` 链，列侧仅产出 `column-mapping` 段（无设置=复制、1 步=直调、**≥2 步=pipe** 写 set）；类型=快捷转换；旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移 |
-| **能力补齐对齐 EXAMPLES（D118–D121，设计定稿待实现）** | 校验规则 → frontmatter `validation`（不产段，D118）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
+| **能力补齐对齐 EXAMPLES（D118–D121；D118 于 D125 废弃删除）** | 校验规则（D118）→ **D125 废弃删除**（frontmatter `validation` 契约一并移除）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120；D125 映射行 `noteType` 增「所有笔记」）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
@@ -310,7 +310,7 @@ export interface IValidator {
 
 [文件（按路径引用原文件）] → DataParser → DataRecord[]
     → TemplateScanner → 匹配模板
-    → DataPipeline → 预处理渲染（Handlebars 承载向导全部配置：行删除/行筛选/列格式化/行清洗/列处理/列映射/派生均编译自 Step 3，D98）→ 校验 → 分流 → 派生字段
+    → DataPipeline → 预处理渲染（Handlebars 承载向导全部配置：行删除/行筛选/列格式化/行清洗/列处理/列映射/派生均编译自 Step 3，D98）→ 分流 → 派生字段
     → 组装 _notes 数组（每元素 = 1 个待生成笔记 NoteSpec）
     → NoteGenerator → 冲突检测 → 合并/覆盖/追加/跳过
     → 增量更新（内容哈希比对）→ 写入文件
@@ -372,7 +372,7 @@ importer-pro/
 │   │   ├── log/
 │   │   ├── merge/
 │   │   ├── parser/
-│   │   ├── pipeline/           # 数据管道（校验/分流/派生）
+│   │   ├── pipeline/           # 数据管道（分流/派生；D125 起不再含校验）
 │   │   ├── scanner/            # 模板扫描与匹配
 │   │   ├── template/
 │   │   └── validator/
@@ -525,6 +525,7 @@ interface MatchRule {
   type: 'regex' | 'glob' | 'exact';
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（类型保留供旧校验 API 使用，v1.1 移除） */
 interface ValidationRule {
   field: string;
   type: string;
@@ -551,7 +552,8 @@ interface TemplateFrontmatter {
   row?: TemplateRowConfig;        // 行配置（行清洗/筛选）
   columns?: TemplateColumnConfig; // 列配置（格式化/处理）
   mapping?: { source: string; target: string }[];
-  validation?: ValidationRule[];
+  /** D125 起废弃：校验规则功能删除（旧模板读取忽略、保存不再写出） */
+  validation?: ValidationRule[]; // @deprecated
   derived?: { field: string; rule: string; source: string }[];
 }
 
@@ -770,7 +772,7 @@ interface PluginSettings {
 
 | 能力 | 桌面端 | 移动端 |
 | :--- | :--- | :--- |
-| 导入 / 模板渲染 / 校验 / 多笔记生成 | ✅ | ✅ |
+| 导入 / 模板渲染 / 多笔记生成 | ✅ | ✅ |
 | 外部 Helper / 钩子执行 | ✅（`vm` 沙箱） | ⚠️ 内置白名单，外部注册的默认不执行 |
 | 图形化配置 | ✅ | ✅（4 步向导，见 ui/layout.md） |
 | 文件选择器 | ✅ OS 原生对话框（`DesktopFilePicker`） | ✅ 系统文档选择器（`MobileFilePicker`） |
@@ -795,4 +797,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.28.0 | 最后更新: 2026-09-06_
+_版本: 1.30.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除）_

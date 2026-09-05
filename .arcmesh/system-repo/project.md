@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.29.0"
+version: "1.31.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -29,8 +29,7 @@ arcmesh:
 | **Excel 原生支持** | 直接导入 .xlsx/.xls，无需手动转换 |
 | **多来源导入** | 文件（Excel/CSV/JSON/Enex）+ 笔记应用（Notion/Apple Notes/Evernote） |
 | **Handlebars 模板引擎** | 双阶段渲染（预处理 + 内容），支持条件、循环、自定义 Helper |
-| **智能数据校验** | 自动校验数据质量，错误记录清晰 |
-| **数据分流** | 根据校验结果自动分流到不同文件夹 |
+| **数据分流** | 按模板条件/派生字段自动分流到不同文件夹与笔记类型（D120）；校验规则功能 D125 废弃删除 |
 | **多笔记生成** | 一条数据生成多个关联笔记 |
 | **智能链接** | 基于字段值自动链接已有笔记，不存在则创建 |
 | **增量更新** | 仅当内容变更时更新，避免不必要的写入 |
@@ -50,7 +49,7 @@ arcmesh:
 | **许可证** | MIT |
 | **语言** | TypeScript |
 | **最低 Obsidian 版本** | v1.4.0 |
-| **支持平台** | 桌面端（完整能力）+ 移动端（导入/渲染/校验，外部 Helper 走白名单） |
+| **支持平台** | 桌面端（完整能力）+ 移动端（导入/渲染，外部 Helper 走白名单） |
 | **目标版本** | v1.0.0（未发布，规划 2026-11-01） |
 
 ## 3. 完整技术栈
@@ -159,18 +158,20 @@ arcmesh:
 > **补齐"已定义未实现"代码批次（D112/D114/D115/D116，2026-09-05 已实现；decisions/2026-09-05-unimplemented-gap-fill.md）**：
 > ① **模板 `output` 运行时求值（D112）**：`TemplateConfig.output` 提升 + `DataPipeline.shard` 对每条记录按 `engine.renderExpression` 求值写 `_folder`/`_fileName`（importFile/importData 走模板 output，向导走 `outputOverride` 实时值）——`note_name` 首次在真实导入生效（此前恒为 `_hash`）；
 > ② **API 扩展注册桩补齐（D114）**：新增 `IFileNamer`/`IConflictResolver`/`IExporter` 类型 + `src/extensions/runtime.ts` `ExtensionRuntime`（main 单例注入 NoteGenerator/ApiFacade）；`registerNamer/registerConflictResolver` 真实接线到生成写入（命名/冲突策略改写），registerCache/registerExporter 登记实例；
-> ③ **校验 validation 运行时接入（D115）**：`shard` 逐行执行模板 frontmatter validation，回填 `_valid/_errors/_warnings/_status`；`filterInvalid` 有规则时按校验失败过滤；
+> ③ **校验 validation 运行时接入（D115，D125 起废弃删除）**：`shard` 逐行执行模板 frontmatter validation，回填 `_valid/_errors/_warnings/_status`；`filterInvalid` 有规则时按校验失败过滤；（**D125 已实现**：用户反馈「校验规则没用」，校验规则功能全链路废弃删除——UI 卡/契约/运行时接入移除，公开校验 API 标 @deprecated 保留一个 MINOR，见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md）；
 > ④ **轻量清理（D116）**：`warmCache(templateId)` 语义接线；architecture §1 分层图清理 `GraphicConfigModal` 陈旧引用（已被 4 步向导取代）。
 > **D113「添加设置」行内设置链（2026-09-05 已实现，第二轮）**：把 D105 草案的设置链实现进映射行 `settings`——范围 = 列格式化/列处理 chips + `类型` 快捷转换编译（身份证/数字/日期）+ ≥2 步 `pipe` + 移除独立列格式化/列处理卡 + 旧 column-format/column-process 段与旧 frontmatter `columns` 读取折叠为设置链；派生仍走「类型/规则 · 派生字段」下拉（D108 rule 行，不占 chips）。列侧仅产 `column-mapping` 段；`PIPE_STAGE_WHITELIST` 增 strTrim/strSplit/fillDefault。全量 Vitest **130 例全绿**（wizard-data 85 / template-scanner 12 等）、type-check 0 错误。见 decisions/2026-09-05-unimplemented-gap-fill.md（D113）。
 
-> **Step 3 能力补齐对齐 EXAMPLES.md（D118–D121，2026-09-05 设计定稿，实现待排；decisions/2026-09-05-step3-examples-parity.md）**：
-> ① **D118 校验规则 UI**：区块 4 新增「✅ 校验规则」卡（Validator 内置 8 种规则），写 frontmatter `validation`（复用 D115 运行时），预览增 ✅/⚠️/❌ 状态标记；
+> **Step 3 能力补齐对齐 EXAMPLES.md（D118–D121，2026-09-05 已实现；decisions/2026-09-05-step3-examples-parity.md）**：
+> ① **D118 校验规则 UI**：区块 4 新增「✅ 校验规则」卡（Validator 内置 8 种规则），写 frontmatter `validation`（复用 D115 运行时），预览增 ✅/⚠️/❌ 状态标记；（**D125 已实现：废弃删除**）；
 > ② **D119 计算/条件/链接**：区块 5「添加设置」扩为五组（+ 计算：加减乘除/条件计算/条件警告；+ 链接：smartLink 目标/回退），白名单 21 → 24（add/subtract/divide），warn/link 为映射行附言；
 > ③ **D120 多笔记输出**：映射行「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），新编译段 `note-output`（`push _notes`）；`_template` 引用模板内容渲染为阶段二；
 > ④ **D121 输出策略**：区块 3 增 冲突策略/增量模式 下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。
 > **行能力再收敛（D123，2026-09-06 已实现；decisions/2026-09-06-header-from-cleaned-rows.md）**：用户反馈「合并行没用」与「表头应该是清洗、筛选后剩余第一行，原表头行控件没用」——① **删除「合并行」**功能与代码（类型 MergeRowRule/`row.merge_rows` 读写、UI 编辑器、core 合并逻辑全量移除）；② **删除「表头行（headerRow，从第 N 行开始读取）」解析级控件**——表格类解析改 **rawRows 原始行模式**（全部物理行含空行、占位列名 `列1..N`），**表头 = 行清洗 + 行筛选后剩余第一行**（`promoteHeaderRow` 提升为列名、该行移除）；行清洗收敛为 过滤空行（含第一行，trim 判定）+ 过滤重复表头（向导首行基准 `applyRowCleaningForHeader` / API 值==列名）；执行链 = 清洗 → 行筛选 → 表头提升 → 列映射；行清洗/筛选配置致表头变化时自动补充映射（`onRowConfigChanged`）；统计口径 `countRowsAfterHeader`。旧配置（header_row/merge_rows/dedupe 等）读取忽略、保存不再写出。全量 Vitest **170 例全绿**、type-check 通过。
 >
 > **行清洗执行顺序修订（D124，2026-09-06 已实现；decisions/2026-09-06-row-clean-order-after-filter.md）**：用户反馈「行清洗顺序应为 过滤空行 → 行筛选 → 过滤重复表头行；重复表头行应在所有过滤和筛选后确定表头行了再过滤」——**过滤重复表头行后移至行筛选之后**，基准从 D123「清洗后首行」改为 **清洗 + 行筛选后剩余第一行**（将成为表头的行）。`core/row-clean.ts` 拆 `applyRowCleaningForHeader` 为 **`removeEmptyRows`**（空行，行筛选前）与 **`removeDuplicateHeaderRows`**（重复表头，以当前首行为基准、行筛选后调用）；`applyWizardTransform`/`resolvedHeader`/`countRowsAfterHeader` 按 D124 顺序（空行 → 阶段 A 行筛选 → 重复表头 → 表头提升）编排；非表格/API 路径维持 `applyRowCleaning`（值==列名 + 空行一次完成）。UI 区块 4 文案同步（表格类 = 空行 → 行筛选 → 重复表头；非表格 = 值==列名在筛选前）。单测 row-clean/wizard-data 更新（新增「表头前说明行被筛选排除后，重复表头仍以真实表头行为基准删除」用例）。蓝图同步：architecture 1.28.0 / ui/layout 1.22.0 / template-schema 1.15.0 / CHANGELOG 1.23.0 / project 1.29.0 / glossary 1.10.0。
+>
+> **区块 5 交互增强 + 校验规则废弃（D125，2026-09-06 已实现；decisions/2026-09-06-step3-mapping-ux-validation-removal.md v1.1.0）**：① **来源 → 目标自动清洗**——来源下拉选择后目标字段自动更正为来源值去除全部空格/换行/回车后的值（`sourceToTargetName`，自动映射与派生缺省名同样清洗）；② **输出到「所有笔记」**——映射行「输出到」增「所有笔记」（字段写入主笔记 + 全部附加笔记，noteType `'all'` 编译/反编译）；③ **删除校验规则功能**——D118 区块 4 校验规则卡 / 预览 ✅/⚠️/❌ 标记 / frontmatter `validation` 契约 / D115 运行时接入全链路删除；保留字段 `_valid`/`_errors` 移除、`_warnings`（D119 附言）/`_status`（模板可写）保留；公开校验 API 标 @deprecated 保留一个 MINOR（v1.1 移除）。全量 Vitest 169 例全绿、type-check 0 错误。蓝图同步：architecture 1.30.0 / ui/layout 1.24.0 / template-schema 1.17.0 / api-layer 1.8.0 / glossary 1.12.0 / CHANGELOG 1.25.0 / project 1.31.0。
 >
 > 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
@@ -220,4 +221,4 @@ arcmesh:
 
 ---
 
-*版本: 1.29.0 | 最后更新: 2026-09-06*
+*版本: 1.31.0 | 最后更新: 2026-09-06*

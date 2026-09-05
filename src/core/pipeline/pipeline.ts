@@ -5,8 +5,9 @@ import { md5Hash } from '../../utils/crypto';
 import { sanitizeFilename, normalizeVaultPath } from '../../utils/path';
 import { applyRowCleaning, rowCleanFromFrontmatter } from '../row-clean';
 
-/** 数据管道（architecture §2.7 DataPipeline）：校验 → 分流 → 派生 → _notes 组装 */
+/** 数据管道（architecture §2.7 DataPipeline）：分流 → 派生 → _notes 组装（D125 起不再承担校验） */
 export interface IDataPipeline {
+  /** D125 起 @deprecated：校验规则功能废弃删除（保留至 v1.1 供旧校验 API 使用） */
   validate(record: DataRecord, rules: ValidationRule[]): ValidationResult;
   shard(record: DataRecord, template: TemplateConfig, ctx?: ShardContext, index?: number): Promise<NoteSpec[]>;
   derive(record: DataRecord): DataRecord;
@@ -24,11 +25,6 @@ export interface ShardContext {
   useTemplateOutput?: boolean;
   /** D112：向导实时输出命名覆盖（未保存 UI 值），优先级高于模板 output；folder/noteName 为 Handlebars 表达式 */
   outputOverride?: { folder?: string; noteName?: string };
-  /**
-   * D118：向导实时校验规则覆盖（未保存 UI 值），优先级高于模板 frontmatter validation——
-   * 保证「预览 == 导入」（向导预览标记与 Step 4 逐行校验同一套规则）。
-   */
-  validation?: ValidationRule[];
 }
 
 export class DataPipeline implements IDataPipeline {
@@ -45,6 +41,7 @@ export class DataPipeline implements IDataPipeline {
     return record;
   }
 
+  /** D125 起 @deprecated：校验规则功能废弃删除（保留至 v1.1 供旧校验 API 使用） */
   validate(record: DataRecord, rules: ValidationRule[]): ValidationResult {
     return this.validator.validate(record, rules);
   }
@@ -77,10 +74,6 @@ export class DataPipeline implements IDataPipeline {
 
     // D112：导入运行时按模板 output.folder/note_name 求值（仅 ctx.useTemplateOutput 开启；未显式指定时兜底）
     this.applyTemplateOutput(data, template, ctx);
-
-    // D115/D118：校验规则逐行执行，回填保留字段 _valid/_errors/_warnings/_status（不自动 _skip，语义由模板/开关决定）；
-    // 规则来源 = 向导实时 ctx.validation（优先）→ 模板 frontmatter validation
-    this.applyValidation(data, template, ctx);
 
     let specs: NoteSpec[] = [];
     if (Array.isArray(data._notes) && data._notes.length > 0) {
@@ -116,23 +109,6 @@ export class DataPipeline implements IDataPipeline {
       const name = this.engine.renderExpression(src.noteName, data);
       if (name !== '') data._fileName = name;
     }
-  }
-
-  /**
-   * D115：校验规则逐行执行，回填保留字段 `_valid` / `_errors` / `_warnings` / `_status`
-   * （template-schema §3；validator.ts）。规则来源 = 向导实时 ctx.validation（D118，未保存 UI 值）
-   * → 模板 frontmatter `validation`；两者均空时不执行。不自动写 `_skip`（是否跳过由模板/`filterInvalid` 开关决定），
-   * 也不覆盖派生前的 `_hash`（校验在 derive 之后、字段仅影响消费方语义）。
-   */
-  private applyValidation(data: DataRecord, template: TemplateConfig, ctx?: ShardContext): void {
-    const fm = ((template as unknown as { _raw?: Record<string, any> })._raw?.validation ?? []) as ValidationRule[];
-    const rules = (ctx?.validation && ctx.validation.length > 0 ? ctx.validation : fm);
-    if (!Array.isArray(rules) || rules.length === 0) return;
-    const result = this.validator.validate(data, rules);
-    data._valid = result.valid;
-    data._errors = result.errors;
-    data._warnings = result.warnings;
-    data._status = result.data._status;
   }
 
   /**

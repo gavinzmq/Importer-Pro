@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.10.0"
+version: "1.12.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -174,7 +174,7 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 校验规则 (Validation Rule)
 
-模板 Frontmatter `validation` 中声明的逐行校验规则（`{field, type, message, options?}`），运行时由 `DataPipeline.shard` 执行并回填保留字段 `_valid/_errors/_warnings/_status`（D115 已实现）；规则类型 = Validator 内置 8 种（必填/身份证/邮箱/手机号/日期/长度/数值范围/唯一）。**D118（设计待排）**：向导区块 4「✅ 校验规则」卡提供配置 UI，随 [💾 保存到模板] 写 frontmatter，预览区显示 ✅/⚠️/❌ 状态标记。
+**D125 起废弃删除（2026-09-06 已实现）**：原为模板 Frontmatter `validation` 声明的逐行校验规则（D115 运行时回填 `_valid/_errors/_warnings/_status`、D118 向导区块 4 配置卡与预览 ✅/⚠️/❌ 标记）。用户反馈「校验规则没用」——功能全链路删除（UI 卡、frontmatter 契约、运行时接入、预览标记；保留字段 `_valid`/`_errors` 移除）；公开校验 API（api-layer §5）标 @deprecated 保留一个 MINOR 后移除；校验类 Helper（isEmail/isPhone/isDate/matchesRegex/inRange 等）保留于公开 Helper 清单（模板/行筛选仍可独立使用）。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md（v1.1.0）。
 
 ### 计算列 (Computed Column)
 
@@ -382,4 +382,4 @@ Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123/D124，�
 
 ---
 
-*版本: 1.10.0 | 最后更新: 2026-09-06*
+*版本: 1.12.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃）*

@@ -260,7 +260,7 @@ export class TemplateScanner implements ITemplateScanner {
         if (typeof outFm.conflict_strategy === 'string') o.conflictStrategy = outFm.conflict_strategy as TemplateOutput['conflictStrategy'];
         if (typeof outFm.incremental_mode === 'string') o.incrementalMode = outFm.incremental_mode as TemplateOutput['incrementalMode'];
       }
-      (config as any)._raw = frontmatter; // 完整 frontmatter（API 读取 output/validation/match）
+      (config as any)._raw = frontmatter; // 完整 frontmatter（API 读取 output/match；D125 起 validation 已废弃）
       // findTemplate / scoreRule 以 config.matchRules 参与自动匹配与优先级排序（D121 修：此前从未回填，
       // 自动匹配恒按空规则集返回 null——补充回填使 auto-match 与优先级降序真正生效）
       (config as any).matchRules = matchRules;
@@ -538,8 +538,7 @@ export function parseStep3Snapshot(rawContent: string): Step3TemplateSnapshot | 
     incrementalMode: (['hash', 'timestamp'].includes(out.incremental_mode)
       ? out.incremental_mode
       : 'hash') as Step3TemplateSnapshot['incrementalMode'],
-    // D118：frontmatter validation（数组，元素 {field,type,message,options?}）读回（校验契约 = frontmatter，template-schema §2）
-    validation: (Array.isArray(frontmatter.validation) ? frontmatter.validation : []) as Step3TemplateSnapshot['validation'],
+    // D125：frontmatter validation 契约废弃删除——旧模板读取忽略（不报错、不回填）
     transform
   };
 }
@@ -577,9 +576,8 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
     conflict_strategy: snap.conflictStrategy || 'overwrite',
     incremental_mode: snap.incrementalMode || 'hash'
   };
-  // D118：校验规则写 frontmatter validation（不产编译段——校验契约 = frontmatter，template-schema §2）
-  if (Array.isArray(snap.validation) && snap.validation.length > 0) next.validation = snap.validation;
-  else delete next.validation;
+  // D125：校验规则契约废弃删除——[💾 保存到模板] 不再写出 validation（旧 frontmatter 中的 validation 一并清除）
+  delete next.validation;
   // D122/D123/D124：行清洗（引擎开关）写 frontmatter row.clean（对象）；表头行参数/合并行已废弃不再产出
   const row: Record<string, any> = {};
   const clean = t.clean ?? {};

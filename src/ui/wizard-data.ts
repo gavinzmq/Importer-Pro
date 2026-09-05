@@ -13,22 +13,18 @@
  * - D123 表头提升：表格类数据源向导链路中「表头 = 行清洗 + 行筛选 + 重复表头过滤后剩余的第一行」
  *   （promoteHeaderRow，core/row-clean.ts）；原 headerRow 解析级参数废弃删除，
  *   解析改用 rawRows（占位列名 `列1..N`），行筛选按列位置（占位列名）匹配、
- *   列映射/校验/笔记条件基于提升后的最终列名。
+ *   列映射/派生/笔记条件基于提升后的最终列名。
  * - D98 执行载体：配置编译为 preprocess Handlebars 标记段（configToHandlebars / handlebarsToConfig / 段替换），
  *   预览与导入统一走 applyWizardTransform（真实 renderPreprocess，行/列逻辑不调用 JS 变换函数）。
  * - 列格式化 / 列处理 / 列映射 / 派生字段等纯函数（JS 语义层）保留：供配置编译参数换算、迁移与单测；
  *   正式执行（预览/导入）一律经 Handlebars 编译段。
  */
-import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, RowCleanConfig, ValidationRule } from '../types';
+import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, RowCleanConfig } from '../types';
 import type { RowFilterOp, RowFilterRule } from '../types';
 import { md5Hash } from '../utils/crypto';
-import { Validator } from '../core/validator/validator';
 import { applyRowCleaning, isDuplicateHeaderRow, promoteHeaderRow, removeDuplicateHeaderRows, removeEmptyRows } from '../core/row-clean';
 export type { NoteTypeConfig };
 export type { RowCleanConfig } from '../types';
-
-/** D118：向导/预览校验语义与运行时同源（复用 core Validator，无 Obsidian 依赖；保证「预览 == 导入」） */
-const validationEngine = new Validator();
 
 export type { RowFilterOp, RowFilterRule };
 
@@ -77,6 +73,18 @@ export type MappingOrigin = 'auto' | 'manual';
 
 /** 主笔记类型（保留）：区块 5「输出到」列缺省值；附加笔记类型见 NoteTypeConfig（D120） */
 export const MAIN_NOTE_TYPE = 'main';
+
+/** 所有笔记（D125）：「输出到」列特殊值——该字段写入主笔记与全部附加类型笔记（note-output 段展开进每个对象） */
+export const ALL_NOTE_TYPES = 'all';
+
+/**
+ * D125：来源下拉选择后，目标字段自动更正 = 来源值去除所有空格与回车（\s 全部空白）。
+ * 去除后为空（源名全空白）时回落原值，避免目标字段被清空。
+ */
+export function sourceToTargetName(source: string): string {
+  const cleaned = String(source ?? '').replace(/\s+/g, '');
+  return cleaned !== '' ? cleaned : String(source ?? '');
+}
 
 /** 判断附加笔记类型是否被任何行使用（D120：note-output 段仅在至少一个附加类型有行时产出） */
 export function hasUsedNoteTypes(mappings: ColumnMapping[]): boolean {
@@ -153,7 +161,8 @@ export interface ColumnMapping {
   settings?: MappingSetting[];
   /** 行来源标记：自动映射生成 = 'auto'；手动添加/回填缺省 = 'manual' */
   origin?: MappingOrigin;
-  /** D120：字段归属笔记类型（「输出到」列；缺省 'main' 主笔记；值为附加类型 id 时该字段进对应笔记对象） */
+  /** D120：字段归属笔记类型（「输出到」列；缺省 'main' 主笔记；值为附加类型 id 时该字段进对应笔记对象；
+   *  D125：值为 ALL_NOTE_TYPES（'all'）时该字段写入主笔记与全部附加类型笔记） */
   noteType?: string;
 }
 
@@ -299,8 +308,6 @@ export interface Step3TemplateSnapshot {
   conflictStrategy: ConflictStrategy;
   /** 增量模式（D121：hash/timestamp；写 frontmatter output.incremental_mode，运行时 D112 已消费） */
   incrementalMode: IncrementalMode;
-  /** 校验规则（D118：区块 4「✅ 校验规则」卡；写 frontmatter validation，不产编译段——校验契约 = frontmatter，template-schema §2） */
-  validation: ValidationRule[];
   transform: DataTransformConfig;
 }
 
@@ -314,7 +321,6 @@ export function emptyStep3Snapshot(): Step3TemplateSnapshot {
     outputNoteName: '{{_hash}}',
     conflictStrategy: 'overwrite',
     incrementalMode: 'hash',
-    validation: [],
     transform: emptyTransform()
   };
 }
@@ -448,19 +454,6 @@ export function rowFilterRuleLabel(rule: RowFilterRule): string {
   return showValue ? `${col} ${op} ${rule.value}` : `${col} ${op}`;
 }
 
-/**
- * 校验状态徽标判定（D118，供预览区行首 ✅/⚠️/❌ 展示）：行携带 `_valid` 回填标记时返回
- * 'err'（_valid=false）/ 'warn'（有 _warnings）/ 'ok'；未配置校验规则（无标记）返回 null（不显示徽标）。
- */
-export function rowValidationBadge(row: DataRecord): 'ok' | 'warn' | 'err' | null {
-  if (row && typeof row === 'object' && '_valid' in row) {
-    if (row._valid === false) return 'err';
-    if (Array.isArray(row._warnings) && row._warnings.length > 0) return 'warn';
-    return 'ok';
-  }
-  return null;
-}
-
 /* ── D122 迁移与兼容 ─────────────────────────────────────── */
 
 /** 是否为旧「去除空行」预置筛选规则（D97 遗留：{column:'*', op:'notEmpty'}；D122 读取时迁移为 clean.removeEmpty） */
@@ -480,7 +473,7 @@ export function rowFilterFromRemove(legacy: LegacyByContentRule): RowFilterRule 
 /* ── 下拉选项（与 ui/layout.md §5 一致） ─────────────────── */
 
 export const FORMAT_OP_LABELS: ReadonlyArray<{ value: ColumnFormatOp; label: string }> = [
-  { value: 'toIDCard', label: '转换为身份证类型（校验）' },
+  { value: 'toIDCard', label: '转换为身份证类型（大写去空格）' },
   { value: 'toDate', label: '格式化为日期' },
   { value: 'toNumber', label: '格式化为数字' },
   { value: 'toString', label: '格式化为字符串' },
@@ -506,39 +499,6 @@ export const MAPPING_TYPE_LABELS: ReadonlyArray<{ value: MappingType; label: str
   { value: 'ignore', label: '忽略' }
 ];
 
-/* ── 校验规则（D118：区块 4「✅ 校验规则」卡；类型 = Validator 内置 8 种，契约 = frontmatter validation） ── */
-
-/** 校验规则类型选项（needParam：length/range 需 min/max 参数） */
-export const VALIDATION_TYPE_LABELS: ReadonlyArray<{ value: string; label: string; needParam: boolean }> = [
-  { value: 'required', label: '必填', needParam: false },
-  { value: 'id-card', label: '身份证格式', needParam: false },
-  { value: 'email', label: '邮箱格式', needParam: false },
-  { value: 'phone', label: '手机号格式', needParam: false },
-  { value: 'date', label: '日期格式', needParam: false },
-  { value: 'length', label: '长度(min,max)', needParam: true },
-  { value: 'range', label: '数值范围(min,max)', needParam: true },
-  { value: 'unique', label: '唯一（批次级）', needParam: false }
-];
-
-/** 校验规则类型 → 展示标签 */
-export function validationTypeLabel(type: string): string {
-  return VALIDATION_TYPE_LABELS.find((o) => o.value === type)?.label ?? type;
-}
-
-/** 校验规则展示标签（供「已配置」列表）：`姓名 必填` / `身份证号 身份证格式` / `薪资 数值范围(0,10000)` */
-export function validationRuleLabel(rule: { field: string; type: string; options?: Record<string, any> }): string {
-  const field = rule.field || '（缺字段）';
-  const type = validationTypeLabel(rule.type);
-  const opts = rule.options ?? {};
-  if (rule.type === 'length' || rule.type === 'range') {
-    const min = opts.min ?? '';
-    const max = opts.max ?? '';
-    const p = min !== '' || max !== '' ? `(${min},${max})` : '';
-    return `${field} ${type}${p}`;
-  }
-  return `${field} ${type}`;
-}
-
 /* ── 派生字段预设（区块 5「类型/规则」下拉的派生分组，D108 起不再单列区块/预设弹窗） ── */
 
 export interface DerivedPreset {
@@ -555,7 +515,7 @@ export const DERIVED_PRESETS: readonly DerivedPreset[] = [
   { id: 'currentYear', label: '当前年份', needsSource: false }
 ];
 
-/** 派生规则默认生成的目标字段名 */
+/** 派生规则默认生成的目标字段名（D125：依赖来源的预设目标缺省名，来源部分应用来源→目标自动清洗） */
 export function deriveFieldName(presetId: DerivedRuleId, source: string): string {
   if (!source) return presetId;
   switch (presetId) {
@@ -564,7 +524,7 @@ export function deriveFieldName(presetId: DerivedRuleId, source: string): string
     case 'birthFromID':
       return '生日';
     case 'md5Short':
-      return `${source}_hash`;
+      return `${sourceToTargetName(source)}_hash`;
     default:
       return presetId;
   }
@@ -655,7 +615,7 @@ export { applyRowCleaning, isDuplicateHeaderRow, promoteHeaderRow, removeDuplica
 
 /**
  * D124：表格类向导 rawRows 链剩余第一行（将成为表头的行）提升的表头列名
- * （供 UI 列下拉 / 列映射 / 校验字段 / 笔记条件）。顺序与真实执行一致：
+ * （供 UI 列下拉 / 列映射 / 笔记条件）。顺序与真实执行一致：
  * removeEmptyRows（空行）→ 行筛选（JS 语义 rowMatchesFilter）→ removeDuplicateHeaderRows
  * （重复表头，基准 = 清洗+筛选后剩余第一行）→ promoteHeaderRow。
  * 无剩余行 → 返回空数组（UI 回落占位列名）。
@@ -851,12 +811,12 @@ export function applyColumnMappings(records: DataRecord[], mappings: ColumnMappi
 }
 
 /** 自动映射：为每个未被纯映射行消费的源列生成 source→target 同名映射（type=text，origin='auto'）；
- *  派生行（rule）不消费源列（可重复读取）。已有行原样保留。 */
+ *  D125：目标名应用来源→目标自动清洗（去全部空白）。派生行（rule）不消费源列（可重复读取）。已有行原样保留。 */
 export function autoMapColumns(columns: string[], existing: ColumnMapping[]): ColumnMapping[] {
   const mappedSources = new Set(existing.filter((m) => !m.rule).map((m) => m.source));
   const added: ColumnMapping[] = [];
   for (const col of columns) {
-    if (!mappedSources.has(col)) added.push({ source: col, target: col, type: 'text', origin: 'auto' });
+    if (!mappedSources.has(col)) added.push({ source: col, target: sourceToTargetName(col), type: 'text', origin: 'auto' });
   }
   return [...existing, ...added];
 }
@@ -1366,25 +1326,28 @@ function noteObjectArgs(rows: ColumnMapping[], type?: NoteTypeConfig): string {
   return parts.join(' ');
 }
 
-/** D120：note-output 段体（主 + 附加类型均显式建为 _notes object）；仅在至少一个附加类型被行使用时产出 */
+/** D120/D125：note-output 段体（主 + 附加类型均显式建为 _notes object）；
+ *  D125：「输出到 = 所有笔记」（ALL_NOTE_TYPES）的行写入主笔记与全部已定义附加类型。 */
 function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[]): string {
   const types = (noteTypes ?? []).filter((t) => t && t.id && t.id !== MAIN_NOTE_TYPE);
   if (types.length === 0) return '';
+  const allRows = mappings.filter((m) => m.type !== 'ignore' && m.noteType === ALL_NOTE_TYPES);
   const byNote = new Map<string, ColumnMapping[]>();
   for (const m of mappings) {
-    if (m.type === 'ignore') continue;
+    if (m.type === 'ignore' || m.noteType === ALL_NOTE_TYPES) continue; // 所有笔记行单独展开进每个对象
     const nt = m.noteType && m.noteType !== MAIN_NOTE_TYPE ? m.noteType : MAIN_NOTE_TYPE;
     const arr = byNote.get(nt) ?? [];
     arr.push(m);
     byNote.set(nt, arr);
   }
-  const used = types.filter((t) => (byNote.get(t.id) ?? []).length > 0);
+  // D125：存在「所有笔记」行时，每个已定义附加类型均被使用（该字段出现在每篇笔记）
+  const used = allRows.length > 0 ? types : types.filter((t) => (byNote.get(t.id) ?? []).length > 0);
   if (used.length === 0) return '';
   const lines: string[] = [];
-  const mainRows = byNote.get(MAIN_NOTE_TYPE) ?? [];
+  const mainRows = [...(byNote.get(MAIN_NOTE_TYPE) ?? []), ...allRows];
   lines.push(`{{set "_notes" (array (object ${noteObjectArgs(mainRows)}))}}`);
   for (const t of used) {
-    const rows = byNote.get(t.id) ?? [];
+    const rows = [...(byNote.get(t.id) ?? []), ...allRows];
     const inner = `{{set "_notes" (push _notes (object ${noteObjectArgs(rows, t)}))}}`;
     lines.push(t.condition && t.condition.length > 0 ? `{{#if ${noteConditionExpr(t.condition)}}}${inner}{{/if}}` : inner);
   }
@@ -1935,10 +1898,13 @@ function decodeLegacyColumnBody(
   return out;
 }
 
-/** D120：反编译 note-output 段体 → 附加笔记类型 + 「目标字段 → 笔记类型」归属 */
+/** D120/D125：反编译 note-output 段体 → 附加笔记类型 + 「目标字段 → 笔记类型」归属
+ *  （D125：字段同时出现在主笔记与全部附加类型对象时还原为 ALL_NOTE_TYPES「所有笔记」） */
 function decodeNoteOutput(body: string): { noteTypes: NoteTypeConfig[]; targetNote: Map<string, string> } {
   const noteTypes: NoteTypeConfig[] = [];
   const targetNote = new Map<string, string>();
+  const mainTargets = new Set<string>();
+  const targetTypeSets = new Map<string, Set<string>>();
   const isTypeObj = (id?: string): boolean => !!id && id !== MAIN_NOTE_TYPE;
 
   for (const line of body.split('\n')) {
@@ -1996,7 +1962,24 @@ function decodeNoteOutput(body: string): { noteTypes: NoteTypeConfig[]; targetNo
         if (rules.length > 0) cfg.condition = rules;
       }
       noteTypes.push(cfg);
-      for (const target of targets) targetNote.set(target, noteId);
+      for (const target of targets) {
+        targetNote.set(target, noteId);
+        const s = targetTypeSets.get(target) ?? new Set<string>();
+        s.add(noteId);
+        targetTypeSets.set(target, s);
+      }
+    } else {
+      // 主笔记对象（无 _noteType）：记录其字段（D125 供「所有笔记」判定）
+      for (const target of targets) mainTargets.add(target);
+    }
+  }
+  // D125：字段出现在主笔记 + 全部附加类型对象 → noteType = ALL_NOTE_TYPES
+  const typeIds = noteTypes.map((t) => t.id);
+  if (typeIds.length > 0) {
+    for (const [target, set] of targetTypeSets) {
+      if (mainTargets.has(target) && set.size === typeIds.length && typeIds.every((id) => set.has(id))) {
+        targetNote.set(target, ALL_NOTE_TYPES);
+      }
     }
   }
   return { noteTypes, targetNote };
@@ -2050,8 +2033,6 @@ export interface PreprocessRenderer {
  * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
  * 行清洗引擎开关按 D124 修订顺序执行。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
- * D118：opts.rules（向导实时校验规则）阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`
- * （供预览徽标与 `{{_status}}`）。
  * D124：opts.promoteHeader（表格类向导链路，rawRows 占位列名、表头未定）执行链 =
  *   空行（removeEmptyRows）→ 阶段 A 行筛选（占位列名）→ 重复表头
  *   （removeDuplicateHeaderRows，基准 = 清洗+筛选后剩余第一行）→ 表头提升（promoteHeaderRow，
@@ -2062,7 +2043,7 @@ export async function applyWizardTransform(
   engine: PreprocessRenderer,
   records: DataRecord[],
   cfg: DataTransformConfig,
-  opts: { rules?: ValidationRule[]; promoteHeader?: boolean } = {}
+  opts: { promoteHeader?: boolean } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
   // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行
@@ -2114,7 +2095,7 @@ export async function applyWizardTransform(
     ).map((r) => ({ src: Number(r._index) || 0, row: r }));
   }
 
-  // D123：表头提升——剩余第一行提升为列名并从数据移除（其后列映射/派生/校验基于最终列名）
+  // D123：表头提升——剩余第一行提升为列名并从数据移除（其后列映射/派生/笔记条件基于最终列名）
   if (opts.promoteHeader) {
     const promoted = promoteHeaderRow(rows.map((t) => t.row));
     if (promoted) {
@@ -2142,18 +2123,6 @@ export async function applyWizardTransform(
       done.push({ src: t.src, row: (out as DataRecord) ?? t.row });
     }
     rows = done;
-  }
-
-  // D118：向导实时校验规则逐行回填保留字段（预览徽标 / {{_status}} 命名；校验不自动 _skip）
-  if (opts.rules && opts.rules.length > 0) {
-    rows = rows.map((t) => {
-      const r = validationEngine.validate(t.row, opts.rules!);
-      t.row._valid = r.valid;
-      t.row._errors = r.errors;
-      t.row._warnings = r.warnings;
-      t.row._status = r.data._status;
-      return t;
-    });
   }
 
   return rows;

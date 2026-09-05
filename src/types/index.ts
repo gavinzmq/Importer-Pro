@@ -214,6 +214,7 @@ export interface MatchRule {
   priority?: number;
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（类型保留至 v1.1 供旧校验 API 使用） */
 export interface ValidationRule {
   field: string;
   type: string;
@@ -221,6 +222,7 @@ export interface ValidationRule {
   options?: Record<string, any>;
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（类型保留至 v1.1 供旧校验 API 使用） */
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
@@ -228,11 +230,13 @@ export interface ValidationResult {
   data: DataRecord;
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（类型保留至 v1.1 供旧校验 API 使用） */
 export interface FieldValidationResult {
   valid: boolean;
   errors: string[];
 }
 
+/** D125 起 @deprecated：校验规则功能废弃删除（类型保留至 v1.1 供旧校验 API 使用） */
 export type ValidatorFn = (data: any) => Promise<ValidationResult> | ValidationResult;
 
 export interface TemplateFrontmatter {

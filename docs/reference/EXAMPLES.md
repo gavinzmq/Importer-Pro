@@ -57,14 +57,12 @@ created_at: "2026-09-02T14:30:00Z"
       {{set "性别" (genderFromID record.身份证号)}}
       {{set "生日" (birthFromID record.身份证号 "chinese")}}
       {{set "_hash" (hashShort (md5 record.身份证号) 10)}}
-      {{set "_folder ""人员档案"}}
+      {{set "_folder" "人员档案"}}
       {{set "_status" "valid"}}
       {{set "_link" (smartLink _hash "人员档案" "待建档案")}}
     {{else}}
       {{set "_folder" "待核验档案"}}
       {{set "_status" "invalid_id"}}
-      {{set "_errors" (array "身份证号格式不正确")}}
-      {{set "_valid" false}}
       {{set "_hash" (hashShort (md5 record.姓名) 10)}}
     {{/if}}
 
@@ -79,8 +77,6 @@ created_at: "2026-09-02T14:30:00Z"
       "职位" record.职位
       "身份证号" record.身份证号
       "_link" _link
-      "_valid" _valid
-      "_errors" _errors
     ))}}
   {{/if}}
 {{/with}}
@@ -190,7 +186,6 @@ created_at: "2026-09-02T14:30:00Z"
     {{set "利润" (multiply record.销售额 record.利润率)}}
     {{set "_hash" (hashShort (md5 record.销售员) 10)}}
     {{set "_folder" (concat "销售/" record.区域)}}
-    {{set "_valid" true}}
     {{#if (< record.销售额 1000)}}
       {{set "_warnings" (push _warnings "销售额低于1000，请关注")}}
     {{/if}}

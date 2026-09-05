@@ -60,14 +60,14 @@ output:
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | `_skip` | boolean | 跳过该条数据 |
-| `_valid` | boolean | 是否通过校验 |
-| `_errors` | string[] | 错误列表 |
-| `_warnings` | string[] | 警告列表 |
+| `_warnings` | string[] | 警告列表（D119 条件警告附言写入） |
 | `_folder` | string | 目标文件夹 |
-| `_status` | string | valid / warning / error |
+| `_status` | string | 状态字段（模板可写，如 valid / warning / error） |
 | `_hash` | string | 哈希值（文件名） |
 | `_link` | string | 智能链接 |
 | `_notes` | array | 多笔记生成 |
+
+> **注（D125，2026-09-06）**：校验规则功能已废弃删除——保留字段 `_valid` / `_errors` 已移除（不再由引擎回填）；字段有效性可自行在模板中用校验类 Helper（isEmail/isPhone/isDate/matchesRegex/inRange 等）判断后 `{{set "_status" …}}`。
 
 ### 2.2 常见模式
 
@@ -81,8 +81,7 @@ output:
   {{set "_folder" "人员档案"}}
 {{else}}
   {{set "_folder" "待核验档案"}}
-  {{set "_errors" (array "身份证号格式不正确")}}
-  {{set "_valid" false}}
+  {{set "_status" "error"}}
 {{/if}}
 ```
 

@@ -1,8 +1,8 @@
 ---
 title: "API Layer 组件"
 type: "component"
-version: "1.6.0"
-last_updated: "2026-09-05"
+version: "1.8.0"
+last_updated: "2026-09-06"
 status: "active"
 ---
 
@@ -285,7 +285,9 @@ getTemplateUsage(templateId: string): Promise<TemplateUsage>;
 
 ---
 
-## 5. 校验 API
+## 5. 校验 API（@deprecated，D125）
+
+> **D125（2026-09-06 已实现）**：校验规则功能废弃删除——本节全部接口已标记 **@deprecated**（实现落点 `src/api/index.ts`），保留一个 MINOR 后于 v1.1 移除（API 版本策略：仅 MAJOR 破坏性、@deprecated 保留一个 MINOR）。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md。
 
 ### 5.1 validate
 
@@ -635,4 +637,4 @@ interface GeneratedFileInfo {
 
 ---
 
-*版本: 1.6.0 | 最后更新: 2026-09-05*
+*版本: 1.8.0 | 最后更新: 2026-09-06（D125 已实现：§5 校验 API 标 @deprecated，保留一个 MINOR）*

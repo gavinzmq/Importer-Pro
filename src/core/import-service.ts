@@ -8,8 +8,7 @@ import {
   NoteSpec,
   PauseToken,
   PluginSettings,
-  ProgressPayload,
-  ValidationRule
+  ProgressPayload
 } from '../types';
 import { refreshDataviewIndex } from './dataview';
 import { ParserRegistry } from './parser/registry';
@@ -54,11 +53,6 @@ export interface ImportRecordsOptions {
    * 求值（folder/noteName 为 Handlebars 表达式）；向导路径不开启模板 output 兜底（useTemplateOutput）。
    */
   outputOverride?: { folder?: string; noteName?: string };
-  /**
-   * D118：向导实时校验规则（未保存 UI 值）覆盖模板 frontmatter validation——由 DataPipeline.shard
-   * 逐行回填 _valid/_errors/_warnings/_status（与 Step 3 预览同源，保证「预览 == 导入」）。
-   */
-  validation?: ValidationRule[];
 }
 
 /** 导入服务：parse → 匹配模板 → 预处理/分流 → 生成 → 历史记录 */
@@ -247,11 +241,10 @@ export class ImportService {
       const shardTemplate = options.preprocessOverride ? { ...template, preprocess: options.preprocessOverride } : template;
       const prepared: DataRecord[] = [];
       for (const record of records) {
-        // D112/D118：向导实时命名（outputOverride）与实时校验（validation）由 shard 对每条记录求值/回填
+        // D112：向导实时命名（outputOverride）由 shard 对每条记录求值/回填
         const specs = await this.pipeline.shard(record, shardTemplate, {
           defaultFolder,
-          outputOverride: options.outputOverride,
-          validation: options.validation
+          outputOverride: options.outputOverride
         });
         prepared.push({ ...record, _notes: specs.map(specToRecord) });
       }

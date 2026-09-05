@@ -1,7 +1,7 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.15.0"
+version: "1.17.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -30,12 +30,12 @@ status: "active"
 | `columns` |  | 列配置（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
 | `mapping` |  | 列映射 `[{ source, target }]`，缺省同名映射（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
 | `derived` |  | 派生字段预设 `[{ field, rule, source }]`（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
-| `validation` |  | 校验规则列表 `[{ field, type, message, options? }]` |
+| `validation` |  | **D125 起废弃删除**——校验规则功能删除（旧模板读取忽略、保存不再写出） |
 | `notes` |  | 多笔记类型配置 `TemplateNoteSpec[]`（见 architecture.md §7） |
 
-> **输出策略与匹配优先级写回（D121，设计定稿，实现待排）**：向导区块 3 的「冲突策略 / 增量模式 / 匹配优先级」随 [💾 保存到模板] 写入 `output.conflict_strategy` / `output.incremental_mode` / `match.patterns[0].priority`（`MatchRule` 增 `priority?`，默认 0，自动匹配按优先级降序 + 先匹配先得）；output 两字段运行时 D112 已消费。决策见 decisions/2026-09-05-step3-examples-parity.md。
+> **输出策略与匹配优先级写回（D121，已实现）**：向导区块 3 的「冲突策略 / 增量模式 / 匹配优先级」随 [💾 保存到模板] 写入 `output.conflict_strategy` / `output.incremental_mode` / `match.patterns[0].priority`（`MatchRule` 增 `priority?`，默认 0，自动匹配按优先级降序 + 先匹配先得）；output 两字段运行时 D112 已消费。决策见 decisions/2026-09-05-step3-examples-parity.md。
 
-> **校验规则写回（D118，设计定稿，实现待排）**：向导区块 4「校验规则」卡随 [💾 保存到模板] 写 frontmatter `validation`（**不产编译段**——校验契约 = frontmatter，D115 运行时逐行执行并回填 `_valid/_errors/_warnings/_status`）；规则类型 = Validator 内置 8 种（required/id-card/email/phone/date/length/range/unique）。决策见 decisions/2026-09-05-step3-examples-parity.md。
+> **校验规则功能废弃（D125，2026-09-06 已实现）**：用户反馈「校验规则没用」——删除向导区块 4「✅ 校验规则」卡（D118）与 frontmatter `validation` 契约（旧模板读取忽略、保存不写出）；D115 运行时接入（shard 逐行校验并回填 `_valid/_errors/_warnings/_status`）同步删除。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md。
 
 > `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由导入运行时渲染为最终路径。**D112（2026-09-05 已实现）**：`DataPipeline.shard` 对每条记录基于已含 `_hash` 的派生数据求值（`engine.renderExpression`）写 `_folder`/`_fileName`——`importFile`/`importData`（auto-match/API）按模板 output；向导按 UI 实时值（outputOverride）；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。
 
@@ -46,14 +46,12 @@ status: "active"
 | 字段 | 类型 | 说明 | 消费方 |
 | :--- | :--- | :--- | :--- |
 | `_skip` | boolean | 跳过该条数据 | DataPipeline |
-| `_valid` | boolean | 是否通过校验 | Validator |
-| `_errors` | string[] | 错误列表 | Validator |
-| `_warnings` | string[] | 警告列表 | Validator |
+| `_warnings` | string[] | 警告列表（D119 条件警告附言写入；D125 起不再由校验回填） | DataPipeline |
 | `_index` | number | 解析后原始行号（1-based，D98 引擎注入，供模板 preprocess 引用） | DataPipeline |
 
-> **校验字段运行时回填（D115，2026-09-05 已实现）**：模板 frontmatter 声明 `validation` 时，`DataPipeline.shard` 逐行执行校验规则并经 `Validator` 回填 `_valid`/`_errors`/`_warnings`/`_status`；不自动写 `_skip`（是否跳过由模板决定）。
+> **D125（2026-09-06 已实现）**：校验规则功能废弃删除——保留字段 `_valid` / `_errors` 移除（不再由引擎回填）；`_warnings` 保留（D119 条件警告附言写入）；`_status` 保留为模板可写字段（不再由校验自动回填，仍可用于输出命名表达式 `{{_status}}`）。
 | `_folder` | string | 目标文件夹 | NoteGenerator |
-| `_status` | string | valid / warning / error | DataPipeline |
+| `_status` | string | 状态字段（模板可写，如 valid / warning / error；D125 起不再由校验自动回填） | DataPipeline |
 | `_hash` | string | 哈希值（默认文件名） | NoteGenerator |
 | `_link` | string | 智能链接文本 | NoteGenerator |
 | `_notes` | array | 多笔记生成清单 | NoteGenerator |
@@ -100,7 +98,7 @@ status: "active"
 | Frontmatter | `TemplateConfig` / `TemplateFrontmatter`（architecture.md §7） |
 | `_notes` 元素 | `NoteSpec`（architecture.md §7） |
 | 匹配规则 | `MatchRule`（architecture.md §7） |
-| 校验规则 | `ValidationRule`（architecture.md §7） |
+| 校验规则 | `ValidationRule`（architecture.md §7，**D125 起 @deprecated**） |
 
 ## 8. 向导引导创建的模板骨架（D92）
 
@@ -197,11 +195,11 @@ status: "active"
 
 > **D117（2026-09-05 已实现）实现口径注记**：「类型」列收敛为 **FrontMatter 类型**（文本/数字/日期/布尔/忽略；数字/日期/布尔隐含 `toNumber`/`toDate`/`toBoolean`，新增 `toBoolean` 阶段，见 template-engine 白名单）；「身份证」不再作类型（`toIDCard` 收进「添加设置·列格式化」设置；旧 column-mapping 段隐含 toIDCard 首步读回折为 format toIDCard 设置、toNumber/toDate/toBoolean 读回为类型）。「添加设置」= 列格式化/列处理/**列派生** 三组下拉；**派生仍编译进 `derived` 段**（入口由 D108「类型/规则·派生字段」下拉改为「添加设置·列派生」，D117 起派生行可携带类型隐含转换与格式化/处理设置——派生产出后经直调/pipe 后续链；无后续时保持既有单步/pipe 形态）。决策与实现见 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117）。
 
-> **D118–D121 编译口径注记（2026-09-05 设计定稿，实现待排）**：
+> **D118–D121 编译口径注记（2026-09-05 已实现；D118 于 D125 废弃删除）**：
 >
-> - **校验规则（D118）不产编译段**：写 frontmatter `validation`（§2），运行时/预览经 D115 语义回填保留字段。
+> - **校验规则（D118）——D125 废弃删除**：frontmatter `validation` 契约与 D115 运行时回填一并移除（§2/§3）。
 > - **计算 / 条件 / 链接（D119）**：计算·算术 = 值管线步骤（直调 / `(stage "op" 参)`，白名单增 add/subtract/divide）；计算·条件 = 整链替换式 `(if (gte 值 参) 真值 假值)`；计算·条件警告与链接·smartLink = **映射行附言**（该行 `set` 之后追加 `{{#if 条件}}{{set "_warnings" (push _warnings "文本")}}{{/if}}` / `{{set "_link" (smartLink _hash "目标" "回退")}}`），反编译按附言还原。
-> - **多笔记输出（D120）**：新段 `note-output`（derived 段之后）——附加笔记类型行 → `{{set "_notes" (push _notes (object "_folder" … "_fileName" … "_template" … 字段…))}}`（生成条件 → `{{#if 条件}}` 包裹；`_notes` 元素结构见 §4）；映射行 `noteType` 决定字段归属笔记；未定义附加类型不产该段（旧模板零破坏）。模板引用 `_template` 的**内容渲染**（shard 按引用模板 content 渲染）为 D120 阶段二。
+> - **多笔记输出（D120）**：新段 `note-output`（derived 段之后）——附加笔记类型行 → `{{set "_notes" (push _notes (object "_folder" … "_fileName" … "_template" … 字段…))}}`（生成条件 → `{{#if 条件}}` 包裹；`_notes` 元素结构见 §4）；映射行 `noteType` 决定字段归属笔记（D125 增「所有笔记」= 字段进入主笔记与全部附加笔记 object）；未定义附加类型不产该段（旧模板零破坏）。模板引用 `_template` 的**内容渲染**（shard 按引用模板 content 渲染）为 D120 阶段二。
 > - **输出策略（D121）**：output 两字段与 `match.priority` 写 frontmatter（§2），不产编译段。
 >
 > 决策见 decisions/2026-09-05-step3-examples-parity.md。
@@ -216,4 +214,4 @@ status: "active"
 
 ---
 
-*版本: 1.15.0 | 最后更新: 2026-09-06*
+*版本: 1.17.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」）*

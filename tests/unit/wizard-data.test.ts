@@ -41,19 +41,16 @@ import {
   rowFilterFromRemove,
   rowFilterRuleLabel,
   rowMatchesFilter,
-  rowValidationBadge,
   segmentsToPreprocess,
+  sourceToTargetName,
   toBooleanCell,
   unmappedColumns,
   upsertSegments,
-  VALIDATION_TYPE_LABELS,
-  validationRuleLabel,
   emptyTransform,
   type ColumnMapping,
   type DataTransformConfig,
   type RowFilterRule
 } from '../../src/ui/wizard-data';
-import type { ValidationRule } from '../../src/types';
 
 /* 本地时区的 YYYY-MM-DD（与实现 formatISODate 一致的推导，保证任意时区一致） */
 function isoLocal(ts: number): string {
@@ -1043,71 +1040,71 @@ describe('展示格式化工具', () => {
   });
 });
 
-describe('D118：校验规则注入与状态回填（applyWizardTransform / 徽标 / 标签）', () => {
+describe('D125：来源→目标自动清洗 + 输出到「所有笔记」（sourceToTargetName / note-output 往返）', () => {
   const engine = new TemplateEngine();
 
-  const rules: ValidationRule[] = [
-    { field: '身份证号', type: 'id-card', message: '身份证号格式不正确' },
-    { field: '姓名', type: 'required', message: '姓名不能为空' }
-  ];
-
-  function cfg(): DataTransformConfig {
-    return { filters: [], clean: {}, mappings: [] };
-  }
-
-  it('规则回填 _valid/_errors/_warnings/_status（合法/非法/空必填）', async () => {
-    const data = [
-      { 姓名: '张三', 身份证号: '110101199001011237' }, // 合法校验位（男）
-      { 姓名: '李四', 身份证号: 'bad' },
-      { 姓名: '', 身份证号: '110101199001011223' }
-    ];
-    const rows = await applyWizardTransform(engine, data, cfg(), { rules });
-    expect(rows[0].row._valid).toBe(true);
-    expect(rows[0].row._status).toBe('valid');
-    expect(rows[0].row._errors).toEqual([]);
-    expect(rows[1].row._valid).toBe(false);
-    expect(rows[1].row._status).toBe('error');
-    expect(rows[1].row._errors).toContain('身份证号格式不正确');
-    expect(rows[2].row._valid).toBe(false);
-    expect(rows[2].row._errors).toContain('姓名不能为空');
+  it('sourceToTargetName：去除全部空白（空格/制表符/换行/回车），其余字符保留', () => {
+    expect(sourceToTargetName('姓 名')).toBe('姓名');
+    expect(sourceToTargetName('姓\t名')).toBe('姓名');
+    expect(sourceToTargetName('姓\n名\r\n')).toBe('姓名');
+    expect(sourceToTargetName('   ')).toBe('   '); // 全空白回落原值，不清空目标字段
+    expect(sourceToTargetName('')).toBe('');
+    expect(sourceToTargetName('员工_编号')).toBe('员工_编号');
   });
 
-  it('行清洗「过滤空行」含全空格与首行（D122）+ 校验回填不自动 _skip', async () => {
-    const data = [
-      { 姓名: '  ', 身份证号: '' }, // 首行空行 → 过滤
-      { 姓名: '张三', 身份证号: '110101199001011237' },
-      { 姓名: '李四', 身份证号: 'bad' } // 校验失败但不跳过（校验不自动 _skip）
-    ];
-    const cfgClean: DataTransformConfig = { filters: [], clean: { removeEmpty: true }, mappings: [] };
-    const rows = await applyWizardTransform(engine, data, cfgClean, { rules });
-    expect(rows.map((r) => r.src)).toEqual([2, 3]);
-    expect(rows[0].row._valid).toBe(true);
-    expect(rows[1].row._valid).toBe(false);
+  it('autoMapColumns：目标名应用清洗（去全部空白）', () => {
+    const mapped = autoMapColumns(['姓 名', '部 门'], []);
+    expect(mapped.map((m) => m.target)).toEqual(['姓名', '部门']);
+    expect(mapped.map((m) => m.source)).toEqual(['姓 名', '部 门']);
   });
 
-  it('rowValidationBadge：err/warn/ok/未标记', () => {
-    expect(rowValidationBadge({ _valid: false, _warnings: [], _status: 'error' })).toBe('err');
-    expect(rowValidationBadge({ _valid: true, _warnings: ['注意'], _status: 'warning' })).toBe('warn');
-    expect(rowValidationBadge({ _valid: true, _warnings: [], _status: 'valid' })).toBe('ok');
-    expect(rowValidationBadge({ 姓名: '张三' })).toBeNull();
+  it('deriveFieldName(md5Short)：来源部分应用清洗（<clean(源)>_hash）', () => {
+    expect(deriveFieldName('md5Short', '身份证 号码')).toBe('身份证号码_hash');
+    expect(deriveFieldName('genderFromID', '身份证 号码')).toBe('性别'); // 固定产出名不受影响
   });
 
-  it('VALIDATION_TYPE_LABELS = Validator 内置 8 种；validationRuleLabel 展示', () => {
-    expect(VALIDATION_TYPE_LABELS.map((o) => o.value)).toEqual([
-      'required',
-      'id-card',
-      'email',
-      'phone',
-      'date',
-      'length',
-      'range',
-      'unique'
-    ]);
-    expect(validationRuleLabel({ field: '姓名', type: 'required' })).toBe('姓名 必填');
-    expect(validationRuleLabel({ field: '身份证号', type: 'id-card' })).toBe('身份证号 身份证格式');
-    expect(validationRuleLabel({ field: '薪资', type: 'range', options: { min: 0, max: 10000 } })).toBe(
-      '薪资 数值范围(min,max)(0,10000)'
-    );
+  it('noteType=all 编译：字段写入主笔记与全部附加笔记 object；反编译还原为 all', async () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text', noteType: 'all' },
+        { source: '部门', target: '部门', type: 'text' }
+      ],
+      noteTypes: [
+        { id: 'summary', name: '汇总' },
+        { id: 'backup', name: '备份' }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    // note-output 段：主 + 汇总 + 备份（姓名进入全部三个对象）
+    expect(hb).toContain('ipro:begin:note-output');
+    const dec = handlebarsToConfig(hb);
+    const allRow = dec.mappings.find((m) => m.target === '姓名');
+    expect(allRow?.noteType).toBe('all');
+    expect(dec.noteTypes?.map((t) => t.id)).toEqual(['summary', 'backup']);
+    // 真实渲染：三个笔记对象均含「姓名」字段
+    const rows = await applyWizardTransform(engine, [{ 姓名: '张三', 部门: '研发部' }], cfg, {});
+    const notes = rows[0].row._notes as Record<string, any>[];
+    expect(notes).toHaveLength(3);
+    for (const n of notes) {
+      expect('姓名' in n).toBe(true);
+      expect(n['姓名']).toBe('张三');
+    }
+    expect(notes[0]['部门']).toBe('研发部'); // 主笔记仍含主笔记字段
+  });
+
+  it('noteType=all 且无附加类型：等价主笔记（不产 note-output 段，零破坏）', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [{ source: '姓名', target: '姓名', type: 'text', noteType: 'all' }],
+      noteTypes: []
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).not.toContain('note-output');
+    const dec = handlebarsToConfig(hb);
+    expect(dec.noteTypes ?? []).toEqual([]);
   });
 });
 

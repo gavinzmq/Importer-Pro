@@ -24,8 +24,7 @@ import type {
   IncrementalMode,
   NoteTypeConfig,
   ParseOptions,
-  PluginSettings,
-  ValidationRule
+  PluginSettings
 } from '../types';
 import { ImporterProError } from '../utils/errors';
 import { extOf } from '../utils/path';
@@ -33,6 +32,7 @@ import { PauseController } from '../core/pause-controller';
 import { FilePickerFactory, pickOptionsForSource } from './platform';
 import type { IFilePicker } from './platform/types';
 import {
+  ALL_NOTE_TYPES,
   autoMapColumns,
   ANY_COLUMN,
   applyWizardTransform,
@@ -63,12 +63,10 @@ import {
   rowFilterRuleLabel,
   ROW_FILTER_OP_LABELS,
   RowFilterRule,
-  rowValidationBadge,
   settingParamSpec,
+  sourceToTargetName,
   unmappedColumns,
-  upsertSegments,
-  VALIDATION_TYPE_LABELS,
-  validationRuleLabel
+  upsertSegments
 } from './wizard-data';
 import type { ComputeCompareOp } from './wizard-data';
 import { dryRunStats, type DryRunSummary } from './wizard-data';
@@ -160,8 +158,6 @@ export class ImportModal extends Modal {
   private parseError: string | null = null;
   private parsedInfo: FileInfo | null = null;
   private transform: DataTransformConfig = emptyTransform();
-  /** D118：校验规则（区块 4「✅ 校验规则」卡；随 [💾 保存到模板] 写 frontmatter validation，预览/导入走真实校验语义） */
-  private validation: ValidationRule[] = [];
   /** D94：输出位置及命名规则（区块 3，随模板保存；缺省取自设置/默认 `{{_hash}}`） */
   private outputFolder = '';
   private outputNoteName = '{{_hash}}';
@@ -570,7 +566,6 @@ export class ImportModal extends Modal {
       this.conflictStrategy = this.deps.settings().conflictStrategy;
       this.incrementalMode = this.deps.settings().incrementalMode;
       this.matchPriority = 0;
-      this.validation = [];
       return false;
     }
     const snap = await this.deps.scanner.readTemplateConfig(this.templateId);
@@ -581,8 +576,6 @@ export class ImportModal extends Modal {
     this.conflictStrategy = snap.conflictStrategy || this.deps.settings().conflictStrategy || 'overwrite';
     this.incrementalMode = snap.incrementalMode || this.deps.settings().incrementalMode || 'hash';
     this.matchPriority = snap.matchPriority || 0;
-    // D118：校验规则回填（模板 frontmatter validation）
-    this.validation = Array.isArray(snap.validation) ? snap.validation : [];
     this.transform = snap.transform;
     return true;
   }
@@ -1104,8 +1097,6 @@ export class ImportModal extends Modal {
       outputNoteName: this.outputNoteName,
       conflictStrategy: this.conflictStrategy,
       incrementalMode: this.incrementalMode,
-      // D118：校验规则随快照保存（写 frontmatter validation）
-      validation: this.validation,
       transform: this.transform
     };
   }
@@ -1192,12 +1183,11 @@ export class ImportModal extends Modal {
     }
   }
 
-  /** 区块 4：行配置（行级，D94/D122/D123/D124）：行清洗（空行·重复表头）/ 行筛选 / 校验规则 */
+  /** 区块 4：行配置（行级，D94/D122/D123/D124；D125 校验规则废弃删除）：行清洗（空行·重复表头）/ 行筛选 */
   private renderRowsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.rows = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
     wrap.createEl('h5', { text: '🔀 行配置（行级预处理）' });
-    const cols = this.columns();
     const filterCols = this.filterColumns();
 
     // ── 行清洗（D124：表格类 rawRows 顺序 = 过滤空行 → 行筛选 → 过滤重复表头[基准=筛选后首行]；
@@ -1268,82 +1258,6 @@ export class ImportModal extends Modal {
     });
     filterListBox = filterCard.createDiv({ cls: 'ipw-filter-list-box' });
     this.renderFilterList(filterListBox);
-
-    // ── 校验规则（D118：字段 + 类型(Validator 内置 8 种) + 消息 + length/range 参数；写 frontmatter validation） ──
-    const validCard = wrap.createDiv({ cls: 'ipw-card' });
-    validCard.createDiv({ cls: 'ipw-card-title', text: '✅ 校验规则（随模板保存，预览行首显示状态徽标）' });
-    const vRow = validCard.createDiv({ cls: 'ipw-form-row' });
-    const vField = vRow.createEl('select', { cls: 'ipw-select' });
-    vField.createEl('option', { value: '', text: '(选择字段)' });
-    for (const c of cols) vField.createEl('option', { value: c, text: c });
-    const vType = vRow.createEl('select', { cls: 'ipw-select' });
-    for (const o of VALIDATION_TYPE_LABELS) vType.createEl('option', { value: o.value, text: o.label });
-    const vMsg = vRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '消息（可空，默认按类型）' });
-    const vMin = vRow.createEl('input', { cls: 'ipw-input ipw-param-input', type: 'number', value: '', attr: { placeholder: 'min' } });
-    const vMax = vRow.createEl('input', { cls: 'ipw-input ipw-param-input', type: 'number', value: '', attr: { placeholder: 'max' } });
-    const syncParamVis = (): void => {
-      const need = vType.value === 'length' || vType.value === 'range';
-      vMin.style.display = need ? '' : 'none';
-      vMax.style.display = need ? '' : 'none';
-    };
-    syncParamVis();
-    vType.addEventListener('change', syncParamVis);
-    const vAdd = vRow.createEl('button', { cls: 'ipw-mini ipw-primary', text: '➕ 添加' });
-    vAdd.addEventListener('click', () => {
-      const field = vField.value;
-      const type = vType.value;
-      if (!field || !type) {
-        new Notice('请选择校验字段与规则类型');
-        return;
-      }
-      const rule: ValidationRule = { field, type, message: vMsg.value.trim(), options: undefined };
-      if (type === 'length' || type === 'range') {
-        const min = vMin.value.trim();
-        const max = vMax.value.trim();
-        if (min === '' && max === '') {
-          new Notice('length/range 需填写 min 或 max');
-          return;
-        }
-        rule.options = {};
-        if (min !== '') rule.options.min = Number(min);
-        if (max !== '') rule.options.max = Number(max);
-      }
-      this.validation = [...this.validation, rule];
-      vField.value = '';
-      vMsg.value = '';
-      vMin.value = '';
-      vMax.value = '';
-      if (validationListBox) this.renderValidationList(validationListBox);
-      this.refreshPreviewOnly(); // D91 L1（预览行首徽标即时更新）
-    });
-    if (cols.length === 0) vField.value = '';
-    const validationListBox = validCard.createDiv({ cls: 'ipw-validation-list-box' });
-    this.renderValidationList(validationListBox);
-  }
-
-  /** D118：仅重建「校验规则已配置」列表（不整块重建、不重置顶部控件） */
-  private renderValidationList(container: HTMLElement): void {
-    container.empty();
-    const rules = this.validation;
-    if (rules.length > 0) {
-      container.createDiv({ cls: 'ipw-muted', text: '已配置:' });
-      const list = container.createDiv({ cls: 'ipw-rule-list' });
-      rules.forEach((r, i) => {
-        const row = list.createDiv({ cls: 'ipw-rule-row' });
-        row.createSpan({ cls: 'ipw-rule-text', text: `• ${validationRuleLabel(r)}` });
-        if (r.type === 'unique') row.createSpan({ cls: 'ipw-rule-tag', text: '批次级唯一' });
-        const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
-        del.addEventListener('click', () => {
-          const next = [...this.validation];
-          next.splice(i, 1);
-          this.validation = next;
-          this.renderValidationList(container);
-          this.refreshPreviewOnly();
-        });
-      });
-    } else {
-      container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)——规则类型: 必填 / 身份证 / 邮箱 / 手机号 / 日期 / 长度 / 数值范围 / 唯一(批次级)' });
-    }
   }
 
   /**
@@ -1386,7 +1300,8 @@ export class ImportModal extends Modal {
   /**
    * 区块 5：列映射（列级，D105/D108/D113 收敛，D117 统一管线 UI）：单一「列映射」表（映射与派生合并；
    * 「类型」= FrontMatter 类型；「添加设置」下拉 = 列格式化 / 列处理 / 列派生；行下设置面板可编辑/显隐。
-   * 不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链）。
+   * 不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链。
+   * D125：「输出到」增「所有笔记」；来源变更 → 目标字段自动清洗（去全部空白）。
    */
   private renderColumnsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
@@ -1397,7 +1312,7 @@ export class ImportModal extends Modal {
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
     mapCard.createDiv({
       cls: 'ipw-card-title',
-      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记，D120；「添加设置」= 格式化/处理/派生/计算/链接）'
+      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记（D120，含「所有笔记」D125）；「添加设置」= 格式化/处理/派生/计算/链接）'
     });
     this.renderMappingCard(mapCard, cols);
 
@@ -1438,9 +1353,10 @@ export class ImportModal extends Modal {
   }
 
   /**
-   * 区块 5「列映射」卡片（D117 统一管线 UI）：列 = 来源 / 目标字段 / 类型(FrontMatter) / 添加设置(下拉) / 操作(⏵显隐设置 + ✕)。
+   * 区块 5「列映射」卡片（D117 统一管线 UI）：列 = 来源 / 目标字段 / 类型(FrontMatter) / 输出到 / 添加设置(下拉) / 操作(⏵显隐设置 + ✕)。
    * 行模型 = cfg.mappings 统一行：rule 有值=派生（经「添加设置 · 列派生」下拉创建/切换）；settings = 格式化/处理设置链；
    * 「类型」= FrontMatter 类型（文本/数字/日期/布尔/忽略，数字·日期·布尔隐含转换）；origin='auto'=自动映射生成。
+   * D125：来源变更 → 目标字段自动清洗（去全部空白，L1 预览）；「输出到」含「所有笔记」。
    * 每行下方「设置面板」列出已添加设置（派生预设 + 格式化/处理，可编辑参数/删除），由操作列 ⏵/⏷ 显隐。
    */
   private renderMappingCard(host: HTMLElement, cols: string[]): void {
@@ -1486,8 +1402,12 @@ export class ImportModal extends Modal {
         }
       }
       src.addEventListener('change', () => {
-        this.transform.mappings[i].source = src.value;
-        this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建（其余行可选来源随之变化）+ 预览刷新
+        const mp = this.transform.mappings[i];
+        mp.source = src.value;
+        // D125：来源变更 → 目标字段自动清洗（去全部空白：空格/制表符/换行/回车）；目标可再手动改名
+        target.value = sourceToTargetName(mp.source);
+        mp.target = target.value;
+        this.refreshPreviewOnly(); // D91/D125：L1 预览（目标输入框就地更新，不重建区块、不丢焦点）
       });
 
       // ── 目标字段 ──
@@ -1512,12 +1432,13 @@ export class ImportModal extends Modal {
         this.refreshStep3Blocks(['columns']); // D91：L2 + 预览刷新（忽略=不产出）
       });
 
-      // ── 输出到（D120：字段归属笔记类型下拉；主笔记 + 已定义附加类型） ──
+      // ── 输出到（D120：字段归属笔记类型下拉；D125 增「所有笔记」= 主笔记 + 全部附加类型） ──
       const noteSel = row.createEl('select', { cls: 'ipw-select' });
       noteSel.createEl('option', { value: '', text: '主笔记' });
       for (const t of this.transform.noteTypes ?? []) {
         noteSel.createEl('option', { value: t.id, text: t.name || t.id });
       }
+      noteSel.createEl('option', { value: ALL_NOTE_TYPES, text: '所有笔记' });
       noteSel.value = m.noteType && m.noteType !== 'main' ? m.noteType : '';
       noteSel.addEventListener('change', () => {
         const mp = this.transform.mappings[i];
@@ -1573,7 +1494,8 @@ export class ImportModal extends Modal {
     add.addEventListener('click', () => {
       const free = unmappedColumns(cols, this.transform.mappings);
       const source = free[0] ?? cols[0] ?? '';
-      this.transform.mappings.push({ source, target: source, type: 'text', origin: 'manual' });
+      // D125：目标字段 = 来源去全部空格/换行/回车（自动清洗；仍可手动改名）
+      this.transform.mappings.push({ source, target: sourceToTargetName(source), type: 'text', origin: 'manual' });
       this.refreshStep3Blocks(['columns']);
     });
     const auto = ops.createEl('button', { cls: 'ipw-mini', text: '🧹 自动映射' });
@@ -2155,13 +2077,13 @@ export class ImportModal extends Modal {
     head.setText(hasSel ? `筛选后 ${formatCount(kept)} / ${formatCount(total)} 行` : `共 ${formatCount(total)} 行`);
 
     // D88：预览首列「#」为解析后原始行号（1-based，清洗/筛选后不重排）
-    // D118：向导实时校验规则传入（真实校验语义回填 _valid/_errors/_warnings/_status → 行首徽标）
     // D123：表格类开启表头提升（清洗+筛选后剩余第一行提升为列名）
+    // D125：校验标记废弃删除（不再回填 _valid/_errors、不再渲染状态徽标列）
     const rows = await applyWizardTransform(
       this.deps.engine,
       this.parsed.slice(0, 20),
       this.transform,
-      { rules: this.validation, promoteHeader: this.isTableSource() }
+      { promoteHeader: this.isTableSource() }
     );
     if (!container.isConnected) return; // 异步渲染期间向导已关闭/区块已重建
     const preview = rows.slice(0, 3);
@@ -2170,26 +2092,15 @@ export class ImportModal extends Modal {
       note.addClass('ipw-preview-grid-wrap');
       return;
     }
-    // 隐藏内部回填保留字段（行号/校验标记/哈希/链接等不展示为数据列）
-    const IGNORED = new Set(['_index', '_valid', '_errors', '_warnings', '_status', '_hash', '_link', '_notes']);
+    // 隐藏内部回填保留字段（行号/哈希/链接等不展示为数据列；D125 _valid/_errors 保留字段已移除）
+    const IGNORED = new Set(['_index', '_warnings', '_status', '_hash', '_link', '_notes']);
     const cols = Object.keys(preview[0].row).filter((k) => !IGNORED.has(k));
-    const hasValid = this.validation.length > 0;
     const grid = container.createDiv({ cls: 'ipw-preview-grid-wrap' });
     const gridEl = grid.createDiv({ cls: 'ipw-preview-grid' });
     gridEl.createDiv({ cls: 'ipw-cell is-head ipw-row-num', text: '#' });
-    if (hasValid) gridEl.createDiv({ cls: 'ipw-cell is-head ipw-valid-col', text: '状态' });
     for (const c of cols) gridEl.createDiv({ cls: 'ipw-cell is-head', text: c, attr: { title: c } });
     for (const p of preview) {
       gridEl.createDiv({ cls: 'ipw-cell ipw-row-num', text: `${p.src}` });
-      if (hasValid) {
-        const badge = rowValidationBadge(p.row);
-        const cell = gridEl.createDiv({ cls: 'ipw-cell ipw-valid-badge' });
-        if (badge === 'err') cell.setText('❌ 失败');
-        else if (badge === 'warn') cell.setText('⚠️ 警告');
-        else if (badge === 'ok') cell.setText('✅ 通过');
-        else cell.setText('—');
-        cell.addClass(badge === 'err' ? 'is-err' : badge === 'warn' ? 'is-warn' : 'is-ok');
-      }
       for (const c of cols) {
         const v = p.row[c];
         gridEl.createDiv({
@@ -2283,8 +2194,7 @@ export class ImportModal extends Modal {
         sourceLabel: this.sourceLabelFor(target),
         dryRun: true,
         preprocessOverride: this.importPreprocessOverride(),
-        outputOverride: this.liveOutputOverride(),
-        validation: this.validation
+        outputOverride: this.liveOutputOverride()
       });
       if (!this.contentEl.isConnected) return; // 向导已关闭，放弃后续渲染
       this.lastDryResult = dry;
@@ -2344,10 +2254,8 @@ export class ImportModal extends Modal {
    */
   private async currentRecords(): Promise<DataRecord[]> {
     if (this.runRecords.length === 0) {
-      // D118：与预览同规则（真实校验回填 _valid/_errors/_status），保证「预览 == 导入」；
-      // D123：表格类同样开启表头提升（与预览同一条变换链）
+      // D123：表格类开启表头提升（与预览同一条变换链，保证「预览 == 导入」）
       const rows = await applyWizardTransform(this.deps.engine, this.parsed, this.transform, {
-        rules: this.validation,
         promoteHeader: this.isTableSource()
       });
       this.runRecords = rows.map((t) => t.row);
@@ -2447,7 +2355,6 @@ export class ImportModal extends Modal {
       startAt,
       preprocessOverride: this.importPreprocessOverride(),
       outputOverride: this.liveOutputOverride(),
-      validation: this.validation,
       onProgress: (p) => {
         if (p.phase === 'parse') {
           status.setText(`正在解析 ${p.done}/${p.total}…`);
@@ -2530,7 +2437,6 @@ export class ImportModal extends Modal {
     this.step3 = { vaultPath: file.path, label: file.name, isHistory: true, history: h };
     this.templateId = h.templateId;
     this.transform = emptyTransform(); // 直接导入不复用旧的 Step 3 配置
-    this.validation = []; // D118：直接导入不携带 Step 3 实时校验（走模板自身 frontmatter validation）
     this.sheetNames = [];
     this.sheetName = '';
     this.importAllSheets = false;

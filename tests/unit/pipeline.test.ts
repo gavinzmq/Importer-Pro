@@ -59,35 +59,6 @@ describe('engine.renderExpression（D112 命名表达式求值）', () => {
   });
 });
 
-describe('validation 运行时接入（D115，模板 frontmatter validation 逐行校验）', () => {
-  function withValidation(over: Partial<TemplateConfig> = {}): TemplateConfig {
-    const t = makeTemplate(over);
-    (t as any)._raw = { validation: [{ field: '姓名', type: 'required', message: '姓名必填' }] };
-    return t;
-  }
-  async function statusOf(record: Record<string, any>, template: TemplateConfig): Promise<string> {
-    const engine = new TemplateEngine();
-    const pipeline = new DataPipeline(engine);
-    const specs = await pipeline.shard(record, template, { defaultFolder: '' });
-    return specs[0]?.data._status ?? '';
-  }
-
-  it('marks invalid row (required 姓名 missing) as error status', async () => {
-    const s = await statusOf({ 部门: '技术部' }, withValidation());
-    expect(s).toBe('error');
-  });
-
-  it('leaves valid row untouched (valid status)', async () => {
-    const s = await statusOf({ 姓名: '张三', 部门: '技术部' }, withValidation());
-    expect(s).toBe('valid');
-  });
-
-  it('skips validation when template has no rules (no _status injected)', async () => {
-    const s = await statusOf({ 姓名: '张三' }, makeTemplate());
-    expect(s).toBe(''); // 无规则不注入 _valid/_status
-  });
-});
-
 describe('模板 output 运行时求值（D112，ctx.useTemplateOutput）', () => {
   it('applies output.folder / note_name per record', async () => {
     const template = makeTemplate({ output: { folder: '{{部门}}', noteName: '{{姓名}}_{{_hash}}' } });

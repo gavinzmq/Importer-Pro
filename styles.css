@@ -646,22 +646,6 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-/* D118：校验状态徽标列（预览行首 ✅ 通过 / ⚠️ 警告 / ❌ 失败） */
-.ipw-cell.ipw-valid-col {
-  min-width: 52px;
-  max-width: 52px;
-  text-align: center;
-}
-.ipw-cell.ipw-valid-badge.is-err {
-  color: var(--text-error);
-  font-weight: 600;
-}
-.ipw-cell.ipw-valid-badge.is-warn {
-  color: var(--text-warning);
-}
-.ipw-cell.ipw-valid-badge.is-ok {
-  color: var(--text-success);
-}
 /* D120：预览多笔记清单 */
 .ipw-preview-notes {
   font-size: 12px;

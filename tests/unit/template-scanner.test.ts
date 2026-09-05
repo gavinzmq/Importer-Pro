@@ -142,7 +142,6 @@ row:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'rename' as const,
       incrementalMode: 'timestamp' as const,
-      validation: [],
       transform: {
         clean: {
           removeEmpty: true,
@@ -183,7 +182,6 @@ row:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'overwrite' as const,
       incrementalMode: 'hash' as const,
-      validation: [],
       transform: {
         clean: { removeEmpty: true },
         filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
@@ -238,7 +236,6 @@ output:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'rename' as const,
       incrementalMode: 'timestamp' as const,
-      validation: [],
       transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
@@ -276,7 +273,7 @@ output:
   });
 });
 
-describe('D118：校验规则 frontmatter 写读往返（validation 契约）', () => {
+describe('D125：校验规则契约废弃（旧 validation 读取忽略、保存不写出）', () => {
   const LEGACY = `---
 name: '员工档案模板'
 template_id: tpl_x
@@ -284,40 +281,26 @@ match:
   patterns:
     - type: glob
       value: '*.csv'
+validation:
+  - field: 身份证号
+    type: id-card
+    message: '身份证格式不正确'
 ---
 
 \`\`\`handlebars
 \`\`\`
 `;
 
-  it('写入：validation 写 frontmatter（不产编译段）；读回还原', () => {
-    const snap = {
-      name: '员工档案模板',
-      matchType: 'glob' as const,
-      matchPattern: '*.csv',
-      matchPriority: 0,
-      outputFolder: '',
-      outputNoteName: '{{_hash}}',
-      conflictStrategy: 'overwrite' as const,
-      incrementalMode: 'hash' as const,
-      validation: [
-        { field: '身份证号', type: 'id-card', message: '身份证格式不正确' },
-        { field: '薪资', type: 'range', message: '', options: { min: 0, max: 100000 } }
-      ],
-      transform: { filters: [] as never[], clean: {}, mappings: [] }
-    };
-    const next = composeStep3Snapshot(LEGACY, snap);
-    expect(next).toContain('validation:');
-    expect(next).toContain('type: id-card');
-    // 校验不进 preprocess 编译段
-    expect(next.match(/ipro:begin:/g) ?? []).toHaveLength(0);
-    const back = parseStep3Snapshot(next);
+  it('读取：旧 frontmatter validation 忽略（不报错、不回填快照）', () => {
+    const back = parseStep3Snapshot(LEGACY);
     expect(back).not.toBeNull();
     if (!back) return;
-    expect(back.validation).toEqual(snap.validation);
+    expect(back.name).toBe('员工档案模板');
+    // 快照不再携带 validation 字段（契约已移除）
+    expect((back as unknown as Record<string, unknown>).validation).toBeUndefined();
   });
 
-  it('无校验规则：不写 validation 字段（旧模板零破坏）', () => {
+  it('保存：不再写出 validation（旧 frontmatter 中的 validation 一并清除）', () => {
     const snap = {
       name: '员工档案模板',
       matchType: 'glob' as const,
@@ -327,14 +310,10 @@ match:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'overwrite' as const,
       incrementalMode: 'hash' as const,
-      validation: [],
       transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).not.toContain('validation:');
-    const back = parseStep3Snapshot(next);
-    expect(back).not.toBeNull();
-    if (!back) return;
-    expect(back.validation).toEqual([]);
+    expect(next).not.toContain('id-card');
   });
 });

@@ -66,19 +66,17 @@ arcmesh:
 
 ### 3.1 数据校验与分流
 
-插件自动校验数据质量，并根据校验结果分流：
+模板可在预处理中自行用校验类 Helper（isEmail/isPhone/isDate/matchesRegex/inRange 等）判断字段有效性并分流：
 
 身份证合法 → 人员档案/
 身份证不合法 → 待核验档案/
 
 
-**校验字段**：
+**状态字段**：
 | 字段 | 说明 |
 | :--- | :--- |
-| `_valid` | 是否通过校验 |
-| `_errors` | 错误列表（阻止导入） |
-| `_warnings` | 警告列表（不阻止导入） |
-| `_status` | valid / warning / error |
+| `_warnings` | 警告列表（不阻止导入；D119 条件警告附言写入） |
+| `_status` | 模板可写状态字段（valid / warning / error，可用于输出命名表达式 `{{_status}}`） |
 
 ### 3.2 智能链接
 
