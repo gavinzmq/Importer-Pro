@@ -18,8 +18,7 @@
     "package": "node -e \"console.error('⚠️ Package 将在 CI 中执行，请勿本地运行'); process.exit(1)\""
   },
   "dependencies": {
-    "handlebars": "^4.7.8",
-    "handlebars-helpers": "0.10.0",
+    "@jaredwray/fumanchu": "4.7.3",
     "js-md5": "^0.8.3",
     "js-sha256": "^0.11.0",
     "js-yaml": "^4.1.0",

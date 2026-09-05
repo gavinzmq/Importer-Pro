@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.21.0"
+version: "1.24.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -23,10 +23,10 @@ arcmesh:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 用户界面层                                                                   │
-│ ┌──────────────┐  ┌─────────────┐  ┌────────────────────────────────────┐   │
-│ │  ImportModal │  │ SettingsTab │  │        GraphicConfigModal         │   │
-│ └──────────────┘  └─────────────┘  └────────────────────────────────────┘   │
+│ 用户界面层（导入向导 = 4 步图形化配置，即 ImportModal Step 1–4；见 ui/layout.md）│
+│ ┌───────────────────────────────┐  ┌───────────────────────────────────┐    │
+│ │ ImportModal（4 步图形化向导） │  │            SettingsTab            │    │
+│ └───────────────────────────────┘  └───────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼
@@ -124,6 +124,8 @@ export interface ITemplateEngine {
 > **值型变换管道（D99–D101，2026-09-05 已实现）**：内置 `pipe`/`stage` 两个运行时辅助 Helper 表达值型 `set` 的多步变换（值从左到右流经各阶段）；阶段是「基于函数返回」的工厂产物（`(stage "阶段名" 固定参数…)` → 一元函数），经 `PipeStages` 注册表白名单查找。编译/反编译规范见 template-schema.md §9，Helper 权威见 components/template-engine.md，决策见 decisions/2026-09-05-pipe-pipeline-set-config.md。
 >
 > **内置 Helper 实现来源与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件（字符串/数学/数组/比较/数字等）实现**委托** `handlebars-helpers@0.10.0`（白名单类别 array/collection/comparison/math/number/string 内按名注册，跳过 Node/IO 类）；**库有即用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库），仅库没有者保留我方名与实现（身份证/哈希/校验/链接、D98 编译白名单、运行时辅助、`substring`/`concat`/`formatNumber`/`ifEquals`）。编译段单元格安全语义以**专用名**注册（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`，不入公开 37 清单）。公开名随库修订属模板级破坏性（v1.0 未发布可接受，模板/示例/api-layer §6 已随实现迁移）。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
+>
+> **实现源迁移（D109–D111，v1.22.0，2026-09-05 已实现）**：模板引擎运行时与 Helper 实现源由 `handlebars@4.7.x` + `handlebars-helpers@0.10.0` 迁移为 **`@jaredwray/fumanchu@4.7.3` 单依赖**（= Handlebars + Helpers 合包维护版）；源码统一从 `@jaredwray/fumanchu/browser` 导入（浏览器安全构建，剔除 Node-only helper），配合 esbuild 显式 `platform:'browser'` + alias 空壳（`scripts/shims/fumanchu-node-deps-empty.mjs`，仅 micromatch/@cacheable/memory/chrono-node）确保打包无 Node 助手（§9.8）；**26 项采纳 / 受控命名空间与公开名清单不变**；fumanchu 变参 helper 未 pop 末位 Handlebars options，注册层以 `withOptionsStripped` 补齐（语义与 D102–D104 对拍一致）。实现见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md。
 
 ### 2.3 NoteGenerator（笔记生成器）
 
@@ -138,6 +140,8 @@ export interface INoteGenerator {
   dryRun(records: DataRecord[], config: OutputConfig): Promise<DryRunResult>;
 }
 ```
+
+> **命名/冲突扩展（D114，2026-09-05 已实现）**：`IFileNamer`/`IConflictResolver`/`IExporter` 类型定义于公共类型（`src/types`，公共口径见 architecture §7 登记）；外部插件经 API `registerNamer`/`registerConflictResolver` 注册的实例写入 `src/extensions/runtime.ts` 的 `ExtensionRuntime`（main 装配单例，NoteGenerator 与 ApiFacade 共享），`NoteGenerator` 写入/预检时以**最后注册者**为激活实现：`IFileNamer.rename` 改写文件名（空串/抛错回落默认）、`IConflictResolver.resolve` 改写冲突策略（返回 null 回落内置，置于用户手动编辑保护前）。cache/exporter 仅登记供后续版本（导出流程 v1.0 未提供，D15）。
 
 ### 2.4 缓存系统
 
@@ -243,6 +247,10 @@ export interface IValidator {
 | `DataPipeline` | 校验（错误分流）、按条件分流到 noteType、生成派生字段与 `_notes` | `DataRecord` → `NoteSpec[]` |
 | `Validator` | 字段级/记录级校验规则执行 | `DataRecord` + `rules` → `ValidationResult` |
 
+> **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。
+>
+> **校验 validation 运行时接入（D115，2026-09-05 已实现）**：模板声明 frontmatter `validation` 时，`DataPipeline.shard` 逐行执行并经 `Validator` 回填保留字段 `_valid/_errors/_warnings/_status`（template-schema §3）；不自动 `_skip`；`row.clean.filterInvalid`（跨行开关）在有校验规则时按校验失败过滤。实现见同决策（D115）。
+
 ### 2.8 文件引用策略（路径引用）
 
 **职责**：Step 2 所选文件仅记录**路径引用**（不预加载进内存、不复制、不写临时磁盘缓存），Step 3 解析/预览按需从原路径读取。
@@ -290,7 +298,7 @@ export interface IValidator {
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
-> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」形态落地——区块 5/6 合并、行内「类型/规则」直接选派生预设（删独立派生区块与 📋 预设 SuggestModal），编译仍按 rule 拆 column-mapping/derived 段、反编译合并，旧模板两段/旧 frontmatter 可读回迁移；上方 D105「添加设置」行内设置链（chips + ≥2 步 pipe）仍为后续增强未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md。
+> **D108（2026-09-05 已实现）+ D113（2026-09-05 已实现）收敛注记**：列侧以「映射与派生合并单表」落地——区块 5/6 合并、行内「类型/规则」直接选派生预设（删独立派生区块与 📋 预设 SuggestModal），编译按 rule 拆 column-mapping/derived 段、反编译合并，旧模板两段/旧 frontmatter 可读回迁移。**D113** 将 D105 草案的「添加设置」行内设置链（范围 = 列格式化/列处理 chips + 类型快捷转换 + ≥2 步 `pipe`）实现进映射行 `settings`，移除独立列格式化/列处理卡，列侧仅产 `column-mapping` 段、旧 `column-format`/`column-process` 段与旧 frontmatter `columns` 读取折叠为设置链；派生仍由「类型/规则 · 派生字段」下拉（D108 rule 行）承载（与 D105 草案「派生入 chips」的偏差见决策 2026-09-05-unimplemented-gap-fill.md D113）。
 
 ## 3. 数据流
 
@@ -600,6 +608,39 @@ interface ConflictPreview {
   strategy: 'overwrite' | 'append' | 'skip' | 'rename' | 'merge';
 }
 
+/** 文件命名上下文（D114，传给 IFileNamer.rename） */
+interface FileNamingContext {
+  folder: string;          // 已解析目标文件夹
+  suggestedName: string;   // 默认建议文件名（不含 .md）：模板 note_name / _hash 解析结果
+}
+
+/** 自定义文件命名策略（§5 扩展点；D114 实现于 src/types，由 ExtensionRuntime 接线，NoteGenerator 写入时生效） */
+interface IFileNamer {
+  readonly name: string;
+  rename(record: DataRecord, context: FileNamingContext): string | Promise<string>; // '' = 回落建议名
+}
+
+/** 冲突处理上下文（D114，传给 IConflictResolver.resolve） */
+interface ConflictResolutionContext {
+  path: string;                  // 目标完整路径（含 .md）
+  existingContent?: string;      // 已存在文件内容（读取失败时为 undefined）
+  newContent: string;            // 待写入内容
+  strategy: 'overwrite' | 'append' | 'skip' | 'rename' | 'merge'; // 当前内置策略
+}
+
+/** 自定义冲突处理（§5 扩展点；D114 实现于 src/types，resolve 返回策略或 null=回落内置） */
+interface IConflictResolver {
+  readonly name: string;
+  resolve(context: ConflictResolutionContext): 'overwrite' | 'append' | 'skip' | 'rename' | 'merge' | null
+    | Promise<'overwrite' | 'append' | 'skip' | 'rename' | 'merge' | null>;
+}
+
+/** 自定义导出器（§5「预留」扩展点；v1.0 无内置导出流程，D15，仅登记供后续版本） */
+interface IExporter {
+  readonly name: string;
+  export?(payload: { files: GeneratedFileInfo[]; options?: Record<string, any> }): Promise<unknown>;
+}
+
 /** GeneratedFileInfo / ImportResult 等 API 返回类型定义见 components/api-layer.md §12。 */
 ```
 
@@ -736,6 +777,13 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 **处理**：`esbuild.config.mjs` 通过 `banner` 在模块求值前设置 `window.JS_MD5_NO_NODE_JS = window.JS_SHA256_NO_NODE_JS = true`，强制两库走**纯 JS 实现**（桌面/移动端一致、不依赖 Node 内建模块，也无需在 esbuild `external` 暴露 `buffer`/`crypto`）。修改构建配置时不得删除该 banner（见 decisions/2026-09-03-esbuild-md5-buffer-fix.md）。
 
+**fumanchu 打包约束（D109–D111，v1.22.0，2026-09-05 已实现）**：
+
+- 依赖迁移后 esbuild 显式 `platform: 'browser'`（勿改回 node）；模板引擎相关源码统一 `from '@jaredwray/fumanchu/browser'`（浏览器安全构建，无 `node:*` 引用、剔除 Node-only helper）。
+- fumanchu 浏览器构建为**单文件 monolith**：顶层无条件 import 全部 helper 依赖。其中 `micromatch`（→ `util`/`path`）与 `@cacheable/memory`（→ `buffer`）在 esbuild browser 平台解析 node 内建失败 → 经 `alias` 指向空壳 `scripts/shims/fumanchu-node-deps-empty.mjs`；`chrono-node` 仅未注册的日期 helper 使用，一并 alias 减体积。`dayjs`（顶层 `extend`×4）与 `markdown-it`（顶层 `new MarkdownIt()`）必须保留真实实现（纯 JS），**不得 alias**。
+- 维护约束：若未来注册 match/caching/date 类 helper，须移除对应 alias 并接真实依赖；修改 esbuild 配置时不得删除该 alias 与 `platform: 'browser'`。
+- 验证：生产构建通过；main.js 无 `node:` 内建 require、无 fumanchu Node-only helper（残留 `urlParse`/`readFileSync` 等均来自既有 xlsx/SheetJS 内部）。体积较迁移前 +~200KB（monolith 带入 dayjs/markdown-it）。详见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D110）。
+
 ---
 
-_版本: 1.21.0 | 最后更新: 2026-09-05_
+_版本: 1.24.0 | 最后更新: 2026-09-05_

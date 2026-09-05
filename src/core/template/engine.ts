@@ -1,8 +1,8 @@
-import Handlebars from 'handlebars';
+import { Handlebars } from '@jaredwray/fumanchu/browser';
 import { registerBuiltinHelpers } from '../../helpers/builtin';
 import { LinkIndex } from '../cache/provider';
 
-/** 模板引擎（architecture §2.2）：Handlebars 双阶段渲染 */
+/** 模板引擎（architecture §2.2）：fumanchu（Handlebars 运行时）双阶段渲染 */
 export interface ITemplateEngine {
   render(template: string, data: any): Promise<string>;
   renderPreprocess(template: string, data: any): Promise<any>;
@@ -34,6 +34,25 @@ export class TemplateEngine implements ITemplateEngine {
     const compiled = this.hb.compile(template, { noEscape: true, strict: false });
     compiled(root, { allowProtoMethodsByDefault: true, allowProtoPropertiesByDefault: true } as any);
     return root;
+  }
+
+  /**
+   * 渲染单条命名表达式（模板 frontmatter `output.folder` / `note_name`，D112）：
+   * 与预处理同口径（noEscape + 非严格 + 允许原型访问），返回去首尾空白的字符串；
+   * 表达式为空或渲染失败返回空串（调用方回落默认）。
+   */
+  renderExpression(expr: string | undefined | null, data: Record<string, any>): string {
+    if (typeof expr !== 'string' || expr.trim() === '') return '';
+    try {
+      const compiled = this.hb.compile(expr, { noEscape: true, strict: false });
+      const out = compiled(data, {
+        allowProtoMethodsByDefault: true,
+        allowProtoPropertiesByDefault: true
+      } as any);
+      return String(out ?? '').trim();
+    } catch {
+      return '';
+    }
   }
 
   registerHelper(name: string, fn: Handlebars.HelperDelegate): void {

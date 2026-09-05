@@ -1,7 +1,7 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.8.0"
+version: "1.11.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -33,7 +33,7 @@ status: "active"
 | `validation` |  | 校验规则列表 `[{ field, type, message, options? }]` |
 | `notes` |  | 多笔记类型配置 `TemplateNoteSpec[]`（见 architecture.md §7） |
 
-> `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由预处理阶段渲染为最终路径。
+> `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由导入运行时渲染为最终路径。**D112（2026-09-05 已实现）**：`DataPipeline.shard` 对每条记录基于已含 `_hash` 的派生数据求值（`engine.renderExpression`）写 `_folder`/`_fileName`——`importFile`/`importData`（auto-match/API）按模板 output；向导按 UI 实时值（outputOverride）；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。
 
 ## 3. 保留字段（预处理模板契约）
 
@@ -46,6 +46,8 @@ status: "active"
 | `_errors` | string[] | 错误列表 | Validator |
 | `_warnings` | string[] | 警告列表 | Validator |
 | `_index` | number | 解析后原始行号（1-based，D98 引擎注入，供行号删除等编译段使用） | DataPipeline |
+
+> **校验字段运行时回填（D115，2026-09-05 已实现）**：模板 frontmatter 声明 `validation` 时，`DataPipeline.shard` 逐行执行校验规则并经 `Validator` 回填 `_valid`/`_errors`/`_warnings`/`_status`；不自动写 `_skip`（跳过由模板/`row.clean.filterInvalid` 决定，后者有规则时按校验失败过滤）。
 | `_folder` | string | 目标文件夹 | NoteGenerator |
 | `_status` | string | valid / warning / error | DataPipeline |
 | `_hash` | string | 哈希值（默认文件名） | NoteGenerator |
@@ -124,11 +126,11 @@ status: "active"
 {{!-- ipro:end:row-remove --}}
 ```
 
-段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-mapping`（列映射，D105 起每行含列转换设置链——列格式化/列处理/派生均并入该段）。`column-format` / `column-process` / `derived` 段 **D105 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行，见下「列侧段收敛」）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
 
 **编译映射**（向导状态 → Handlebars，目标代码**仅引用内置 Helper 白名单**）：
 
-> **编译专用 Helper 名（D102–D104，2026-09-05 已实现）**：公开 `trim`/`split`/`default`/`isEmpty` 自 v1.1.0 起随 `handlebars-helpers` 委托（非字符串输入返回 `''`/库语义），编译段对**数值单元格安全**的空值清理/判定/兜底改用**专用名**——`(isEmptyValue (strTrim col))`（空值筛选）、`(strTrim val)`（格式化 trim）、`(strSplit val d)`（拆分）、`(fillDefault val param)`（仅空值填充，替代旧 `(default …)`）；反编译按专用名还原为对应规则（empty/trim/split/fillDefault）。
+> **编译专用 Helper 名（D102–D104 定口径，D109–D111 实现源迁 fumanchu，2026-09-05 已实现）**：公开 `trim`/`split`/`default`/`isEmpty` 自 v1.1.0 起委托通用 Helper 实现源（非字符串输入返回 `''`/库语义；v1.2.0 源 = handlebars-helpers@0.10.0，D109 起源 = `@jaredwray/fumanchu`，注册名一致无迁移），编译段对**数值单元格安全**的空值清理/判定/兜底改用**专用名**——`(isEmptyValue (strTrim col))`（空值筛选）、`(strTrim val)`（格式化 trim）、`(strSplit val d)`（拆分）、`(fillDefault val param)`（仅空值填充，替代旧 `(default …)`）；反编译按专用名还原为对应规则（empty/trim/split/fillDefault）。
 
 | 向导配置 | 编译产物 |
 | :--- | :--- |
@@ -191,6 +193,8 @@ status: "active"
 
 **列侧段收敛（D105–D107）**：Step 3 区块 7 → 6（删除派生字段区块，预览顺延区块 6）；区块 5 收敛为**单一列映射表**，列格式化 / 列处理 / 派生预设全部并入列映射行的 **设置链 `settings`**（「添加设置」弹出分组选择，沿用行上下文不再重填目标/来源）。列侧 UI **仅产出 `column-mapping` 段**，不再产出 `column-format` / `column-process` / `derived` 段；每行一条 set——无设置 `(lookup this 源)`、1 步直调、**≥2 步 `(pipe 源 (stage …) …)`**（D99）。`类型` = 快捷转换（身份证→toIDCard / 数字→toNumber / 日期→toDate / 忽略=不产出，隐含转换去重）；无源预设（当前时间戳/年份）来源可空。**兼容读取**：旧模板的 column-format / column-process / derived 段与旧 frontmatter `columns` / `derived` / `mapping` 一次性折叠为对应列映射行 settings（[💾] 重存即收敛）。决策见 decisions/2026-09-05-step3-column-mapping-settings-chain.md。
 
+> **D113（2026-09-05 已实现）实现口径注记**：设置链以收敛范围落地——`ColumnMapping.settings` 只承载**列格式化 / 列处理**步骤（`MappingSetting`，组内复用既有 op/参数），列侧仅产 `column-mapping` 段；`类型` 快捷转换（toIDCard/toNumber/toDate）为隐含前置步骤并与同语义首条设置去重；**≥2 步以 pipe 表达**（`PIPE_STAGE_WHITELIST` 增 `strTrim`/`strSplit`/`fillDefault`）。**派生预设仍以 rule 行编译进 `derived` 段**（D108「类型/规则 · 派生字段」下拉承载，不并入 settings chips——与上方 D105 草案差异）。旧 `column-format`/`column-process` 段与旧 frontmatter `columns.format/process` 读取折叠为设置链（按列合并、toIDCard/toNumber/toDate 折为类型快捷）。决策与实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D113）。
+
 **读写规则**：
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
@@ -201,4 +205,4 @@ status: "active"
 
 ---
 
-*版本: 1.8.0 | 最后更新: 2026-09-05*
+*版本: 1.11.0 | 最后更新: 2026-09-05*

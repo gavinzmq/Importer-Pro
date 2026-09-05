@@ -128,6 +128,22 @@ describe('D102–D104 委托与改名：注册名随库（handlebars-helpers@0.1
     expect(out.round).toBe(1);
     expect(out.fixed).toBe('3.14');
   });
+
+  it('D109 fumanchu options 剥离：变参/默认分隔符不被末位 options 污染（复刻库 pop 语义）', async () => {
+    // fumanchu 变参 helper 未 pop 末位 Handlebars options；注册层剥离后与 handlebars-helpers 对拍口径一致：
+    const out = await renderLines([
+      '{{set "avg" (avg 2 4 6)}}', // options 计入分母 → 12/4=3（错）；剥离后 12/3=4
+      '{{set "orAllFalse" (or false false)}}', // options 恒真 → true（错）；剥离后 false
+      '{{set "orOneTrue" (or false true)}}',
+      '{{set "joinDefault" (join (array "a" "b"))}}', // options 作分隔符 → "[object Object]"（错）；剥离后默认 ', '
+      '{{set "sumDefault" (sum 1 2 3)}}'
+    ]);
+    expect(out.avg).toBe(4);
+    expect(out.orAllFalse).toBe(false);
+    expect(out.orOneTrue).toBe(true);
+    expect(out.joinDefault).toBe('a, b');
+    expect(out.sumDefault).toBe(6);
+  });
 });
 
 describe('D102–D104 例外专用 Helper：编译段单元格安全语义保留', () => {

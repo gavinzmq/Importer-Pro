@@ -1,7 +1,7 @@
 ---
 title: "TemplateEngine 组件"
 type: "component"
-version: "1.5.0"
+version: "1.6.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -37,6 +37,8 @@ export interface ITemplateEngine {
 共 **7 类 37 个**，完整签名以 [api-layer.md](api-layer.md) §6 为权威清单，本表仅列名称。
 
 > **实现来源与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件实现**委托** `handlebars-helpers@0.10.0`——白名单类别（array/collection/comparison/math/number/string——本项目实际采纳的重叠类别）内按名注册、**采用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库：非字符串返回 `''` 等）；仅库没有者保留我方名与实现（身份证/哈希/校验/链接、D98 编译白名单、运行时辅助含 `pipe`/`stage`、`substring`/`concat`/`formatNumber`/`ifEquals` 等）。编译段单元格安全语义以**专用名**注册（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`，编译专用、不入公开 37 清单）。改名属模板级破坏性（v1.0 未发布可接受），本表与 api-layer §6 已同步新名；对拍定稿见 `tests/unit/helpers.test.ts`。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
+
+> **实现源迁移（D109–D111，v1.6.0，2026-09-05 已实现）**：Helper 实现源由 `handlebars-helpers@0.10.0` 迁移为 **`@jaredwray/fumanchu@4.7.3`**（引擎运行时同源，`@jaredwray/fumanchu/browser`）——下方 37 清单与**26 项采纳、编译专用名均不变**；fumanchu 无 `lib/*` 类别子路径，`handlebars-helpers.ts` 改经 `HelperRegistry.filter({ names })` 按名采纳；fumanchu 变参 helper 未 pop 末位 options → 注册层 `withOptionsStripped` 补齐（`avg`/`or`/`and`/`join` 默认分隔符等对拍一致，新增边界用例）。打包/构建约束见 architecture §9.8 与 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
 
 | 类别 | Helper |
 | :--- | :--- |

@@ -154,6 +154,47 @@ export interface MergePreview {
   sections: string[];
 }
 
+/** 文件命名上下文（传给 IFileNamer.name） */
+export interface FileNamingContext {
+  /** 已解析目标文件夹 */
+  folder: string;
+  /** 默认建议文件名（不含 .md）：模板 note_name / _hash 解析结果 */
+  suggestedName: string;
+}
+
+/** 自定义文件命名策略（architecture §5 扩展点，api-layer §8 registerNamer） */
+export interface IFileNamer {
+  readonly name: string;
+  /** 基于记录与上下文返回最终文件名（不含 .md）；返回空串 = 回落建议名 */
+  rename(record: DataRecord, context: FileNamingContext): string | Promise<string>;
+}
+
+/** 冲突处理上下文（传给 IConflictResolver.resolve） */
+export interface ConflictResolutionContext {
+  /** 目标完整路径（含 .md） */
+  path: string;
+  /** 已存在文件内容（读取失败时为 undefined） */
+  existingContent?: string;
+  /** 待写入内容 */
+  newContent: string;
+  /** 当前内置冲突策略 */
+  strategy: ConflictStrategy;
+}
+
+/** 自定义冲突处理（architecture §5 扩展点，api-layer §8 registerConflictResolver） */
+export interface IConflictResolver {
+  readonly name: string;
+  /** 目标已存在时返回要采用的策略；返回 null = 回落内置策略 */
+  resolve(context: ConflictResolutionContext): ConflictStrategy | null | Promise<ConflictStrategy | null>;
+}
+
+/** 自定义导出器（architecture §5「预留」扩展点，api-layer §8 registerExporter；v1.0.0 无内置导出流程，仅登记供后续版本使用） */
+export interface IExporter {
+  readonly name: string;
+  /** 预留导出入口（本版本不调用，仅类型契约） */
+  export?(payload: { files: GeneratedFileInfo[]; options?: Record<string, any> }): Promise<unknown>;
+}
+
 export interface TemplateInfo {
   id: string;
   name: string;
@@ -201,6 +242,18 @@ export interface TemplateNoteSpec {
   content: string;
 }
 
+/**
+ * 模板输出位置及命名规则（D94，运行时求值 D112）：folder / noteName 为 Handlebars 表达式，
+ * 由 DataPipeline 在导入运行时对每条记录求值（未显式携带 _folder/_fileName 时兜底），
+ * 权威规范见 components/template-schema.md §2（frontmatter `output.folder`/`note_name`）。
+ */
+export interface TemplateOutput {
+  folder?: string; // 输出文件夹表达式（如 "{{_folder}}"；空 = 回落到设置默认输出目录）
+  noteName?: string; // 文件名表达式（不含 .md，如 "{{_hash}}"；空 = 回落 _hash）
+  conflictStrategy?: ConflictStrategy;
+  incrementalMode?: IncrementalMode;
+}
+
 export interface TemplateConfig {
   id: string;
   name: string;
@@ -210,6 +263,8 @@ export interface TemplateConfig {
   preprocess: string;
   content: string;
   notes?: TemplateNoteSpec[];
+  /** 模板输出位置及命名规则（frontmatter `output` 提升，parseTemplateFile 填充） */
+  output?: TemplateOutput;
 }
 
 /** 行筛选操作（D96，Excel 式筛选，包含式保留；公共类型登记 architecture §7） */

@@ -48,6 +48,11 @@ export interface ImportRecordsOptions {
    * 记录已由向导 applyWizardTransform 真实渲染，此处跳过模板 preprocess 编译段避免双重应用。
    */
   preprocessOverride?: string;
+  /**
+   * D112：向导实时输出命名（未保存 UI 值）覆盖模板 output——由 DataPipeline.shard 对每条记录
+   * 求值（folder/noteName 为 Handlebars 表达式）；向导路径不开启模板 output 兜底（useTemplateOutput）。
+   */
+  outputOverride?: { folder?: string; noteName?: string };
 }
 
 /** 导入服务：parse → 匹配模板 → 预处理/分流 → 生成 → 历史记录 */
@@ -134,7 +139,8 @@ export class ImportService {
       let rowNo = 0;
       for (const record of engineRecords) {
         rowNo++;
-        const specs = await this.pipeline.shard(record, template, { defaultFolder }, rowNo);
+        // D112：importFile（auto-match/显式模板）路径按模板 output.folder/note_name 求值命名
+        const specs = await this.pipeline.shard(record, template, { defaultFolder, useTemplateOutput: true }, rowNo);
         prepared.push({ ...record, _index: rowNo, _notes: specs.map(specToRecord) });
       }
       await this.hooks.run('after:process', { records: prepared, total: prepared.length });
@@ -235,7 +241,11 @@ export class ImportService {
       const shardTemplate = options.preprocessOverride ? { ...template, preprocess: options.preprocessOverride } : template;
       const prepared: DataRecord[] = [];
       for (const record of records) {
-        const specs = await this.pipeline.shard(record, shardTemplate, { defaultFolder });
+        // D112：向导实时命名（outputOverride）由 shard 对每条记录求值写 _folder/_fileName
+        const specs = await this.pipeline.shard(record, shardTemplate, {
+          defaultFolder,
+          outputOverride: options.outputOverride
+        });
         prepared.push({ ...record, _notes: specs.map(specToRecord) });
       }
       await this.hooks.run('after:process', { records: prepared, total: prepared.length });

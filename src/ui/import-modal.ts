@@ -25,9 +25,7 @@ import {
   autoMapColumns,
   ANY_COLUMN,
   applyWizardTransform,
-  ColumnFormatOp,
   ColumnMapping,
-  ColumnProcessOp,
   countRowsAfterSelection,
   DataTransformConfig,
   DERIVED_PRESETS,
@@ -38,6 +36,7 @@ import {
   formatTimeAgo,
   FORMAT_OP_LABELS,
   isPresetEmptyFilter,
+  mappingSettingLabel,
   MAPPING_TYPE_LABELS,
   parseRowNumbers,
   presetFilterEmptyRows,
@@ -48,6 +47,7 @@ import {
   ROW_FILTER_OP_LABELS,
   RowFilterRule,
   rowRemoveRuleLabel,
+  settingParamSpec,
   unmappedColumns,
   upsertSegments
 } from './wizard-data';
@@ -147,6 +147,8 @@ export class ImportModal extends Modal {
   private outputNoteName = '{{_hash}}';
   /** D95：已回填配置的「模板+文件」键（Step3↔4 往返不重复回填，保留未保存编辑） */
   private s3ConfigKey: string | null = null;
+  /** D113：当前展开「⚙️ 添加设置」行内编辑器的映射行下标（-1 = 无）；改动后复位 */
+  private mappingEditingRow = -1;
 
   // D91：Step 3 区块局部刷新——.ipw-body 容器持久，各区块仅重建自身内容（含滚动保持）
   // D94/D108 归类：template（模板元信息）/ rows（行配置）/ columns（列配置：格式化/处理/列映射·派生合并单表）
@@ -1226,54 +1228,18 @@ export class ImportModal extends Modal {
     stat.setText(`保留「全部规则均匹配」的行（AND），筛选后 ${formatCount(kept)} / ${formatCount(this.parsed.length)} 行`);
   }
 
-  /** 区块 5：列配置（列级，D94/D108）：列格式化 / 列处理 / 列映射（映射与派生合并单表） */
+  /**
+   * 区块 5：列映射（列级，D105/D113 收敛）：单一「列映射」表（映射与派生合并；行内「⚙️ 添加设置」链做
+   * 列格式化/列处理——不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链）。
+   */
   private renderColumnsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.columns = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
-    wrap.createEl('h5', { text: '⚙️ 列配置（列级预处理、映射与派生）' });
+    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 行内添加设置链）' });
     const cols = this.columns();
 
-    // ── 列格式化 ──
-    const fmtCard = wrap.createDiv({ cls: 'ipw-card' });
-    fmtCard.createDiv({ cls: 'ipw-card-title', text: '📐 列格式化' });
-    const fmtRow = fmtCard.createDiv({ cls: 'ipw-form-row' });
-    const fCol = this.addColumnSelect(fmtRow, cols, '选择列');
-    const fOp = fmtRow.createEl('select', { cls: 'ipw-select' });
-    for (const o of FORMAT_OP_LABELS) fOp.createEl('option', { value: o.value, text: o.label });
-    const fParam = fmtRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '参数（可选）' });
-    const fAdd = fmtRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
-    fAdd.addEventListener('click', () => {
-      if (!fCol.value) return;
-      this.transform.formats.push({ column: fCol.value, op: fOp.value as ColumnFormatOp, param: fParam.value });
-      this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建 + 预览刷新
-    });
-    this.renderRuleList(fmtCard, this.transform.formats.map((r) => formatRuleLabel(r.column, r.op, r.param)), (i) => {
-      this.transform.formats.splice(i, 1);
-      this.refreshStep3Blocks(['columns']);
-    });
-
-    // ── 列处理 ──
-    const procCard = wrap.createDiv({ cls: 'ipw-card' });
-    procCard.createDiv({ cls: 'ipw-card-title', text: '⚙️ 列处理' });
-    const procRow = procCard.createDiv({ cls: 'ipw-form-row' });
-    const pCol = this.addColumnSelect(procRow, cols, '选择列');
-    const pOp = procRow.createEl('select', { cls: 'ipw-select' });
-    for (const o of PROCESS_OP_LABELS) pOp.createEl('option', { value: o.value, text: o.label });
-    const pParam = procRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '分隔符/连接符/正则' });
-    const pAdd = procRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
-    pAdd.addEventListener('click', () => {
-      if (!pCol.value) return;
-      this.transform.processes.push({ column: pCol.value, op: pOp.value as ColumnProcessOp, param: pParam.value, param2: '' });
-      this.refreshStep3Blocks(['columns']);
-    });
-    this.renderRuleList(procCard, this.transform.processes.map((r) => processRuleLabel(r.column, r.op, r.param)), (i) => {
-      this.transform.processes.splice(i, 1);
-      this.refreshStep3Blocks(['columns']);
-    });
-
-    // ── 列映射（映射与派生合并单表，D108；派生字段不再单列区块/预设弹窗） ──
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
-    mapCard.createDiv({ cls: 'ipw-card-title', text: '📋 列映射（映射与派生；未映射列默认保留）' });
+    mapCard.createDiv({ cls: 'ipw-card-title', text: '📋 列映射（映射与派生；「⚙️ 添加设置」可追加格式化/处理步骤，≥2 步按序执行）' });
     this.renderMappingCard(mapCard, cols);
   }
 
@@ -1354,37 +1320,23 @@ export class ImportModal extends Modal {
     return sel;
   }
 
-  private renderRuleList(card: HTMLElement, rules: string[], onRemove: (i: number) => void): void {
-    if (rules.length === 0) {
-      card.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)' });
-      return;
-    }
-    card.createDiv({ cls: 'ipw-muted', text: '已配置:' });
-    const list = card.createDiv({ cls: 'ipw-rule-list' });
-    rules.forEach((text, i) => {
-      const row = list.createDiv({ cls: 'ipw-rule-row' });
-      row.createSpan({ cls: 'ipw-rule-text', text: `• ${text}` });
-      const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
-      del.addEventListener('click', () => onRemove(i));
-    });
-  }
-
   /**
-   * 区块 5「列映射（映射 + 派生合并单表）」卡片（D108）：映射与派生同一张表统一表达——
+   * 区块 5「列映射」卡片（D105/D113）：映射与派生同一张表 + 行内「添加设置」设置链（格式化/处理 chips）。
    * 行的「类型/规则」选派生预设即为派生计算行；底部按钮 = 添加映射行 / 自动映射 / 删除所有自动映射 / 清除所有。
-   * 数据模型：cfg.mappings 统一行（rule 有值=派生；origin='auto'=自动映射生成）。
+   * 数据模型：cfg.mappings 统一行（rule 有值=派生；settings 行内设置链；origin='auto'=自动映射生成）。
    */
   private renderMappingCard(host: HTMLElement, cols: string[]): void {
     const head = host.createDiv({ cls: 'ipw-grid ipw-grid-head ipw-map-head' });
     head.createSpan({ text: '来源' });
     head.createSpan({ text: '目标字段' });
     head.createSpan({ text: '类型/规则' });
+    head.createSpan({ text: '添加设置' });
     head.createSpan({ text: '操作' });
 
     if (this.transform.mappings.length === 0) {
       host.createDiv({
         cls: 'ipw-muted ipw-note',
-        text: '（暂无映射，将保留全部列；把行的「类型/规则」选为派生预设即可按来源计算新字段）'
+        text: '（暂无映射，将保留全部列；把行的「类型/规则」选为派生预设即可按来源计算新字段；「⚙️ 添加设置」给映射行追加格式化/处理步骤）'
       });
     }
 
@@ -1415,6 +1367,7 @@ export class ImportModal extends Modal {
       }
       src.addEventListener('change', () => {
         this.transform.mappings[i].source = src.value;
+        this.mappingEditingRow = -1;
         this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建（其余行可选来源随之变化）+ 预览刷新
       });
 
@@ -1454,8 +1407,13 @@ export class ImportModal extends Modal {
           mp.rule = undefined;
           mp.type = kind.value as ColumnMapping['type'];
         }
+        this.mappingEditingRow = -1;
         this.refreshStep3Blocks(['columns']); // D91：L2（来源选项随类型变化）+ 预览刷新
       });
+
+      // ── 添加设置（D113）：行内设置链 chips（仅映射行；派生行不适用） ──
+      const settingsCell = row.createDiv({ cls: 'ipw-settings-cell' });
+      this.renderMappingSettingsCell(settingsCell, m, i, row);
 
       // ── 操作（独立单元格容器：自动来源标记 + 删除行） ──
       const cellOps = row.createDiv({ cls: 'ipw-cell-ops' });
@@ -1469,8 +1427,14 @@ export class ImportModal extends Modal {
       });
       del.addEventListener('click', () => {
         this.transform.mappings.splice(i, 1);
+        this.mappingEditingRow = -1;
         this.refreshStep3Blocks(['columns']); // D91：L2 区块内重建 + 预览刷新
       });
+
+      // ── 行内设置编辑器（D113：展开为网格内整行，grid-column 1/-1） ──
+      if (!isDerived && this.mappingEditingRow === i) {
+        this.renderMappingSettingsEditor(row, m, i);
+      }
     });
 
     // ── 按钮行：添加映射行 / 自动映射 / 删除所有自动映射 / 清除所有 ──
@@ -1511,6 +1475,88 @@ export class ImportModal extends Modal {
         `💡 可用源列: ${freeCols.join(' / ') || '(无未映射列)'}。` +
         `派生字段 = 把行的「类型/规则」选为派生预设（时间戳/年份可留空来源）；` +
         `标记「自动」的行由 🧹自动映射 生成，「🗑 删除所有自动映射」仅删除此类行。`
+    });
+  }
+
+  /** D113：渲染某映射行的「添加设置」chips（格式化/处理步骤；派生行不适用显示「—」） */
+  private renderMappingSettingsCell(cell: HTMLElement, m: ColumnMapping, index: number, _row: HTMLElement): void {
+    if (m.rule) {
+      cell.createSpan({ cls: 'ipw-muted', text: '—' });
+      return;
+    }
+    const settings = m.settings ?? [];
+    if (settings.length === 0) {
+      cell.createSpan({ cls: 'ipw-muted', text: '(无)' });
+    }
+    settings.forEach((s, j) => {
+      const chip = cell.createDiv({ cls: 'ipw-chip', attr: { title: mappingSettingLabel(s) } });
+      chip.createSpan({ text: mappingSettingLabel(s) });
+      const x = chip.createEl('button', { cls: 'ipw-chip-x', text: '✕', attr: { title: '删除该设置' } });
+      x.addEventListener('click', () => {
+        const mp = this.transform.mappings[index];
+        mp.settings = (mp.settings ?? []).filter((_, k) => k !== j);
+        this.mappingEditingRow = -1;
+        this.refreshStep3Blocks(['columns']);
+      });
+    });
+    const addBtn = cell.createEl('button', { cls: 'ipw-mini', text: '⚙️' });
+    addBtn.setAttribute('title', '添加设置（格式化/处理）');
+    addBtn.addEventListener('click', () => {
+      this.mappingEditingRow = this.mappingEditingRow === index ? -1 : index;
+      this.refreshStep3Blocks(['columns']); // 展开/收起行内编辑器
+    });
+  }
+
+  /** D113：行内「⚙️ 添加设置」编辑器（分组选择 + 参数 + 添加/取消） */
+  private renderMappingSettingsEditor(row: HTMLElement, m: ColumnMapping, index: number): void {
+    const editor = row.createDiv({ cls: 'ipw-settings-editor' });
+    editor.createSpan({ cls: 'ipw-muted', text: '添加设置:' });
+    const gSel = editor.createEl('select', { cls: 'ipw-select' });
+    gSel.createEl('option', { value: 'format', text: '列格式化' });
+    gSel.createEl('option', { value: 'process', text: '列处理' });
+    const opSel = editor.createEl('select', { cls: 'ipw-select' });
+    const fillOps = (group: string): void => {
+      opSel.empty();
+      const list = group === 'format' ? FORMAT_OP_LABELS : PROCESS_OP_LABELS;
+      for (const o of list) opSel.createEl('option', { value: o.value, text: o.label });
+    };
+    fillOps('format');
+    gSel.addEventListener('change', () => fillOps(gSel.value));
+    const param = editor.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      placeholder: '参数（可选）'
+    });
+    opSel.addEventListener('change', () => {
+      const spec = settingParamSpec({ group: gSel.value as 'format' | 'process', op: opSel.value as any, param: '' } as any);
+      param.placeholder = spec.placeholder;
+      param.hidden = !spec.needParam;
+    });
+    opSel.dispatchEvent(new Event('change'));
+    const ok = editor.createEl('button', { cls: 'ipw-mini ipw-primary', text: '添加' });
+    ok.addEventListener('click', () => {
+      const group = gSel.value as 'format' | 'process';
+      const op = opSel.value as any;
+      const spec = settingParamSpec({ group, op, param: '' } as any);
+      const p = param.value.trim();
+      if (spec.needParam && p === '') {
+        new Notice('请填写参数');
+        return;
+      }
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      if (group === 'format') {
+        mp.settings.push({ group: 'format', op, param: p });
+      } else {
+        mp.settings.push({ group: 'process', op, param: p || ',', param2: op === 'merge' ? ' ' : '' });
+      }
+      this.mappingEditingRow = -1;
+      this.refreshStep3Blocks(['columns']); // 追加 chip + 预览刷新
+    });
+    const cancel = editor.createEl('button', { cls: 'ipw-mini', text: '取消' });
+    cancel.addEventListener('click', () => {
+      this.mappingEditingRow = -1;
+      this.refreshStep3Blocks(['columns']);
     });
   }
 
@@ -1613,7 +1659,8 @@ export class ImportModal extends Modal {
       const dry = await this.deps.service.importRecords(this.templateId, await this.currentRecords(), {
         sourceLabel: this.sourceLabelFor(target),
         dryRun: true,
-        preprocessOverride: this.importPreprocessOverride()
+        preprocessOverride: this.importPreprocessOverride(),
+        outputOverride: this.liveOutputOverride()
       });
       if (!this.contentEl.isConnected) return; // 向导已关闭，放弃后续渲染
       this.lastDryResult = dry;
@@ -1667,22 +1714,26 @@ export class ImportModal extends Modal {
 
   /**
    * 当前 Step 3 配置下变换后的记录集（Dry Run 预检与正式导入共用，避免重复计算）。
-   * D98：与预览同一条 Handlebars 执行路径（applyWizardTransform 真实渲染），不再调用 JS 变换函数；
-   * 随后把「输出文件夹」表达式渲染结果写入 _folder（D94，运行时输出位置）。
+   * D98：与预览同一条 Handlebars 执行路径（applyWizardTransform 真实渲染），不再调用 JS 变换函数。
+   * D112：输出位置/命名不再在 UI 侧用样例 _hash 预渲染 _folder，改由 liveOutputOverride 传给
+   * importRecords，经 DataPipeline.shard 对每条记录按真实数据（含 _hash）求值写 _folder/_fileName。
    */
   private async currentRecords(): Promise<DataRecord[]> {
     if (this.runRecords.length === 0) {
       const rows = await applyWizardTransform(this.deps.engine, this.parsed, this.transform);
-      this.runRecords = rows.map((t) => {
-        const row = t.row;
-        if (this.outputFolder.trim() !== '') {
-          const folder = this.renderNameExpr(this.outputFolder, row, '');
-          if (folder !== '') row._folder = folder;
-        }
-        return row;
-      });
+      this.runRecords = rows.map((t) => t.row);
     }
     return this.runRecords;
+  }
+
+  /** D112：向导实时输出命名（未保存 UI 值，供 importRecords.outputOverride） */
+  private liveOutputOverride(): { folder?: string; noteName?: string } {
+    const out: { folder?: string; noteName?: string } = {};
+    const folder = this.outputFolder.trim();
+    if (folder !== '') out.folder = folder;
+    const noteName = this.outputNoteName.trim();
+    if (noteName !== '') out.noteName = noteName;
+    return out;
   }
 
   /**
@@ -1766,6 +1817,7 @@ export class ImportModal extends Modal {
       pause: this.pauseCtl,
       startAt,
       preprocessOverride: this.importPreprocessOverride(),
+      outputOverride: this.liveOutputOverride(),
       onProgress: (p) => {
         if (p.phase === 'parse') {
           status.setText(`正在解析 ${p.done}/${p.total}…`);
@@ -1959,15 +2011,5 @@ function basenameOf(p: string): string {
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function formatRuleLabel(column: string, op: string, param: string): string {
-  const label = FORMAT_OP_LABELS.find((o) => o.value === op)?.label ?? op;
-  return `${column} → ${label}${param ? ` (${param})` : ''}`;
-}
-
-function processRuleLabel(column: string, op: string, param: string): string {
-  const label = PROCESS_OP_LABELS.find((o) => o.value === op)?.label ?? op;
-  return `${column} → ${label}${param ? ` (${param})` : ''}`;
 }
 

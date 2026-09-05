@@ -141,15 +141,14 @@ row:
       transform: {
         removeRows: [{ kind: 'duplicateHeader' as const, param: '' }],
         filters: [{ column: '*', op: 'notEmpty' as const, value: '' }],
-        formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
         clean: ['dedupe' as const],
-        processes: [],
-        mappings: []
+        // D113：格式化并入映射行设置链（不再产出 column-format 段）
+        mappings: [{ source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] }]
       }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).toContain('ipro:begin:row-filter');
-    expect(next).toContain('ipro:begin:column-format');
+    expect(next).toContain('ipro:begin:column-mapping');
     expect(next).toContain('用户手写预处理'); // 段外用户代码保留
     expect(next).toContain('- {{姓名}}'); // 第二个代码块（content）保留
     // frontmatter：name/output 更新；row 仅引擎开关；旧 byContent/removeEmpty/columns/mapping/derived 不产出
@@ -175,10 +174,11 @@ row:
       transform: {
         removeRows: [{ kind: 'byIndex' as const, param: '3' }],
         filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
-        formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
         clean: [],
-        processes: [{ column: 'tags', op: 'split' as const, param: ',', param2: '' }],
+        // D113：格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
         mappings: [
+          { source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] },
+          { source: 'tags', target: 'tags', type: 'text' as const, settings: [{ group: 'process' as const, op: 'split' as const, param: ',', param2: '' }] },
           { source: '身份证号码', target: '身份证号', type: 'text' as const },
           { source: '身份证号', target: '性别', type: 'text' as const, rule: 'genderFromID' as const }
         ]
@@ -190,8 +190,6 @@ row:
     if (!back) return;
     expect(back.transform.removeRows).toEqual([{ kind: 'byIndex', param: '3' }]);
     expect(back.transform.filters).toEqual(snap.transform.filters);
-    expect(back.transform.formats).toEqual(snap.transform.formats);
-    expect(back.transform.processes).toEqual(snap.transform.processes);
     expect(back.transform.mappings).toEqual(snap.transform.mappings);
     expect(back.outputFolder).toBe('出');
   });

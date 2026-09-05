@@ -60,17 +60,29 @@ export interface ColumnProcessRule {
 /** 派生预设 id（rule 有值即派生计算行；见 DERIVED_PRESETS） */
 export type DerivedRuleId = 'genderFromID' | 'birthFromID' | 'md5Short' | 'nowTimestamp' | 'currentYear';
 
-/** 列映射行类型（目标类型：文本/身份证/数字/日期/忽略） */
+/** 列映射行类型（目标类型：文本/身份证/数字/日期/忽略；快捷转换，D107/D113） */
 export type MappingType = 'text' | 'idcard' | 'number' | 'date' | 'ignore';
 
 /** 行来源标记：仅「🧹 自动映射」生成行为 'auto'（供「🗑 删除所有自动映射」精确删除；UI 局部状态，不随模板持久化） */
 export type MappingOrigin = 'auto' | 'manual';
 
+/** 行内「添加设置」链的分组（D113：列格式化 / 列处理；派生仍走 rule 下拉，见 D108） */
+export type MappingSettingGroup = 'format' | 'process';
+
 /**
- * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表）。
- * - rule 缺省 = 纯列映射：把 source 复制/更名到 target（type=ignore 则不产出）；
+ * 列映射行「添加设置」链中的一步（D105/D113）。组内 op/参数复用既有列格式化/列处理操作；
+ * 顺序 = 执行顺序（类型快捷转换视作隐含前置步骤，与首个设置同语义去重）。
+ */
+export type MappingSetting =
+  | { group: 'format'; op: ColumnFormatOp; param: string }
+  | { group: 'process'; op: ColumnProcessOp; param: string; param2: string };
+
+/**
+ * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表；D113 增 settings 行内设置链）。
+ * - rule 缺省 = 纯列映射：把 source 复制/更名到 target（type=ignore 则不产出）；type 快捷转换
+ *   （idcard/number/date）与 settings 链组成该行值管线（0 步=复制、1 步=直调、≥2 步=pipe）。
  * - rule 有值 = 派生计算行：按预设从 source 计算并写入 target 字段（等价旧 DerivedRule；
- *   needsSource=false 的预设——nowTimestamp/currentYear——source 可留空）。
+ *   needsSource=false 的预设——nowTimestamp/currentYear——source 可留空）；派生行不携带 settings（D113）。
  * - origin='auto' 表示由「自动映射」生成。
  */
 export interface ColumnMapping {
@@ -79,25 +91,89 @@ export interface ColumnMapping {
   type: MappingType;
   /** 派生预设 id（有值即按预设计算产出 target） */
   rule?: DerivedRuleId;
+  /** 行内「添加设置」链（D113）：格式化/处理步骤，按序作用于本行值；仅 rule 缺省的映射行携带 */
+  settings?: MappingSetting[];
   /** 行来源标记：自动映射生成 = 'auto'；手动添加/回填缺省 = 'manual' */
   origin?: MappingOrigin;
 }
 
-/** Step 3 数据变换总配置（编译层输入；D96 增 filters，D97 收敛 clean/removeRows） */
+/** 判断行是否为纯复制（无派生 rule、无类型快捷转换、无设置链） */
+export function isPlainCopyRow(m: ColumnMapping): boolean {
+  return !m.rule && m.type === 'text' && !(m.settings && m.settings.length > 0);
+}
+
+/** 行是否携带「添加设置」链 */
+export function rowHasSettings(m: ColumnMapping): boolean {
+  return !!m.settings && m.settings.length > 0;
+}
+
+/** 类型快捷转换是否等效某设置首步（去重口径，D107/D113）：toIDCard/toNumber/toDate 视作同语义 */
+export function typeQuickConversionEquals(type: MappingType, setting: MappingSetting): boolean {
+  if (type === 'idcard' && setting.group === 'format' && setting.op === 'toIDCard') return true;
+  if (type === 'number' && setting.group === 'format' && setting.op === 'toNumber') return true;
+  if (type === 'date' && setting.group === 'format' && setting.op === 'toDate') return true;
+  return false;
+}
+
+/** 设置步骤 → 参数是否必需 / 参数占位说明（D113，UI 编辑器用） */
+export function settingParamSpec(setting: MappingSetting): { needParam: boolean; placeholder: string } {
+  if (setting.group === 'format') {
+    if (setting.op === 'replaceText') return { needParam: true, placeholder: '查找/替换，如 旧/新' };
+    if (setting.op === 'substring') return { needParam: true, placeholder: '起始[,长度]，如 1,3' };
+    return { needParam: false, placeholder: '' };
+  }
+  switch (setting.op) {
+    case 'split':
+      return { needParam: true, placeholder: '分隔符（缺省 ,）' };
+    case 'merge':
+      return { needParam: true, placeholder: '要合并的另一列名' };
+    case 'map':
+      return { needParam: true, placeholder: '映射，如 男=M 女=F' };
+    case 'regexExtract':
+      return { needParam: true, placeholder: '正则（取组1）' };
+    case 'fillDefault':
+      return { needParam: true, placeholder: '空值填充内容' };
+    default:
+      return { needParam: false, placeholder: '' };
+  }
+}
+
+/** 设置步骤 → chips 展示标签（D113，如 `格式化·去除首尾空格` / `处理·拆分[,]`） */
+export function mappingSettingLabel(s: MappingSetting): string {
+  if (s.group === 'format') {
+    const base = FORMAT_OP_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
+    const p = s.param && (s.op === 'replaceText' || s.op === 'substring') ? ` [${s.param}]` : '';
+    return `格式化·${base}${p}`;
+  }
+  const base = PROCESS_OP_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
+  const p =
+    s.op === 'split' && s.param && s.param !== ','
+      ? ` [${s.param}]`
+      : (s.op === 'merge' || s.op === 'map' || s.op === 'regexExtract' || s.op === 'fillDefault') && s.param
+        ? ` [${s.param}]`
+        : '';
+  return `处理·${base}${p}`;
+}
+
+/** Step 3 数据变换总配置（编译层输入；D96 增 filters，D97 收敛 clean/removeRows；D113 列侧收敛进 mappings.settings） */
 export interface DataTransformConfig {
   /** 行删除（结构级）：byIndex 编译进 row-remove 段；duplicateHeader 为跨行引擎开关（不入段） */
   removeRows?: RowRemoveRule[];
   /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段；含「去除空行」预置规则 {column:'*',op:'notEmpty'} */
   filters: RowFilterRule[];
-  formats: ColumnFormatRule[];
   clean: RowCleanFlag[];
-  processes: ColumnProcessRule[];
-  /** 列映射 / 派生统一行（rule 有值即派生计算行） */
+  /**
+   * 列映射 / 派生统一行（rule 有值即派生计算行；settings 行内设置链）。
+   * D113 起为列侧唯一执行字段；formats/processes 旧字段已折叠入 mappings.settings。
+   */
   mappings: ColumnMapping[];
+  /** ⚠️ 遗留兼容字段（D113 起不再由 UI/编译/解码写入或消费；仅旧版测试/结构沿用） */
+  formats?: ColumnFormatRule[];
+  processes?: ColumnProcessRule[];
 }
 
 export function emptyTransform(): DataTransformConfig {
-  return { removeRows: [], filters: [], formats: [], clean: [], processes: [], mappings: [] };
+  return { removeRows: [], filters: [], clean: [], mappings: [], formats: [], processes: [] };
 }
 
 /** 模板配置快照（readTemplateConfig / saveTemplateConfig 载体，D95/D98：模板 = Step 3 配置源） */
@@ -545,8 +621,57 @@ export function applyColumnProcesses(records: DataRecord[], rules: ColumnProcess
 
 /* ── 列映射（含派生统一行，区块 5 合并） ─────────────── */
 
+/**
+ * 应用映射行值管线（JS 语义层，与 D113 编译口径一致）：类型快捷转换（隐含前置）+ 行内设置链，按序作用于源值。
+ */
+export function applyMappingChainValue(value: unknown, type: MappingType, settings?: MappingSetting[]): unknown {
+  let v = value;
+  const applyQuick = (x: unknown): unknown => {
+    if (type === 'idcard') return formatCellValue(x, 'toIDCard', '');
+    if (type === 'number') return formatCellValue(x, 'toNumber', '');
+    if (type === 'date') return formatCellValue(x, 'toDate', '');
+    return x;
+  };
+  const applySetting = (x: unknown, s: MappingSetting): unknown => {
+    if (s.group === 'format') return formatCellValue(x, s.op, s.param);
+    const cell = (y: unknown): string => (y === undefined || y === null ? '' : String(y));
+    const str = cell(x);
+    switch (s.op) {
+      case 'split':
+        return str.split(s.param || ',').map((p) => p.trim());
+      case 'map': {
+        const map: Record<string, string> = {};
+        for (const pair of (s.param || '').split(/[;,，；]/)) {
+          const idx = pair.indexOf('=');
+          if (idx > 0) map[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+        }
+        return str in map ? map[str] : x;
+      }
+      case 'regexExtract': {
+        try {
+          const m = new RegExp(s.param).exec(str);
+          return m ? (m[1] ?? m[0]) : '';
+        } catch {
+          return x;
+        }
+      }
+      case 'fillDefault':
+        return str === '' ? s.param : x;
+      default:
+        return x;
+    }
+  };
+  v = applyQuick(v);
+  for (const s of settings ?? []) {
+    if (typeQuickConversionEquals(type, s)) continue; // 类型隐含转换与同语义设置去重
+    v = applySetting(v, s);
+  }
+  return v;
+}
+
 /** 列映射 / 派生统一执行（JS 语义层，单测/兼容；正式执行走 D98 编译段）：
  *  - 纯映射行（无 rule）：存在纯映射时仅保留映射到的目标字段（未映射列忽略），ignore 直接丢弃；
+ *    值 = 类型快捷转换 + 行内设置链（D113）作用后的结果；
  *  - 派生行（rule 有值）：在既有记录上按预设追加 target 字段（源缺失/无源预设 → 空串），语义同旧 applyDerivedFields。
  */
 export function applyColumnMappings(records: DataRecord[], mappings: ColumnMapping[]): DataRecord[] {
@@ -558,7 +683,10 @@ export function applyColumnMappings(records: DataRecord[], mappings: ColumnMappi
       const next: DataRecord = {};
       for (const m of mapRows) {
         if (m.type === 'ignore') continue;
-        if (m.source in r) next[m.target || m.source] = r[m.source];
+        if (m.source in r) {
+          const key = m.target || m.source;
+          next[key] = applyMappingChainValue(r[m.source], m.type, m.settings);
+        }
       }
       return next;
     });
@@ -628,6 +756,27 @@ function isIDLike(s: string): boolean {
   return /^\d{15}(\d{2}[\dXx])?$/.test(s);
 }
 
+/** 以运行时 set 语义应用映射/派生（D113：保留未映射列，仅覆写/追加目标字段）——applyTransformPreview 用 */
+function applyMappingsRuntime(records: DataRecord[], mappings: ColumnMapping[]): DataRecord[] {
+  if (mappings.length === 0) return records;
+  return records.map((r) => {
+    let next = { ...r };
+    for (const m of mappings) {
+      if (m.type === 'ignore') continue;
+      if (!m.rule) {
+        if (!m.source) continue;
+        const key = m.target || m.source;
+        if (m.source in next) next[key] = applyMappingChainValue(r[m.source], m.type, m.settings);
+      } else {
+        const key = m.target || m.rule;
+        const source = m.source && m.source in r ? String(r[m.source] ?? '') : '';
+        next[key] = deriveValue(m.rule as DerivedRuleId, source);
+      }
+    }
+    return next;
+  });
+}
+
 /* ── JS 整链变换（仅语义层/单测/兼容；正式执行走 D98 编译段） ── */
 
 /** 变换结果行（src = 解析后原始 1-based 行号，D88 预览「#」列） */
@@ -637,7 +786,7 @@ export interface TransformRow {
 }
 
 /**
- * JS 整链变换并保留原始行号（执行顺序：行删除 → 行筛选 → 列格式化 → 行清洗 → 列处理 → 列映射 → 派生，D96/D97）。
+ * JS 整链变换并保留原始行号（执行顺序：行删除 → 行筛选 → 行清洗（跨行）→ 列映射/派生，D113 收敛）。
  * 仅语义层/单测使用；Step 3 预览与 Step 4 导入一律改用 applyWizardTransform（Handlebars 真实渲染，D98）。
  */
 export function applyTransformPreview(records: DataRecord[], cfg: DataTransformConfig): TransformRow[] {
@@ -648,8 +797,6 @@ export function applyTransformPreview(records: DataRecord[], cfg: DataTransformC
   });
   // 行筛选（D96 包含式，保留 AND）
   rows = rows.filter(({ row }) => cfg.filters.every((rule) => rowMatchesFilter(row, rule)));
-  // 列格式化（1:1）
-  rows = rows.map((r) => ({ src: r.src, row: applyColumnFormats([r.row], cfg.formats)[0] }));
   // 行清洗（跨行：dedupe / filterInvalid）
   const seen = new Set<string>();
   rows = rows.filter(({ row }) => {
@@ -663,10 +810,11 @@ export function applyTransformPreview(records: DataRecord[], cfg: DataTransformC
   if (cfg.clean.includes('filterInvalid')) {
     rows = rows.filter(({ row }) => Object.values(row).some((v) => v !== undefined && v !== null && v !== ''));
   }
-  // 列处理 / 列映射（含派生统一行，1:1）
-  const values = rows.map((r) => r.row);
-  const processed = applyColumnProcesses(values, cfg.processes);
-  const mapped = applyColumnMappings(processed, cfg.mappings);
+  // 列映射 / 派生统一行（D113：set 语义保留未映射列，仅覆写/追加目标字段，与真实渲染一致）
+  const mapped = applyMappingsRuntime(
+    rows.map((r) => r.row),
+    cfg.mappings
+  );
   return rows.map((r, j) => ({ src: r.src, row: mapped[j] }));
 }
 
@@ -809,75 +957,112 @@ function rowRemoveBody(rules: RowRemoveRule[] | undefined): string {
   return lines.join('\n');
 }
 
-/** 列格式化/列处理段体（有列时经 `has this` 守护，缺列不动） */
-function formatProcessBody(kind: 'format' | 'process', rules: Array<ColumnFormatRule | ColumnProcessRule>): string {
-  const lines = rules.map((r) => {
-    const key = hbQuote(r.column);
-    const val = `(lookup this ${key})`;
-    const expr =
-      kind === 'format'
-        ? formatExpr(r as ColumnFormatRule, val)
-        : processExpr(r as ColumnProcessRule, val);
-    if (expr === null) return '';
-    return `{{#if (has this ${key})}}{{set ${key} ${expr}}}{{/if}}`;
-  });
-  return lines.filter(Boolean).join('\n');
+/** 单步骤的 Helper 形态：helper 名 + 附加参数表达式（值自动作为首参；stage 追加在值后） */
+interface StepSpec {
+  helper: string;
+  args: string[];
 }
 
-function formatExpr(r: ColumnFormatRule, val: string): string | null {
-  switch (r.op) {
-    case 'trim':
-      return `(strTrim ${val})`; // D102–D104：编译引用 strTrim（单元格安全清理），公开 trim 随库
-    case 'toNumber':
-      return `(toNumber ${val})`;
-    case 'toString':
-      return `(toString ${val})`;
-    case 'toDate':
-      return `(toDate ${val})`;
-    case 'toIDCard':
-      return `(toIDCard ${val})`;
-    case 'replaceText': {
-      const idx = r.param.indexOf('/');
-      if (r.param === '' || idx === -1) return `(replaceText ${val} "" "")`;
-      return `(replaceText ${val} ${hbQuote(r.param.slice(0, idx))} ${hbQuote(r.param.slice(idx + 1))})`;
+/** 类型快捷转换 → 步骤（D107/D113）：身份证/数字/日期为隐含前置 toXxx；文本=无 */
+function typeQuickStep(type: MappingType): StepSpec | null {
+  if (type === 'idcard') return { helper: 'toIDCard', args: [] };
+  if (type === 'number') return { helper: 'toNumber', args: [] };
+  if (type === 'date') return { helper: 'toDate', args: [] };
+  return null;
+}
+
+/** 单个「添加设置」步骤 → Helper 形态（编译专用名保留单元格安全语义，D102–D104） */
+function settingStep(s: MappingSetting): StepSpec | null {
+  if (s.group === 'format') {
+    switch (s.op) {
+      case 'trim':
+        return { helper: 'strTrim', args: [] };
+      case 'toString':
+        return { helper: 'toString', args: [] };
+      case 'toIDCard':
+        return { helper: 'toIDCard', args: [] };
+      case 'toNumber':
+        return { helper: 'toNumber', args: [] };
+      case 'toDate':
+        return { helper: 'toDate', args: [] };
+      case 'replaceText': {
+        const idx = s.param.indexOf('/');
+        if (s.param === '' || idx === -1) return { helper: 'replaceText', args: ['""', '""'] };
+        return { helper: 'replaceText', args: [hbQuote(s.param.slice(0, idx)), hbQuote(s.param.slice(idx + 1))] };
+      }
+      case 'substring': {
+        const [startStr, lengthStr] = s.param.split(/[,，]/);
+        const start = startStr?.trim() ?? '';
+        const len = lengthStr?.trim();
+        return len
+          ? { helper: 'substring', args: [hbQuote(start), hbQuote(len)] }
+          : { helper: 'substring', args: [hbQuote(start)] };
+      }
+      default:
+        return null;
     }
-    case 'substring': {
-      const [startStr, lengthStr] = r.param.split(/[,，]/);
-      const start = startStr?.trim() ?? '';
-      const len = lengthStr?.trim();
-      return len ? `(substring ${val} ${hbQuote(start)} ${hbQuote(len)})` : `(substring ${val} ${hbQuote(start)})`;
-    }
-    default:
-      return null;
   }
-}
-
-function processExpr(r: ColumnProcessRule, val: string): string | null {
-  switch (r.op) {
+  switch (s.op) {
     case 'split':
-      return `(strSplit ${val} ${hbQuote(r.param || ',')})`; // D102–D104：编译引用 strSplit（单元格安全），公开 split 随库
+      return { helper: 'strSplit', args: [hbQuote(s.param || ',')] };
     case 'merge':
-      return `(merge ${val} (lookup this ${hbQuote(r.param)}) ${hbQuote(r.param2 || ' ')})`;
+      // merge 的第二操作数 = 另一列（运行时查 this），作固定阶段参数传入（Handlebars 先求值）
+      return { helper: 'merge', args: [`(lookup this ${hbQuote(s.param)})`, hbQuote(s.param2 || ' ')] };
     case 'map':
-      return `(mapValue ${val} ${hbQuote(r.param)})`;
+      return { helper: 'mapValue', args: [hbQuote(s.param)] };
     case 'regexExtract':
-      return `(regexExtract ${val} ${hbQuote(r.param)})`;
+      return { helper: 'regexExtract', args: [hbQuote(s.param)] };
     case 'fillDefault':
-      return `(fillDefault ${val} ${hbQuote(r.param)})`; // D102–D104：空串兜底迁至编译专用 Helper fillDefault（公开 default 随库）
+      return { helper: 'fillDefault', args: [hbQuote(s.param)] };
     default:
       return null;
   }
 }
 
-/** 列映射段体（仅无 rule 的纯映射行）：类型 ignore 跳过；源列存在才 set 目标字段（D98：字段复制/更名，未映射列不被丢弃） */
+/** 直调形态：(helper 值 args…) */
+function stepDirect(spec: StepSpec, valueExpr: string): string {
+  return `(${spec.helper} ${valueExpr}${spec.args.length > 0 ? ` ${spec.args.join(' ')}` : ''})`;
+}
+
+/** stage 形态：(stage "helper" args…)（pipe 内，值由管道喂入） */
+function stepStage(spec: StepSpec): string {
+  return `(stage ${hbQuote(spec.helper)}${spec.args.length > 0 ? ` ${spec.args.join(' ')}` : ''})`;
+}
+
+/**
+ * 映射行值管线 → `{ target(引号), expr }`；返回 null = 该行不产出（ignore / 派生 rule / 缺源或缺目标）。
+ * D105/D113：0 步=复制 `(lookup this src)`、1 步=直调、≥2 步=`(pipe src (stage …)…)`；
+ * 类型快捷转换视作隐含前置步骤，与「添加设置」同语义项去重（type 优先保留）。
+ */
+function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | null {
+  if (m.type === 'ignore' || m.rule) return null;
+  const target = m.target || m.source;
+  if (!m.source || !target) return null;
+  const srcExpr = `(lookup this ${hbQuote(m.source)})`;
+  const settings = (m.settings ?? []).filter((s) => !typeQuickConversionEquals(m.type, s));
+  const steps: StepSpec[] = [];
+  const quick = typeQuickStep(m.type);
+  if (quick) steps.push(quick);
+  for (const s of settings) {
+    const spec = settingStep(s);
+    if (spec) steps.push(spec);
+  }
+  let expr: string;
+  if (steps.length === 0) expr = srcExpr;
+  else if (steps.length === 1) expr = stepDirect(steps[0], srcExpr);
+  else expr = `(pipe ${srcExpr} ${steps.map(stepStage).join(' ')})`;
+  return { target: hbQuote(target), expr };
+}
+
+/** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set` */
 function mappingBody(mappings: ColumnMapping[]): string {
-  const lines = mappings
-    .filter((m) => !m.rule && m.type !== 'ignore')
-    .map((m) => {
-      const target = hbQuote(m.target || m.source);
-      const source = hbQuote(m.source);
-      return `{{#if (has this ${source})}}{{set ${target} (lookup this ${source})}}{{/if}}`;
-    });
+  const lines: string[] = [];
+  for (const m of mappings) {
+    const built = mappingRowExpr(m);
+    if (!built) continue;
+    // 源列存在才 set（复制/链均要求源列存在）
+    lines.push(`{{#if (has this ${hbQuote(m.source)})}}{{set ${built.target} ${built.expr}}}{{/if}}`);
+  }
   return lines.join('\n');
 }
 
@@ -918,17 +1103,13 @@ function derivedBody(rows: ColumnMapping[]): string {
   return lines.filter(Boolean).join('\n');
 }
 
-/** 整套配置 → 段体映射（无内容段省略） */
+/** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
   const remove = rowRemoveBody(cfg.removeRows);
   if (remove !== '') seg['row-remove'] = remove;
   const filter = rowFilterBody(cfg.filters);
   if (filter !== '') seg['row-filter'] = filter;
-  const format = formatProcessBody('format', cfg.formats);
-  if (format !== '') seg['column-format'] = format;
-  const process = formatProcessBody('process', cfg.processes);
-  if (process !== '') seg['column-process'] = process;
   const mapping = mappingBody(cfg.mappings);
   if (mapping !== '') seg['column-mapping'] = mapping;
   const derived = derivedBody(cfg.mappings);
@@ -1082,61 +1263,162 @@ function parseSetLine(line: string): { key: string; expr: string } | null {
   return { key: m[1], expr: m[2].trim() };
 }
 
-function decodeFormatProcessBody(body: string, kind: 'format' | 'process') {
-  const out: Array<ColumnFormatRule | ColumnProcessRule> = [];
-  for (const line of body.split('\n')) {
-    const t = line.trim();
-    if (!t) continue;
-    const set = parseSetLine(t);
-    if (!set) continue;
-    const call = parseParenCall(set.expr);
-    if (!call) continue;
-    if (kind === 'format') {
-      // helper 名 → 列格式化 op（D102–D104：编译引用 strTrim，反编译还原为 trim）
-      const op = (call.name === 'strTrim' ? 'trim' : call.name) as ColumnFormatOp;
-      switch (op) {
-        case 'trim':
-        case 'toNumber':
-        case 'toString':
-        case 'toDate':
-        case 'toIDCard':
-          out.push({ column: set.key, op, param: '' });
-          break;
-        case 'replaceText':
-          out.push({ column: set.key, op, param: `${stripQuotes(call.args[1] ?? '')}/${stripQuotes(call.args[2] ?? '')}` });
-          break;
-        case 'substring': {
-          const start = stripQuotes(call.args[1] ?? '');
-          const len = call.args.length > 2 ? stripQuotes(call.args[2] ?? '') : '';
-          out.push({ column: set.key, op, param: len ? `${start},${len}` : start });
-          break;
-        }
-        default:
-          break;
+/** 解析旧 column-format / column-process 段的单条规则（{column, op, param[, param2]}；反编译用） */
+function decodeLegacyColumnLine(set: { key: string; expr: string }, kind: 'format' | 'process') {
+  const call = parseParenCall(set.expr);
+  if (!call) return null;
+  const helper = call.name === 'strTrim' ? 'trim' : call.name === 'strSplit' ? 'split' : call.name === 'mapValue' ? 'map' : call.name;
+  const arg = (i: number): string => stripQuotes(call.args[i] ?? '');
+  if (kind === 'format') {
+    switch (helper) {
+      case 'trim':
+      case 'toNumber':
+      case 'toString':
+      case 'toDate':
+      case 'toIDCard':
+        return { column: set.key, op: helper as ColumnFormatOp, param: '' };
+      case 'replaceText':
+        return { column: set.key, op: 'replaceText' as ColumnFormatOp, param: `${arg(1)}/${arg(2)}` };
+      case 'substring': {
+        const start = arg(1);
+        const len = call.args.length > 2 ? arg(2) : '';
+        return { column: set.key, op: 'substring' as ColumnFormatOp, param: len ? `${start},${len}` : start };
       }
-    } else {
-      // helper 名 → 列处理 op（D102–D104：strSplit→split、mapValue→map；fillDefault 现以同名 Helper 编译）
-      const op = (
-        call.name === 'strSplit' ? 'split' : call.name === 'mapValue' ? 'map' : call.name
-      ) as ColumnProcessOp;
-      switch (op) {
-        case 'split':
-          out.push({ column: set.key, op, param: stripQuotes(call.args[1] ?? '') || ',', param2: '' });
-          break;
-        case 'merge':
-          out.push({ column: set.key, op, param: colOf(call.args[1] ?? '') ?? '', param2: stripQuotes(call.args[2] ?? ' ') });
-          break;
-        case 'map':
-        case 'regexExtract':
-        case 'fillDefault':
-          out.push({ column: set.key, op, param: stripQuotes(call.args[1] ?? ''), param2: '' });
-          break;
-        default:
-          break;
-      }
+      default:
+        return null;
     }
   }
-  return out;
+  switch (helper) {
+    case 'split':
+      return { column: set.key, op: 'split' as ColumnProcessOp, param: arg(1) || ',', param2: '' };
+    case 'merge':
+      return { column: set.key, op: 'merge' as ColumnProcessOp, param: colOf(call.args[1] ?? '') ?? '', param2: arg(2) || ' ' };
+    case 'map':
+    case 'regexExtract':
+    case 'fillDefault':
+      return { column: set.key, op: helper as ColumnProcessOp, param: arg(1), param2: '' };
+    default:
+      return null;
+  }
+}
+
+/** 旧 column-format / column-process 段 → 映射行设置链（D113：列侧收敛为单一映射表；按列合并为一条链，顺序=格式化→处理） */
+export function foldLegacyColumnOps(
+  formatRules: Array<{ column: string; op: string; param: string }>,
+  processRules: Array<{ column: string; op: string; param: string; param2: string }>
+): ColumnMapping[] {
+  const map = new Map<string, ColumnMapping>();
+  const rowOf = (col: string): ColumnMapping => {
+    let row = map.get(col);
+    if (!row) {
+      row = { source: col, target: col, type: 'text' };
+      map.set(col, row);
+    }
+    return row;
+  };
+  const pushSetting = (row: ColumnMapping, s: MappingSetting): void => {
+    row.settings = row.settings ?? [];
+    row.settings.push(s);
+  };
+  for (const r of formatRules) {
+    const row = rowOf(r.column);
+    if (r.op === 'toIDCard') row.type = 'idcard';
+    else if (r.op === 'toNumber') row.type = 'number';
+    else if (r.op === 'toDate') row.type = 'date';
+    else if (r.op === 'trim') pushSetting(row, { group: 'format', op: 'trim', param: '' });
+    else if (r.op === 'toString') pushSetting(row, { group: 'format', op: 'toString', param: '' });
+    else if (r.op === 'replaceText') pushSetting(row, { group: 'format', op: 'replaceText', param: r.param });
+    else if (r.op === 'substring') pushSetting(row, { group: 'format', op: 'substring', param: r.param });
+  }
+  for (const r of processRules) {
+    const row = rowOf(r.column);
+    if (r.op === 'split') pushSetting(row, { group: 'process', op: 'split', param: r.param, param2: '' });
+    else if (r.op === 'merge') pushSetting(row, { group: 'process', op: 'merge', param: r.param, param2: r.param2 });
+    else if (r.op === 'map') pushSetting(row, { group: 'process', op: 'map', param: r.param, param2: '' });
+    else if (r.op === 'regexExtract') pushSetting(row, { group: 'process', op: 'regexExtract', param: r.param, param2: '' });
+    else if (r.op === 'fillDefault') pushSetting(row, { group: 'process', op: 'fillDefault', param: r.param, param2: '' });
+  }
+  return Array.from(map.values());
+}
+
+/** 反编译单条 column-mapping 行（D113 值管线：copy / 单步直调 / pipe）→ 统一映射行 */
+function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
+  const call = parseParenCall(expr);
+  if (!call) return null;
+  if (call.name === 'lookup') {
+    // 纯复制
+    return { source: stripQuotes(call.args[1] ?? ''), target, type: 'text' };
+  }
+  let source: string | null = null;
+  const steps: StepSpec[] = [];
+  if (call.name === 'pipe') {
+    const base = parseParenCall(call.args[0] ?? '');
+    if (!base || base.name !== 'lookup') return null;
+    source = stripQuotes(base.args[1] ?? '');
+    for (const st of call.args.slice(1)) {
+      const sc = parseParenCall(st);
+      if (!sc || sc.name !== 'stage') continue;
+      steps.push({ helper: stripQuotes(sc.args[0] ?? ''), args: sc.args.slice(1) });
+    }
+  } else {
+    // 单步直调：首参 = 源表达式 (lookup this "src")
+    const base = parseParenCall(call.args[0] ?? '');
+    if (!base || base.name !== 'lookup') return null;
+    source = stripQuotes(base.args[1] ?? '');
+    steps.push({ helper: call.name, args: call.args.slice(1) });
+  }
+  if (source === null) return null;
+  // canonical：首步为快捷转换（toIDCard/toNumber/toDate）→ type；其余进 settings
+  let type: MappingType = 'text';
+  const rest = [...steps];
+  const head = rest[0];
+  if (head && (head.helper === 'toIDCard' || head.helper === 'toNumber' || head.helper === 'toDate')) {
+    type = head.helper === 'toIDCard' ? 'idcard' : head.helper === 'toNumber' ? 'number' : 'date';
+    rest.shift();
+  }
+  const settings: MappingSetting[] = [];
+  for (const spec of rest) {
+    const s = stepSpecToSetting(spec);
+    if (s) settings.push(s);
+  }
+  const row: ColumnMapping = { source, target, type };
+  if (settings.length > 0) row.settings = settings;
+  return row;
+}
+
+/** helper 名 → 设置步骤还原（D113：编译专用名 strTrim/strSplit 还原为 trim/split） */
+function stepSpecToSetting(spec: StepSpec): MappingSetting | null {
+  const arg = (i: number): string => stripQuotes(spec.args[i] ?? '');
+  switch (spec.helper) {
+    case 'strTrim':
+      return { group: 'format', op: 'trim', param: '' };
+    case 'toString':
+      return { group: 'format', op: 'toString', param: '' };
+    case 'toIDCard':
+      return { group: 'format', op: 'toIDCard', param: '' };
+    case 'toNumber':
+      return { group: 'format', op: 'toNumber', param: '' };
+    case 'toDate':
+      return { group: 'format', op: 'toDate', param: '' };
+    case 'replaceText':
+      return { group: 'format', op: 'replaceText', param: `${arg(0)}/${arg(1)}` };
+    case 'substring': {
+      const len = spec.args.length > 1 ? arg(1) : '';
+      return { group: 'format', op: 'substring', param: len ? `${arg(0)},${len}` : arg(0) };
+    }
+    case 'strSplit':
+      return { group: 'process', op: 'split', param: arg(0) || ',', param2: '' };
+    case 'merge':
+      return { group: 'process', op: 'merge', param: colOf(spec.args[0] ?? '') ?? '', param2: arg(1) || ' ' };
+    case 'mapValue':
+      return { group: 'process', op: 'map', param: arg(0), param2: '' };
+    case 'regexExtract':
+      return { group: 'process', op: 'regexExtract', param: arg(0), param2: '' };
+    case 'fillDefault':
+      return { group: 'process', op: 'fillDefault', param: arg(0), param2: '' };
+    default:
+      return null;
+  }
 }
 
 function decodeMappingBody(body: string): ColumnMapping[] {
@@ -1146,9 +1428,8 @@ function decodeMappingBody(body: string): ColumnMapping[] {
     if (!t) continue;
     const set = parseSetLine(t);
     if (!set) continue;
-    const call = parseParenCall(set.expr);
-    if (!call || call.name !== 'lookup') continue;
-    out.push({ source: stripQuotes(call.args[1] ?? ''), target: set.key, type: 'text' });
+    const row = decodeMappingExpr(set.expr, set.key);
+    if (row) out.push(row);
   }
   return out;
 }
@@ -1190,16 +1471,40 @@ function decodeDerivedBody(body: string): ColumnMapping[] {
   return out;
 }
 
-/** preprocess 标记段 → DataTransformConfig（D98 反编译；clean/dedupe、duplicateHeader 等引擎开关不在此编码） */
+/** 解析旧 column-format / column-process 段体 → 规则列表（D113 折叠迁移输入；param2 统一归一为字符串） */
+function decodeLegacyColumnBody(
+  body: string | undefined,
+  kind: 'format' | 'process'
+): Array<{ column: string; op: string; param: string; param2: string }> {
+  const out: Array<{ column: string; op: string; param: string; param2: string }> = [];
+  if (!body) return out;
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const set = parseSetLine(t);
+    if (!set) continue;
+    const rule = decodeLegacyColumnLine(set, kind);
+    if (rule) {
+      const r = rule as { column: string; op: string; param: string; param2?: string };
+      out.push({ column: r.column, op: r.op, param: r.param ?? '', param2: r.param2 ?? '' });
+    }
+  }
+  return out;
+}
+
+/** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠） */
 export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   const seg = extractSegments(preprocess);
   const cfg = emptyTransform();
   if (seg['row-remove']) cfg.removeRows = decodeRemoveBody(seg['row-remove']);
   if (seg['row-filter']) cfg.filters = decodeFilterBody(seg['row-filter']);
-  if (seg['column-format']) cfg.formats = decodeFormatProcessBody(seg['column-format'], 'format') as ColumnFormatRule[];
-  if (seg['column-process'])
-    cfg.processes = decodeFormatProcessBody(seg['column-process'], 'process') as ColumnProcessRule[];
   if (seg['column-mapping']) cfg.mappings = decodeMappingBody(seg['column-mapping']);
+  // 旧 column-format / column-process 段 → 折叠为映射行设置链（先于映射行执行，等价旧「格式化→映射」顺序）
+  const folded = foldLegacyColumnOps(
+    decodeLegacyColumnBody(seg['column-format'], 'format'),
+    decodeLegacyColumnBody(seg['column-process'], 'process')
+  );
+  if (folded.length > 0) cfg.mappings = [...folded, ...cfg.mappings];
   // 派生段反编译为带 rule 的统一映射行，接在纯映射行之后
   if (seg.derived) cfg.mappings = [...cfg.mappings, ...decodeDerivedBody(seg.derived)];
   return cfg;
@@ -1223,13 +1528,12 @@ export async function applyWizardTransform(
   cfg: DataTransformConfig
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
+  // D113：列侧收敛为单一 column-mapping 段（含行内设置链），行清洗为渲染前跨行开关
   const phaseA = segmentsToPreprocess({
     'row-remove': seg['row-remove'],
-    'row-filter': seg['row-filter'],
-    'column-format': seg['column-format']
+    'row-filter': seg['row-filter']
   });
   const phaseB = segmentsToPreprocess({
-    'column-process': seg['column-process'],
     'column-mapping': seg['column-mapping'],
     derived: seg.derived
   });
@@ -1241,7 +1545,7 @@ export async function applyWizardTransform(
   const hasDupHeader = (cfg.removeRows ?? []).some((r) => r.kind === 'duplicateHeader');
   if (hasDupHeader) rows = rows.filter((t) => !isDuplicateHeaderRow(t.row));
 
-  // 阶段 A：行删除(byIndex) → 行筛选 → 列格式化（逐行 Handlebars）
+  // 阶段 A：行删除(byIndex) → 行筛选（逐行 Handlebars）
   if (phaseA !== '') {
     const kept: TransformRow[] = [];
     for (const t of rows) {
@@ -1252,7 +1556,7 @@ export async function applyWizardTransform(
     rows = kept;
   }
 
-  // 行清洗（跨行引擎开关，在列格式化之后、列处理之前）
+  // 行清洗（跨行引擎开关：渲染 column-mapping 前处理）
   if (cfg.clean.includes('dedupe')) {
     const seen = new Set<string>();
     rows = rows.filter((t) => {
@@ -1266,7 +1570,7 @@ export async function applyWizardTransform(
     rows = rows.filter((t) => Object.values(t.row).some((v) => v !== undefined && v !== null && v !== ''));
   }
 
-  // 阶段 B：列处理 → 列映射 → 派生（逐行 Handlebars）
+  // 阶段 B：列映射（含行内设置链）→ 派生（逐行 Handlebars）
   if (phaseB !== '') {
     const done: TransformRow[] = [];
     for (const t of rows) {

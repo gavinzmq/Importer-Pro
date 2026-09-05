@@ -456,7 +456,8 @@
 }
 .ipw-map-head,
 .ipw-map-row {
-  grid-template-columns: 22% 28% 22% auto;
+  /* D113：来源 / 目标 / 类型·规则 / 添加设置(链) / 操作 */
+  grid-template-columns: 16% 20% 18% minmax(0, 1fr) auto;
 }
 .ipw-derive-head,
 .ipw-derive-row {
@@ -471,6 +472,59 @@
 .ipw-map-row .ipw-select,
 .ipw-derive-row .ipw-select {
   width: 100%;
+}
+
+/* D113：列映射行「添加设置」chips 与内联编辑器 */
+.ipw-settings-cell {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.ipw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 10px;
+  background: var(--background-modifier-hover, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--background-modifier-border);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ipw-chip .ipw-chip-x {
+  cursor: pointer;
+  color: var(--text-muted);
+  border: none;
+  background: none;
+  padding: 0 0 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+.ipw-chip .ipw-chip-x:hover {
+  color: var(--text-error, #e93147);
+}
+.ipw-settings-editor {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  margin-top: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary, transparent);
+}
+.ipw-settings-editor .ipw-select,
+.ipw-settings-editor .ipw-input {
+  flex: 0 1 auto;
+  min-width: 90px;
 }
 
 /* 预览表格 */

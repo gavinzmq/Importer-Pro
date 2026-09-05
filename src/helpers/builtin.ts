@@ -1,4 +1,4 @@
-import type Handlebars from 'handlebars';
+import type { Handlebars } from '@jaredwray/fumanchu/browser';
 import type { LinkIndex } from '../core/cache/provider';
 import type { PipeStageDef, PipeStageFn } from '../types';
 import { md5Hash, sha256Hash, hashShort as shortHash } from '../utils/crypto';
@@ -33,7 +33,11 @@ export const PIPE_STAGE_WHITELIST = [
   'default',
   'genderFromID',
   'birthFromID',
-  'multiply'
+  'multiply',
+  // D113：列映射「添加设置」链的编译专用 Helper（单元格安全语义，作 pipe 阶段随链执行）
+  'strTrim',
+  'strSplit',
+  'fillDefault'
 ] as const;
 
 /** pipe 阶段注册表（D99–D101）：阶段名 → 阶段工厂；`registerPipeStages` 按白名单从已注册 Helper 构建 */
@@ -83,9 +87,9 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     shortHash(String(value ?? ''), Number(length) || 10)
   );
 
-  // ── 字符串（公开 9；D102–D104 委托）──
+  // ── 字符串（公开 9；D102–D104 委托，D109–D111 实现源迁 fumanchu）──
   // split / join / trim / replace / isEmpty 与改名项 uppercase / lowercase（原 upper / lower）已委托
-  // handlebars-helpers@0.10.0（库注册名 + 实现，见 registerAdoptedLibraryHelpers 与 handlebars-helpers.ts）；
+  // fumanchu@4.7.3（库注册名 + 实现，见 registerAdoptedLibraryHelpers 与 handlebars-helpers.ts）；
   // 仅库没有者保留我方实现：
   hb.registerHelper('substring', (str: unknown, start: unknown, length?: unknown) => {
     const s = String(str ?? '');
@@ -99,14 +103,14 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     return rest.map((v) => String(v ?? '')).join('');
   });
 
-  // ── 数学（公开 9；D102–D104 委托）──
-  // add/subtract/multiply/divide/sum/avg/round/toFixed 已委托 handlebars-helpers@0.10.0（库语义随库：数字校验/两参/变参，
+  // ── 数学（公开 9；D102–D104 委托，D109–D111 实现源迁 fumanchu）──
+  // add/subtract/multiply/divide/sum/avg/round/toFixed 已委托 fumanchu@4.7.3（库语义随库：数字校验/两参/变参，
   // 见 handlebars-helpers.ts）；仅库没有者保留我方实现：
   // formatNumber：zh-CN locale 千分位（库 number.addCommas 不覆盖 zh-CN，保留我方）
   hb.registerHelper('formatNumber', (value: unknown) => Number(value).toLocaleString('zh-CN'));
 
-  // ── 逻辑（公开 5；D102–D104 委托）──
-  // contains / default / or / and 已委托 handlebars-helpers（comparison 类别；行内/子表达式返回原始布尔，块用法渲染块）；
+  // ── 逻辑（公开 5；D102–D104 委托，D109–D111 实现源迁 fumanchu）──
+  // contains / default / or / and 已委托 fumanchu（comparison 类别；行内/子表达式返回原始布尔）；
   // default 为库语义「首个非 null，缺省 ''」（我方空串兜底语义迁至编译专用 Helper `fillDefault`，见下）。
   // 仅库没有者保留我方实现：
   hb.registerHelper('ifEquals', function (this: unknown, a: unknown, b: unknown, options: any) {
@@ -184,7 +188,7 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     list.push(item);
     return list;
   });
-  // first 已委托 handlebars-helpers（array.first：无 n 返回首元素；undefined 输入返回 ''）；second 库无对应，保留我方
+  // first 已委托 fumanchu（array.first：无 n 返回首元素；undefined 输入返回 ''）；second 库无对应，保留我方
   hb.registerHelper('second', (arr: unknown) => (Array.isArray(arr) ? arr[1] : undefined));
   hb.registerHelper('now', () => new Date().toISOString().replace(/\.\d{3}Z$/, ''));
   hb.registerHelper('log', (value: unknown) => {
@@ -195,10 +199,10 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
   hb.registerHelper('>', (a: unknown, b: unknown) => Number(a) > Number(b));
   hb.registerHelper('<=', (a: unknown, b: unknown) => Number(a) <= Number(b));
   hb.registerHelper('>=', (a: unknown, b: unknown) => Number(a) >= Number(b));
-  // eq 已委托 handlebars-helpers（comparison.eq：行内/子表达式返回 a===b）
+  // eq 已委托 fumanchu（comparison.eq：行内/子表达式返回 a===b）
 
   // ── D98 编译段所需 Helper（预处理标记段仅引用内置白名单；权威见 template-schema §9）──
-  // not / gt / gte / lt / lte 已委托 handlebars-helpers（comparison 类别，行内/子表达式返回原始布尔）；编译段数值比较走
+  // not / gt / gte / lt / lte 已委托 fumanchu（comparison 类别，行内/子表达式返回原始布尔）；编译段数值比较走
   // cellOp（JS cmpCells，D96 语义），不受委托影响。neq / col / has 等编译守卫保留我方实现（库 comparison.has 为
   // block/inline 混合语义，且与编译段 `(has this "列")` 守卫语义需严格一致，作为例外保留我方，不入委托清单）。
   hb.registerHelper('neq', (a: unknown, b: unknown) => a !== b);
@@ -329,13 +333,13 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     }
     return value;
   });
-  // D102–D104：注册 handlebars-helpers 委托件（公开通用件采用库注册名与实现；须在我方实现注册后调用，防同名覆盖）
+  // D109–D111：注册 fumanchu 采纳件（公开通用件采用库注册名与实现；须在我方实现注册后调用，防同名覆盖）
   registerAdoptedLibraryHelpers(hb);
   // 阶段注册表须在所有 Helper 注册完成后构建（阶段实现 = 已注册 Helper，语义与直调一致）
   registerPipeStages(hb);
 }
 
-/** 注册 handlebars-helpers 委托件（D102–D104）：按注册名注册采纳项（我方重叠实现已删除，不覆盖库同名） */
+/** 注册 fumanchu 采纳件（D109–D111）：按注册名注册采纳项（我方重叠实现已删除，不覆盖库同名） */
 function registerAdoptedLibraryHelpers(hb: HB): void {
   const adopted = adoptedLibraryHelpers();
   for (const [name, fn] of Object.entries(adopted)) {

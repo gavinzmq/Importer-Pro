@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.10.0"
+version: "1.11.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -122,21 +122,21 @@ src/
 
 > 权威设计见 `architecture.md` §2.10 与 `ui/layout.md` §5.4–§5.6；决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D96）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
-> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设；编译仍按 rule 拆段、反编译合并，旧模板/旧 frontmatter 可读回迁移），上方 D105 段「添加设置」行内设置链（chips + pipe）仍为后续增强未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md。
+> **D108 + D113（2026-09-05 已实现）收敛注记**：列侧以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设 rule 行；编译按 rule 拆 column-mapping/derived 段、反编译合并，旧模板/旧 frontmatter 可读回迁移）。**D113** 实现 D105 草案「添加设置」行内设置链：范围 = 列格式化/列处理 chips（`settings`，≥2 步 pipe）+ 类型快捷转换编译，列侧仅产 `column-mapping` 段、旧 column-format/column-process 段与旧 frontmatter columns 折叠为设置链，移除独立格式化/处理卡；派生不占 chips（走「类型/规则」下拉，rule 行），与 D105 草案差异见 decisions/2026-09-05-unimplemented-gap-fill.md D113。
 
-### 1.2.4 Helper 实现委托原则（D102–D104，v1.2.0，2026-09-05 已实现）
+### 1.2.4 Helper 实现委托原则（D102–D104 定口径；D109–D111 实现源迁 fumanchu，2026-09-05 已实现）
 
 | 规范项 | 标准 |
 | :--- | :--- |
-| **复用优先（不重复自研）** | 通用 Helper 若 `handlebars-helpers`（0.10.0）白名单类内已有，一律采用其实现，禁止另写一份（2026-09-05 已实现：采纳 array/collection/comparison/math/number/string 六类重叠件，见 handlebars-helpers.ts） |
-| **库有即用库注册名（v1.2.0）** | 凡库有实现者，**以其注册名注册**（`upper`→`uppercase`、`lower`→`lowercase`），不保留我方名；edge 语义随库。改名属模板级破坏性（v1.0 未发布可接受，文档/示例已随实现迁移） |
-| **特化件自研** | 仅库**没有**者保留我方名与实现：身份证/哈希/校验（库无件）/链接、D98 编译白名单、运行时辅助（`set`/`pipe`/`stage` 等）、`substring`/`concat`/`formatNumber`/`ifEquals` 等 |
-| **例外专用名** | 库有同名但语义不等价且我方语义为**编译段**必需 → 改用我方专用名登记；**不得**以我方实现覆盖库同名。本实现：编译段空值/清理/拆分/兜底用 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`（公开 `trim`/`split`/`default`/`isEmpty` 随库）；`has`（编译守卫）保留我方（库 comparison.has 为 block/inline 混合语义） |
-| **按需注册** | 仅白名单纯浏览器类别内**按名挑选**注册（实际采纳：array/collection/comparison/math/number/string）；禁止 Node/IO 类（fs/path/code/markdown/match/html/i18n/inflection/logging） |
-| **对拍定稿** | 委托清单以 `tests/unit/helpers.test.ts` 全绿为准（语义回归网）；改名/专用名条目登记迁移清单 |
-| **第三方门禁** | 新 helper 只取自白名单类；esbuild browser + CI 构建验证无 Node 内置泄漏（沿用 D58/js-md5 排查法） |
+| **复用优先（不重复自研）** | 通用 Helper 若实现源（D109 起 = `@jaredwray/fumanchu`，替代 handlebars-helpers）已有，一律采用其实现，禁止另写一份（采纳 array/collection/comparison/math/number/string 六类重叠件共 26 项，见 handlebars-helpers.ts） |
+| **库有即用库注册名（v1.2.0）** | 凡实现源有实现者，**以其注册名注册**（`upper`→`uppercase`、`lower`→`lowercase`），不保留我方名；edge 语义随库。改名属模板级破坏性（v1.0 未发布可接受，文档/示例已随实现迁移） |
+| **特化件自研** | 仅实现源**没有**者保留我方名与实现：身份证/哈希/校验/链接、D98 编译白名单、运行时辅助（`set`/`pipe`/`stage` 等）、`substring`/`concat`/`formatNumber`/`ifEquals` 等 |
+| **例外专用名** | 实现源有同名但语义不等价且我方语义为**编译段**必需 → 改用我方专用名登记；**不得**以我方实现覆盖源同名。本实现：编译段空值/清理/拆分/兜底用 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`（公开 `trim`/`split`/`default`/`isEmpty` 随源）；`has`（编译守卫）保留我方（源 comparison.has 为 block/inline 混合语义） |
+| **按需注册** | 仅按名挑选注册受控白名单（26 项采纳）；禁止 Node/IO 类 helper（fs/path/logging/markdown/match 等）。D109 起经 fumanchu `HelperRegistry.filter({ names })` 挑选（不整库铺开） |
+| **对拍定稿** | 委托清单以 `tests/unit/helpers.test.ts` 全绿为准（语义回归网）；改名/专用名条目登记迁移清单。D109 起补 **options 剥离**边界用例（fumanchu 变参 helper 未 pop 末位 options，注册层 `withOptionsStripped` 补齐） |
+| **第三方门禁** | 新 helper 只取自白名单类；esbuild `platform:'browser'` + `@jaredwray/fumanchu/browser` + alias 空壳（`scripts/shims/fumanchu-node-deps-empty.mjs`，仅 micromatch/@cacheable/memory/chrono-node）验证打包无 Node 助手泄漏（沿用 D58/js-md5 排查法；勿删 alias、勿对 dayjs/markdown-it alias） |
 
-> 决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md（D102–D104，v1.2.0 已实现）。
+> 口径决策见 decisions/2026-09-05-handlebars-helpers-on-demand.md（D102–D104，v1.2.0）；实现源迁移见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
 
 ### 1.3 跨平台脚本与子进程调用
 

@@ -16,6 +16,13 @@ export interface IDataPipeline {
 export interface ShardContext {
   defaultFolder: string;
   defaultConflict?: string;
+  /**
+   * D112：导入运行时是否按模板 frontmatter `output.folder`/`note_name` 对每条记录求值（写 _folder/_fileName）。
+   * 仅「原始数据 + 模板」入口（importFile / importData）开启；向导路径（importRecords）由 outputOverride 提供实时值。
+   */
+  useTemplateOutput?: boolean;
+  /** D112：向导实时输出命名覆盖（未保存 UI 值），优先级高于模板 output；folder/noteName 为 Handlebars 表达式 */
+  outputOverride?: { folder?: string; noteName?: string };
 }
 
 export class DataPipeline implements IDataPipeline {
@@ -60,7 +67,13 @@ export class DataPipeline implements IDataPipeline {
       });
     }
     if (clean.includes('filterInvalid')) {
-      out = out.filter((r) => Object.values(r).some((v) => v !== undefined && v !== null && v !== ''));
+      // D115：模板配置校验规则时按「校验失败」过滤无效行（回归「过滤无效数据」本义）；无规则回落全空行启发式
+      const rules = (raw.validation ?? []) as ValidationRule[];
+      if (rules.length > 0) {
+        out = out.filter((r) => this.validator.validate(r, rules).valid);
+      } else {
+        out = out.filter((r) => Object.values(r).some((v) => v !== undefined && v !== null && v !== ''));
+      }
     }
     return out;
   }
@@ -77,6 +90,12 @@ export class DataPipeline implements IDataPipeline {
 
     if (data._skip) return [];
 
+    // D112：导入运行时按模板 output.folder/note_name 求值（仅 ctx.useTemplateOutput 开启；未显式指定时兜底）
+    this.applyTemplateOutput(data, template, ctx);
+
+    // D115：模板 frontmatter validation 逐行执行，回填保留字段 _valid/_errors/_warnings/_status（不自动 _skip，语义由模板/开关决定）
+    this.applyValidation(data, template);
+
     let specs: NoteSpec[] = [];
     if (Array.isArray(data._notes) && data._notes.length > 0) {
       specs = data._notes.map((n: Record<string, any>) => this.normalizeSpec(n, data));
@@ -91,6 +110,42 @@ export class DataPipeline implements IDataPipeline {
       }
     }
     return specs;
+  }
+
+  /**
+   * D112：输出位置及命名规则求值——记录未显式携带 _folder/_fileName 时，以命名来源
+   * （向导实时值 ctx.outputOverride 优先，其次模板 frontmatter `output`）的 Handlebars 表达式
+   * （engine.renderExpression，基于已含 _hash 等派生字段的 data）兜底写入。
+   * 优先级：记录/预处理显式 `_folder`/`_fileName` > 向导实时 outputOverride > 模板 output > 设置默认目录 / `_hash`。
+   */
+  private applyTemplateOutput(data: DataRecord, template: TemplateConfig, ctx?: ShardContext): void {
+    // 命名来源：向导实时输出（可能未保存）优先；其次「原始数据+模板」入口（importFile/importData）用模板 frontmatter output
+    const src = ctx?.outputOverride ?? (ctx?.useTemplateOutput ? template.output : undefined);
+    if (!src) return;
+    if (data._folder === undefined && typeof src.folder === 'string' && src.folder.trim() !== '') {
+      const folder = this.engine.renderExpression(src.folder, data);
+      if (folder !== '') data._folder = normalizeVaultPath(folder);
+    }
+    if (data._fileName === undefined && typeof src.noteName === 'string' && src.noteName.trim() !== '') {
+      const name = this.engine.renderExpression(src.noteName, data);
+      if (name !== '') data._fileName = name;
+    }
+  }
+
+  /**
+   * D115：模板 frontmatter `validation` 校验规则逐行执行，回填保留字段
+   * `_valid` / `_errors` / `_warnings` / `_status`（template-schema §3；validator.ts）。
+   * 仅在模板声明 validation 时执行；不自动写 `_skip`（是否跳过由模板/`filterInvalid` 开关决定），
+   * 也不覆盖派生前的 `_hash`（校验在 derive 之后、字段仅影响消费方语义）。
+   */
+  private applyValidation(data: DataRecord, template: TemplateConfig): void {
+    const rules = ((template as unknown as { _raw?: Record<string, any> })._raw?.validation ?? []) as ValidationRule[];
+    if (!Array.isArray(rules) || rules.length === 0) return;
+    const result = this.validator.validate(data, rules);
+    data._valid = result.valid;
+    data._errors = result.errors;
+    data._warnings = result.warnings;
+    data._status = result.data._status;
   }
 
   private normalizeSpec(n: Record<string, any>, data: DataRecord): NoteSpec {
@@ -110,7 +165,8 @@ export class DataPipeline implements IDataPipeline {
 
   private defaultSpec(data: DataRecord, template: TemplateConfig, ctx?: ShardContext): NoteSpec {
     const folder = normalizeVaultPath(String(data._folder ?? ctx?.defaultFolder ?? ''));
-    const filename = sanitizeFilename(String(data._hash ?? md5Hash(JSON.stringify(data)).slice(0, 10)));
+    // D112：_fileName（模板 output.note_name 求值 / 向导实时值）优先于 _hash 作为文件名
+    const filename = sanitizeFilename(String(data._fileName ?? data._hash ?? md5Hash(JSON.stringify(data)).slice(0, 10)));
     const specData: DataRecord = {};
     for (const [k, v] of Object.entries(data)) {
       if (k.startsWith('_') && k !== '_link' && k !== '_hash' && k !== '_status') continue;

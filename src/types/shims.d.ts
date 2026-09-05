@@ -20,28 +20,5 @@ declare module 'papaparse' {
   ): { data: T[]; errors: any[]; meta: any };
 }
 
-/* handlebars-helpers@0.10.0（D102–D104）：库为 CJS，类别文件导出函数映射（无自带类型，本地窄化声明） */
-declare module 'handlebars-helpers/lib/array' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
-declare module 'handlebars-helpers/lib/collection' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
-declare module 'handlebars-helpers/lib/comparison' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
-declare module 'handlebars-helpers/lib/math' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
-declare module 'handlebars-helpers/lib/number' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
-declare module 'handlebars-helpers/lib/string' {
-  const helpers: Record<string, (...args: any[]) => any>;
-  export = helpers;
-}
+/* @jaredwray/fumanchu@4.7.3（D109–D111）自带完整类型声明（node/browser 双构建 export condition），无需本地 shim；
+   仅需保证其依赖 handlebars@4.7.9 以传递依赖形式可被 tsc 解析（自带 types/index.d.ts）。 */

@@ -1,11 +1,12 @@
 import { App, TFile } from 'obsidian';
 import { load as parseYaml, dump as stringifyYaml } from 'js-yaml';
-import { MatchRule, RowFilterRule, TemplateConfig, TemplateInfo, TemplateNoteSpec } from '../../types';
+import { MatchRule, RowFilterRule, TemplateConfig, TemplateInfo, TemplateNoteSpec, TemplateOutput } from '../../types';
 import { ImporterProError, ERROR_CODES } from '../../utils/errors';
 import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 import {
   configToSegments,
   DERIVED_PRESETS,
+  foldLegacyColumnOps,
   handlebarsToConfig,
   presetFilterEmptyRows,
   rowFilterFromRemove,
@@ -245,6 +246,15 @@ export class TemplateScanner implements ITemplateScanner {
         content: blocks[1],
         notes
       };
+      // D112：frontmatter output（folder/note_name 等）提升为 config.output，供导入运行时求值（DataPipeline）
+      const outFm = (frontmatter.output ?? {}) as Record<string, any>;
+      if (outFm && typeof outFm === 'object') {
+        const o = config.output ?? (config.output = {});
+        if (typeof outFm.folder === 'string') o.folder = outFm.folder;
+        if (typeof outFm.note_name === 'string') o.noteName = outFm.note_name;
+        if (typeof outFm.conflict_strategy === 'string') o.conflictStrategy = outFm.conflict_strategy as TemplateOutput['conflictStrategy'];
+        if (typeof outFm.incremental_mode === 'string') o.incrementalMode = outFm.incremental_mode as TemplateOutput['incrementalMode'];
+      }
       (config as any)._raw = frontmatter; // 完整 frontmatter（API 读取 output/validation/match）
 
       const info: TemplateInfo = { id, name: config.name, path: file.path, matchRules };
@@ -425,26 +435,24 @@ function migrateLegacyColumnConfig(
   segmentsPresent: { format: boolean; process: boolean; mapping: boolean; derived: boolean }
 ): void {
   const columns = fm.columns as Record<string, any> | undefined;
-  if (columns && typeof columns === 'object' && !segmentsPresent.format) {
-    const fmt: any[] = Array.isArray(columns.format) ? columns.format : [];
-    for (const f of fmt) {
-      if (f && f.column && f.op && !transform.formats.some((x) => x.column === f.column && x.op === f.op && x.param === (f.param ?? ''))) {
-        transform.formats.push({ column: String(f.column), op: f.op, param: f.param ? String(f.param) : '' });
-      }
-    }
-  }
-  if (columns && typeof columns === 'object' && !segmentsPresent.process) {
-    const proc: any[] = Array.isArray(columns.process) ? columns.process : [];
-    for (const p of proc) {
-      if (p && p.column && p.op && !transform.processes.some((x) => x.column === p.column && x.op === p.op && x.param === (p.param ?? ''))) {
-        transform.processes.push({
+  // D113：旧 frontmatter columns.format/process 折叠为映射行设置链（按列合并，先于映射行执行）
+  if (columns && typeof columns === 'object') {
+    const fmt: any[] = !segmentsPresent.format && Array.isArray(columns.format) ? columns.format : [];
+    const proc: any[] = !segmentsPresent.process && Array.isArray(columns.process) ? columns.process : [];
+    const folded = foldLegacyColumnOps(
+      fmt
+        .filter((f) => f && f.column && f.op)
+        .map((f) => ({ column: String(f.column), op: f.op, param: f.param ? String(f.param) : '' })),
+      proc
+        .filter((p) => p && p.column && p.op)
+        .map((p) => ({
           column: String(p.column),
           op: p.op,
           param: p.param ? String(p.param) : '',
           param2: p.param2 ? String(p.param2) : ''
-        });
-      }
-    }
+        }))
+    );
+    if (folded.length > 0) transform.mappings = [...folded, ...transform.mappings];
   }
   const mapping: any[] = Array.isArray(fm.mapping) ? fm.mapping : [];
   if (mapping.length > 0 && !segmentsPresent.mapping) {

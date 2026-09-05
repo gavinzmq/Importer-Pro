@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.6.0"
+version: "1.7.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -130,6 +130,8 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 > **实现委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件（字符串/数学/数组等）实现委托 `handlebars-helpers`（0.10.0）——白名单类别（array/collection/comparison/math/number/string）内按名注册、**采用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库）；仅库没有者（身份证/哈希/校验/链接/编译白名单/运行时辅助、`substring`/`concat`/`formatNumber`/`ifEquals`）保留我方名。公开名随库修订已完成（模板/示例已迁移、api-layer §6 与 template-engine 权威清单已同步；编译段空值/清理/拆分/兜底用专用名 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`；v1.0 未发布可接受，见 decisions/2026-09-05-handlebars-helpers-on-demand.md v1.2.0）。
 
+> **实现源迁移（D109–D111，v1.7.0，2026-09-05 已实现）**：通用 Helper 实现源由 `handlebars-helpers@0.10.0` 迁移为 `@jaredwray/fumanchu@4.7.3`（合包维护版，含引擎运行时，`/browser` 浏览器安全构建）；注册名/公开名与 26 项受控采纳不变，仅注册层补末位 options 剥离。见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md。
+
 ### 哈希 (Hash)
 
 通过 MD5 或 SHA256 算法生成的唯一标识符，用于文件名生成和智能链接。
@@ -184,7 +186,7 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 > **设置链（D105–D107）**：Step 3 区块 5 收敛为单一列映射表，每行可挂「添加设置」（列格式化 / 列处理 / 派生选项，沿用行上下文）；行内设置 ≥2 步以 `pipe` 写入 `set`（无设置=复制、1 步=直调），列侧仅产出 `column-mapping` 段（见 decisions/2026-09-05-step3-column-mapping-settings-chain.md）。
 >
-> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」落地——区块 5/6 合并、行内「类型/规则」直接选派生预设，不再有独立派生区块/预设 SuggestModal，也不含 chips/pipe 设置链；D105「添加设置」行内设置链仍为后续增强未实现（见 decisions/2026-09-05-step3-mapping-derived-merge.md）。
+> **D108（2026-09-05 已实现）+ D113（2026-09-05 已实现）**：列侧以「映射与派生合并单表」落地——行内「类型/规则」直接选派生预设（rule 行），不再有独立派生区块/预设 SuggestModal；**D113** 把 D105 草案「添加设置」行内设置链实现进映射行 `settings`（范围=列格式化/列处理 chips + 类型快捷转换 + ≥2 步 `pipe`），移除独立列格式化/列处理卡，列侧仅产 `column-mapping` 段、旧段/frontmatter 折叠为设置链；派生不占 chips（走「类型/规则」下拉），与 D105 草案差异见 decisions/2026-09-05-unimplemented-gap-fill.md D113。
 
 ---
 

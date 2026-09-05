@@ -100,7 +100,7 @@ output:
 {{set "全名" (concat record.姓 record.名)}}
 ```
 
-**默认值 / 仅空值填充**（自 v1.1.0 起 `default` 委托 handlebars-helpers、语义 = 返回首个非 null；空串/空值兜底请用编译专用 `fillDefault`）：
+**默认值 / 仅空值填充**（自 v1.1.0 起 `default` 委托通用 Helper 库、语义 = 返回首个非 null——实现源 v1.2.0 为 handlebars-helpers、D109 起为 `@jaredwray/fumanchu`，注册名与语义一致；空串/空值兜底请用编译专用 `fillDefault`）：
 
 ```handlebars
 {{set "备注" (fillDefault record.备注 "暂无备注")}}   <!-- 空串/空值 → "暂无备注" -->

@@ -1,7 +1,7 @@
 ---
 title: "API Layer 组件"
 type: "component"
-version: "1.4.0"
+version: "1.6.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -350,6 +350,8 @@ listValidators(): string[];
 
 > **委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用 Helper 委托 `handlebars-helpers@0.10.0`（白名单类别按名注册、edge 语义随库）；公开名随库修订——`upper`→`uppercase`、`lower`→`lowercase`（非字符串输入返回 `''`）；`isEmpty` 为库 collection 语义（判空数组/对象，空串 `''` → false，null/undefined 抛错）；`default` 为库语义（返回首个非 null，缺省 `''`）；`contains` 支持字符串子串与数组包含；数学件随库（`add` 两参、`sum`/`avg` 变参、`round` 忽略精度参、非数字抛错项见各自签名）。编译段单元格安全语义专用 Helper（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`）为**编译专用、不入公开 37 清单**。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
 
+> **实现源迁移（D109–D111，v1.5.0，2026-09-05 已实现）**：通用 Helper 实现源由 `handlebars-helpers@0.10.0` 迁移为 **`@jaredwray/fumanchu@4.7.3`**（含引擎运行时）。本节公开 Helper 名/语义（含上述 `isEmpty`/`default`/`contains`/数学件等库语义）**不变**——fumanchu 为 handlebars-helpers 的合包维护版、注册名一致；注册层仅补「末位 options 剥离」（fumanchu 变参 helper 未 pop，`avg` 等对拍已回归）。详见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
+
 ### 6.1 访问 Helper
 
 ```typescript
@@ -512,6 +514,8 @@ registerHook(name: string, callback: (ctx: any) => any): void;
 listExtensions(): ExtensionList;
 ```
 
+> **D114（2026-09-05 已实现）**：`registerNamer`/`registerConflictResolver`/`registerCache`/`registerExporter` 实例存入 `src/extensions/runtime.ts` 的 `ExtensionRuntime`（此前仅登记名字）。namer/resolver 以**最后注册者**为激活实现并在 `NoteGenerator` 写入/预检生效（`IFileNamer.rename` 改写文件名；`IConflictResolver.resolve` 改写冲突策略，返回 null 回落内置）；cache/exporter 本期仅登记（导出流程 v1.0 未提供，D15）。接口类型 `IFileNamer`/`IConflictResolver`/`IExporter` 见 architecture §7 登记（实现于 src/types）。
+
 ---
 
 ## 9. 缓存管理 API
@@ -522,6 +526,8 @@ clearCache(): Promise<void>;
 getCacheStatus(): Promise<CacheStatus>;
 warmCache(templateId?: string): Promise<void>;
 ```
+
+> **D116（2026-09-05）**：`warmCache(templateId?)`——templateId 仅在该模板尚未索引时触发一次模板目录重扫（新增/外部写入立即可导入）；链接索引为全库维度（smartLink 需解析任意目标路径），不以 templateId 收窄。
 
 ---
 
@@ -629,4 +635,4 @@ interface GeneratedFileInfo {
 
 ---
 
-*版本: 1.4.0 | 最后更新: 2026-09-05*
+*版本: 1.6.0 | 最后更新: 2026-09-05*

@@ -2,4 +2,5 @@ packages:
   - '.'
 allowBuilds:
   esbuild: true
-  highlight.js: true
+  # D109–D111：highlight.js 曾为 handlebars-helpers@0.10.0 传递构建依赖（D102–D104 引入 allowBuild），
+  # 迁移 fumanchu 后已无该传递依赖，allowBuild 一并移除。

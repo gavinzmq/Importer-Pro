@@ -14,6 +14,7 @@ import { NoteGenerator } from './core/generator/note-generator';
 import { HookManager } from './core/hooks/hook-manager';
 import { EventBus } from './core/events/event-bus';
 import { ImportService } from './core/import-service';
+import { ExtensionRuntime } from './extensions/runtime';
 import { ApiFacade } from './api/index';
 import { ImporterProSettingTab } from './ui/settings-tab';
 import { ImportModal } from './ui/import-modal';
@@ -40,6 +41,8 @@ export default class ImporterProPlugin extends Plugin {
   private events!: EventBus;
   private service!: ImportService;
   private api!: ApiFacade;
+  /** D114：运行时扩展注册中心（ApiFacade 与 NoteGenerator 共享同一实例） */
+  private extRuntime!: ExtensionRuntime;
   private initialized = false;
 
   override async onload(): Promise<void> {
@@ -111,11 +114,13 @@ export default class ImporterProPlugin extends Plugin {
     if (this.settings.warmCacheOnStartup) {
       this.engine.setLinkIndex((this.cache as any).getLinkIndex?.());
     }
+    this.extRuntime = new ExtensionRuntime();
     this.generator = new NoteGenerator(
       this.app,
       this.cache,
       this.logger,
-      () => this.settings.importHistory[0]?.startedAt ?? 0
+      () => this.settings.importHistory[0]?.startedAt ?? 0,
+      this.extRuntime
     );
     this.service = new ImportService(
       this.app,
@@ -147,7 +152,8 @@ export default class ImporterProPlugin extends Plugin {
       this.hooks,
       this.events,
       this.logger,
-      this.validator
+      this.validator,
+      this.extRuntime
     );
     await this.scanner.scan(this.settings.paths.templates);
     await this.hooks.loadExternal();

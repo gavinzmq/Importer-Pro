@@ -218,7 +218,7 @@ describe('行删除与并集语义（D97：byIndex + duplicateHeader 并集，ap
 });
 
 describe('applyTransformPreview / applyTransform：行删除置于变换首步（D88/D96 顺序）', () => {
-  it('duplicateHeader 先行删除后，后续列格式化/映射生效，预览保留原始行号', () => {
+  it('duplicateHeader 先行删除后，后续映射行内设置链生效，预览保留原始行号', () => {
     const data = [
       { 姓名: '姓名', 年龄: '年龄' },
       { 姓名: ' 张三 ', 年龄: '18' },
@@ -227,10 +227,8 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
     const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'duplicateHeader', param: '' }],
       filters: [],
-      formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
-      processes: [],
-      mappings: []
+      mappings: [{ source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] }]
     };
     expect(applyTransform(data, cfg)).toEqual([
       { 姓名: '张三', 年龄: '18' },
@@ -545,21 +543,19 @@ describe('派生值 deriveValue / 统一行 applyColumnMappings（D108 派生并
   });
 });
 
-describe('applyTransform：整套变换链路（JS 语义层）', () => {
-  it('格式化 → 清洗 → 处理 → 映射 → 派生 依序生效', () => {
+describe('applyTransform：整套变换链路（JS 语义层，D113 set 语义）', () => {
+  it('映射行内设置链 + 清洗 + 派生依序生效（保留未映射列）', () => {
     const records = [{ 姓名: ' 张三 ', 性别: '男', extra: 'x' }];
     const out = applyTransform(records, {
-      formats: [{ column: '姓名', op: 'trim', param: '' }],
       filters: [],
       clean: [],
-      processes: [],
       mappings: [
-        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
         { source: '性别', target: '性别', type: 'text' },
         { source: '', target: '年份', type: 'text', rule: 'currentYear' }
       ]
     });
-    expect(out).toEqual([{ 姓名: '张三', 性别: '男', 年份: `${new Date().getFullYear()}` }]);
+    expect(out).toEqual([{ 姓名: '张三', 性别: '男', extra: 'x', 年份: `${new Date().getFullYear()}` }]);
   });
 });
 
@@ -576,17 +572,15 @@ describe('D98 编译/反编译：标记段与往返', () => {
         { column: '部门', op: 'contains', value: '研发' },
         presetFilterEmptyRows()
       ],
-      formats: [
-        { column: '姓名', op: 'trim', param: '' },
-        { column: '身份证号', op: 'toIDCard', param: '' }
-      ],
-      processes: [{ column: 'tags', op: 'split', param: ',', param2: '' }],
+      clean: ['dedupe'],
+      // D113：列格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
       mappings: [
+        { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
+        { source: 'tags', target: 'tags', type: 'text', settings: [{ group: 'process', op: 'split', param: ',', param2: '' }] },
         { source: '身份证号码', target: '身份证号', type: 'text' },
         { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' },
         { source: '', target: '年份', type: 'text', rule: 'currentYear' }
-      ],
-      clean: ['dedupe']
+      ]
     };
   }
 
@@ -603,12 +597,10 @@ describe('D98 编译/反编译：标记段与往返', () => {
     const cfg = sampleConfig();
     const hb = configToHandlebars(cfg);
     const back = handlebarsToConfig(hb);
-    // 段编码部分一致
+    // 段编码部分一致（D113：映射行含设置链，派生 rule 行统一还原）
     expect(back.removeRows).toEqual([{ kind: 'byIndex', param: '2,5' }]);
     expect(back.filters).toEqual(cfg.filters);
-    expect(back.formats).toEqual(cfg.formats);
-    expect(back.processes).toEqual(cfg.processes);
-    expect(back.mappings).toEqual(cfg.mappings); // 纯映射行 + rule 派生行统一还原
+    expect(back.mappings).toEqual(cfg.mappings);
     expect(back.clean).toEqual([]); // 引擎开关不入段（由 frontmatter 承载）
   });
 
@@ -626,7 +618,7 @@ describe('D98 编译/反编译：标记段与往返', () => {
     expect(again.match(/ipro:begin:row-remove/g) ?? []).toHaveLength(1);
   });
 
-  it('applyWizardTransform：真实 Handlebars 渲染（行号删除/筛选/格式化/派生），预览与导入统一路径', async () => {
+  it('applyWizardTransform：真实 Handlebars 渲染（行号删除/筛选/行内设置链/派生），预览与导入统一路径', async () => {
     const data = [
       { 姓名: '姓名', 部门: '部门', 身份证号: 'x', tags: 'a,b' }, // duplicateHeader
       { 姓名: ' 张三 ', 部门: '研发部', 身份证号: '110101199001011237', tags: 'a,b' },
@@ -635,10 +627,9 @@ describe('D98 编译/反编译：标记段与往返', () => {
     const cfg: DataTransformConfig = {
       removeRows: [{ kind: 'byIndex', param: '1' }],
       filters: [{ column: '部门', op: 'contains', value: '研发' }],
-      formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
-      processes: [],
       mappings: [
+        { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
         { source: '身份证号', target: '身份证号', type: 'text' },
         { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' }
       ]
@@ -676,10 +667,8 @@ describe('D98 编译/反编译：标记段与往返', () => {
     const cfg: DataTransformConfig = {
       removeRows: [],
       filters: [{ column: '部门', op: 'contains', value: '研发' }],
-      formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
-      processes: [],
-      mappings: []
+      mappings: [{ source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] }]
     };
     const real = (await applyWizardTransform(engine, data, cfg)).map((r) => {
       const { _index: _omit, ...rest } = r.row; // 真实渲染含 _index 保留字段，比较前去除
@@ -739,40 +728,65 @@ describe('编译段与 JS 筛选语义一致性（rowMatchesFilter vs applyWizar
   }
 });
 
-describe('编译段真实渲染：列格式化/列处理/派生映射与 JS 语义层对拍（D98）', () => {
+describe('编译段真实渲染：行内设置链（格式化/处理）/派生映射（D113）', () => {
   const engine = new TemplateEngine();
   const data = [{ 姓名: ' 张三 ', 金额: '1,234', 生日: '1990-03-07', tags: 'a,b,c', 性别: '男', code: 'ID-88-X', 备注: '' }];
 
-  it('格式化/处理/派生编译段渲染结果与 JS 层一致（去 _index 后）', async () => {
+  it('行内设置链（格式化/处理/类型快捷）/派生渲染结果与 JS 层一致（去 _index 后）', async () => {
     const cfg: DataTransformConfig = {
       removeRows: [],
       filters: [],
-      formats: [
-        { column: '姓名', op: 'trim', param: '' },
-        { column: '金额', op: 'toNumber', param: '' },
-        { column: '生日', op: 'toDate', param: '' }
-      ],
       clean: [],
-      processes: [
-        { column: 'tags', op: 'split', param: ',', param2: '' },
-        { column: '性别', op: 'map', param: '男=M;女=F', param2: '' },
-        { column: 'code', op: 'regexExtract', param: '(\\d{2,})', param2: '' },
-        { column: '备注', op: 'fillDefault', param: 'NA', param2: '' }
-      ],
       mappings: [
-        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
+        { source: '金额', target: '金额', type: 'number' }, // 类型快捷转换
+        { source: '生日', target: '生日', type: 'date' },
+        { source: 'tags', target: 'tags', type: 'text', settings: [{ group: 'process', op: 'split', param: ',', param2: '' }] },
+        { source: '性别', target: '性别', type: 'text', settings: [{ group: 'process', op: 'map', param: '男=M;女=F', param2: '' }] },
+        { source: 'code', target: 'code', type: 'text', settings: [{ group: 'process', op: 'regexExtract', param: '(\\d{2,})', param2: '' }] },
+        { source: '备注', target: '备注', type: 'text', settings: [{ group: 'process', op: 'fillDefault', param: 'NA', param2: '' }] },
         { source: '', target: '年份', type: 'text', rule: 'currentYear' }
       ]
     };
     const real = await applyWizardTransform(engine, data, cfg);
     expect(real[0].row.姓名).toBe('张三');
     expect(real[0].row.金额).toBe(1234);
+    expect(real[0].row.生日).toBe('1990-03-07');
     expect(real[0].row.tags).toEqual(['a', 'b', 'c']);
     expect(real[0].row.性别).toBe('M');
     expect(real[0].row.code).toBe('88');
     expect(real[0].row.备注).toBe('NA');
     expect(real[0].row.年份).toBe(`${new Date().getFullYear()}`);
-    // 注：真实渲染（set 复制）保留未映射列，与旧 JS 层「仅保留映射列」语义不同（D98 对齐模板自包含）
+  });
+
+  it('≥2 步设置链编译为 pipe 并真实渲染（类型快捷 + 处理/格式化组合）', async () => {
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [],
+      clean: [],
+      mappings: [
+        {
+          source: '手机号',
+          target: '手机号_隐藏',
+          type: 'text',
+          settings: [
+            { group: 'format', op: 'trim', param: '' },
+            { group: 'process', op: 'regexExtract', param: '(1\\d{2})', param2: '' },
+            { group: 'process', op: 'fillDefault', param: 'UNKNOWN', param2: '' }
+          ]
+        }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    // ≥2 步（trim + regexExtract + fillDefault）→ pipe 形态（strTrim 为编译专用阶段）
+    expect(hb).toContain('(pipe ');
+    expect(hb).toContain('(stage "strTrim")');
+    expect(hb).toContain('(stage "regexExtract" ');
+    expect(hb).toContain('(stage "fillDefault" "UNKNOWN")');
+    const real = await applyWizardTransform(engine, [{ 手机号: ' 13812345678 ' }], cfg);
+    expect(real[0].row.手机号_隐藏).toBe('138');
+    const empty = await applyWizardTransform(engine, [{ 手机号: '   ' }], cfg);
+    expect(empty[0].row.手机号_隐藏).toBe('UNKNOWN');
   });
 });
 

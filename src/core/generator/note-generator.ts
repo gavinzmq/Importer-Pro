@@ -12,6 +12,7 @@ import {
 import { ICacheProvider } from '../cache/provider';
 import { IMergeEngine, MergeEngine } from '../merge/merge-engine';
 import { ILogger } from '../log/logger';
+import type { ExtensionRuntime } from '../../extensions/runtime';
 import { md5Hash } from '../../utils/crypto';
 import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 import { ERROR_CODES } from '../../utils/errors';
@@ -30,7 +31,9 @@ export class NoteGenerator implements INoteGenerator {
     private app: App,
     private cache: ICacheProvider,
     private logger: ILogger,
-    private lastImportAt: () => number
+    private lastImportAt: () => number,
+    /** D114：运行时扩展注册中心（外部注册的 IFileNamer / IConflictResolver 在写入时生效） */
+    private runtime?: ExtensionRuntime
   ) {}
 
   async generate(record: DataRecord, config: OutputConfig): Promise<GeneratedFileInfo[]> {
@@ -81,7 +84,8 @@ export class NoteGenerator implements INoteGenerator {
 
     const files: GeneratedFileInfo[] = [];
     const conflicts: DryRunResult['conflicts'] = [];
-    for (const spec of specs) {
+    for (let spec of specs) {
+      spec = await this.applyNamer(spec); // D114：预检按激活命名策略统计
       const fullPath = toFullPath(spec);
       const exists = await this.cache.noteExists(fullPath);
       let status: GeneratedFileInfo['status'];
@@ -124,6 +128,7 @@ export class NoteGenerator implements INoteGenerator {
 
   /** 单条写入（含冲突策略与增量更新语义，见 note-generator.md §3） */
   private async writeOne(spec: NoteSpec, config: OutputConfig): Promise<GeneratedFileInfo> {
+    spec = await this.applyNamer(spec); // D114：写入前应用激活命名策略
     const fullPath = toFullPath(spec);
     const content = spec.content ?? '';
     const info: GeneratedFileInfo = {
@@ -148,6 +153,22 @@ export class NoteGenerator implements INoteGenerator {
       if (oldContent === content) {
         info.status = 'skipped_unchanged';
         return info;
+      }
+
+      // D114：激活的自定义冲突处理可改写本次写入采用的策略（置于手动编辑保护前，merge 才可放行）
+      const resolver = this.runtime?.activeConflictResolver;
+      if (resolver) {
+        try {
+          const chosen = await resolver.resolve({
+            path: fullPath,
+            existingContent: oldContent,
+            newContent: content,
+            strategy: config.conflictStrategy
+          });
+          if (chosen) config = { ...config, conflictStrategy: chosen };
+        } catch {
+          // 自定义冲突处理抛错回落内置策略
+        }
       }
 
       // 增量更新语义：用户手动编辑保护
@@ -218,6 +239,23 @@ export class NoteGenerator implements INoteGenerator {
       if (!this.app.vault.getAbstractFileByPath(cur)) {
         await this.app.vault.createFolder(cur);
       }
+    }
+  }
+
+  /**
+   * 应用激活命名策略（D114）：经 ExtensionRuntime.activeNamer 基于记录改写文件名。
+   * 返回新 spec（复制，不修改入参）；未注册 / 返回空串 / 抛错 → 回落默认（建议名）。
+   */
+  private async applyNamer(spec: NoteSpec): Promise<NoteSpec> {
+    const namer = this.runtime?.activeNamer;
+    if (!namer) return spec;
+    try {
+      const custom = await namer.rename(spec.data, { folder: spec.folder, suggestedName: spec.filename });
+      const trimmed = String(custom ?? '').trim();
+      if (trimmed === '') return spec;
+      return { ...spec, filename: sanitizeFilename(trimmed) };
+    } catch {
+      return spec;
     }
   }
 

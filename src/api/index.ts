@@ -2,6 +2,9 @@ import { App, TFile, TFolder } from 'obsidian';
 import {
   DataRecord,
   ExtensionList,
+  IConflictResolver,
+  IExporter,
+  IFileNamer,
   ImportResult,
   PluginSettings,
   TemplateConfig,
@@ -10,6 +13,7 @@ import {
   ValidationRule,
   ValidatorFn
 } from '../types';
+import { ExtensionRuntime } from '../extensions/runtime';
 import { ImportService } from '../core/import-service';
 import { TemplateScanner } from '../core/scanner/template-scanner';
 import { TemplateEngine } from '../core/template/engine';
@@ -56,7 +60,9 @@ export class ApiFacade {
     private hooks: HookManager,
     private events: EventBus,
     private logger: ILogger,
-    private validator: Validator
+    private validator: Validator,
+    /** D114：运行时扩展注册中心（registerNamer/ConflictResolver/Cache/Exporter 真实接线处） */
+    private runtime: ExtensionRuntime = new ExtensionRuntime()
   ) {
     this.version = pluginVersion;
   }
@@ -135,8 +141,10 @@ export class ApiFacade {
     this.engine.setLinkIndex((this.cache as any).getLinkIndex?.());
     const prepared: DataRecord[] = [];
     for (const record of records) {
+      // D112：importData 路径按模板 output.folder/note_name 求值命名
       const specs = await this.pipeline.shard(record, template, {
-        defaultFolder: this.settings().paths.outputFolder
+        defaultFolder: this.settings().paths.outputFolder,
+        useTemplateOutput: true
       });
       prepared.push({
         ...record,
@@ -283,17 +291,30 @@ export class ApiFacade {
     this.parsers.register(parser);
     this.extensions.parsers.push(name);
   }
-  registerCache(name: string, _cache: ICacheProvider): void {
-    this.extensions.caches.push(name);
+  /**
+   * D114：扩展注册真实接线（此前仅登记名字、丢弃实例）。
+   * - registerCache：登记缓存实现实例（本期不切换活动缓存，供 listExtensions/后续版本）。
+   * - registerNamer：登记并设为活动命名策略（NoteGenerator 写入时生效）。
+   * - registerConflictResolver：登记并设为活动冲突处理（NoteGenerator 冲突时生效）。
+   * - registerExporter：登记导出器实例（v1.0 无内置导出流程，仅登记供后续版本，见 D15）。
+   */
+  registerCache(name: string, cache: ICacheProvider): void {
+    this.runtime.caches.set(name, cache);
+    if (!this.extensions.caches.includes(name)) this.extensions.caches.push(name);
   }
-  registerNamer(name: string, _namer: unknown): void {
-    this.extensions.namers.push(name);
+  registerNamer(name: string, namer: IFileNamer): void {
+    this.runtime.namers.set(name, namer);
+    this.runtime.activeNamer = namer; // 最后注册者激活（多实现选择留待 R05+ 设置项）
+    if (!this.extensions.namers.includes(name)) this.extensions.namers.push(name);
   }
-  registerConflictResolver(name: string, _resolver: unknown): void {
-    this.extensions.conflictResolvers.push(name);
+  registerConflictResolver(name: string, resolver: IConflictResolver): void {
+    this.runtime.conflictResolvers.set(name, resolver);
+    this.runtime.activeConflictResolver = resolver;
+    if (!this.extensions.conflictResolvers.includes(name)) this.extensions.conflictResolvers.push(name);
   }
-  registerExporter(name: string, _exporter: unknown): void {
-    this.extensions.exporters.push(name);
+  registerExporter(name: string, exporter: IExporter): void {
+    this.runtime.exporters.set(name, exporter);
+    if (!this.extensions.exporters.includes(name)) this.extensions.exporters.push(name);
   }
   registerHelper(name: string, fn: (...args: any[]) => any): void {
     this.engine.registerHelper(name, fn);
@@ -318,10 +339,17 @@ export class ApiFacade {
   async getCacheStatus(): Promise<{ provider: string; ready: boolean }> {
     return { provider: this.cache.name, ready: this.cache.isReady() };
   }
+  /**
+   * 预热缓存（api-layer §9 warmCache）。templateId 语义（2026-09-05 D116）：仅当该模板尚未索引时
+   * 触发一次模板目录重扫（新增/外部写入的模板立即可导入）；随后刷新全库存在性/链接索引——
+   * 链接索引为全库维度（smartLink 需解析任意目标路径），不以 templateId 收窄。
+   */
   async warmCache(templateId?: string): Promise<void> {
+    if (templateId && !this.scanner.getConfig(templateId)) {
+      await this.scanner.refresh();
+    }
     await this.cache.refresh();
     this.engine.setLinkIndex((this.cache as any).getLinkIndex?.());
-    void templateId;
   }
 
   // ── 日志管理 API ──────────────────────────────────
