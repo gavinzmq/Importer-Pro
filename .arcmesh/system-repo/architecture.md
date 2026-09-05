@@ -1,8 +1,8 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.16.0"
-last_updated: "2026-09-04"
+version: "1.21.0"
+last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
 tags: ["architecture", "design", "system", "api"]
@@ -120,6 +120,10 @@ export interface ITemplateEngine {
 ```
 
 > 模板文件格式、Frontmatter 字段与保留字段（`_folder`/`_hash`/`_notes` 等）的权威规范见 [components/template-schema.md](components/template-schema.md)。
+>
+> **值型变换管道（D99–D101，2026-09-05 已实现）**：内置 `pipe`/`stage` 两个运行时辅助 Helper 表达值型 `set` 的多步变换（值从左到右流经各阶段）；阶段是「基于函数返回」的工厂产物（`(stage "阶段名" 固定参数…)` → 一元函数），经 `PipeStages` 注册表白名单查找。编译/反编译规范见 template-schema.md §9，Helper 权威见 components/template-engine.md，决策见 decisions/2026-09-05-pipe-pipeline-set-config.md。
+>
+> **内置 Helper 实现来源与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件（字符串/数学/数组/比较/数字等）实现**委托** `handlebars-helpers@0.10.0`（白名单类别 array/collection/comparison/math/number/string 内按名注册，跳过 Node/IO 类）；**库有即用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库），仅库没有者保留我方名与实现（身份证/哈希/校验/链接、D98 编译白名单、运行时辅助、`substring`/`concat`/`formatNumber`/`ifEquals`）。编译段单元格安全语义以**专用名**注册（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`，不入公开 37 清单）。公开名随库修订属模板级破坏性（v1.0 未发布可接受，模板/示例/api-layer §6 已随实现迁移）。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
 
 ### 2.3 NoteGenerator（笔记生成器）
 
@@ -281,8 +285,12 @@ export interface IValidator {
 | **UI 只调用** | 行筛选/删除/列变换等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
 | **区块归类** | Step 3 区块按影响粒度归类：模板级（模板元信息，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 行级（行配置：表头行/行清洗/删除行/筛选）→ 列级（列配置：格式化/处理/映射）→ 字段级（派生）→ 结果（预览）；布局权威见 ui/layout.md §5 |
 | **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；执行顺序在行删除之后、列格式化之前（`行删除 → 行筛选 → …`）；类型 `RowFilterRule` / `RowFilterOp` 见 §7。**D97 行能力收敛**：删除行仅保留结构级模式（`byIndex` 行号 / `duplicateHeader` 重复标题行），`byContent` 内容删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」）；「去除空行」为预置筛选规则（`column: '*'` + `notEmpty`）的快捷开关；`RowFilterRule.column` 支持 `'*'` 任意列 |
+| **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
+| **列侧收敛：列映射 + 行内设置链（D105–D107）** | Step 3 区块 7 → 6：区块 5 = 单一列映射表（目标字段/来源/类型/添加设置/操作），删除区块 6 派生（预览顺延区块 6）；列格式化/列处理/派生并入列映射行 `settings` 链，列侧仅产出 `column-mapping` 段（无设置=复制、1 步=直调、**≥2 步=pipe** 写 set）；类型=快捷转换；旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移 |
 
-> 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）。
+> 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
+>
+> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」形态落地——区块 5/6 合并、行内「类型/规则」直接选派生预设（删独立派生区块与 📋 预设 SuggestModal），编译仍按 rule 拆 column-mapping/derived 段、反编译合并，旧模板两段/旧 frontmatter 可读回迁移；上方 D105「添加设置」行内设置链（chips + ≥2 步 pipe）仍为后续增强未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md。
 
 ## 3. 数据流
 
@@ -571,6 +579,15 @@ interface RowFilterRule {
   value: string;   // 比较值（regex 为正则文本）
 }
 
+/** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */
+type PipeStageFn = (value: unknown) => unknown;
+
+/** pipe 阶段定义（登记于引擎 `PipeStages` 注册表）：`create` 以固定参数返回一元函数（基于函数返回） */
+interface PipeStageDef {
+  name: string;                                    // 阶段名（模板内 `(stage "name" …)` 引用，仅内置白名单）
+  create(...fixedArgs: unknown[]): PipeStageFn;    // 工厂：绑定固定参数后返回 (value) => out
+}
+
 interface ErrorEntry {
   recordIndex?: number;
   code: string;
@@ -721,4 +738,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.16.0 | 最后更新: 2026-09-04_
+_版本: 1.21.0 | 最后更新: 2026-09-05_

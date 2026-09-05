@@ -57,19 +57,30 @@ export interface ColumnProcessRule {
   param2: string; // merge 的连接符（其余留空）
 }
 
-/** 列映射行（目标类型：文本/身份证/数字/日期/忽略） */
+/** 派生预设 id（rule 有值即派生计算行；见 DERIVED_PRESETS） */
+export type DerivedRuleId = 'genderFromID' | 'birthFromID' | 'md5Short' | 'nowTimestamp' | 'currentYear';
+
+/** 列映射行类型（目标类型：文本/身份证/数字/日期/忽略） */
 export type MappingType = 'text' | 'idcard' | 'number' | 'date' | 'ignore';
+
+/** 行来源标记：仅「🧹 自动映射」生成行为 'auto'（供「🗑 删除所有自动映射」精确删除；UI 局部状态，不随模板持久化） */
+export type MappingOrigin = 'auto' | 'manual';
+
+/**
+ * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表）。
+ * - rule 缺省 = 纯列映射：把 source 复制/更名到 target（type=ignore 则不产出）；
+ * - rule 有值 = 派生计算行：按预设从 source 计算并写入 target 字段（等价旧 DerivedRule；
+ *   needsSource=false 的预设——nowTimestamp/currentYear——source 可留空）。
+ * - origin='auto' 表示由「自动映射」生成。
+ */
 export interface ColumnMapping {
   source: string;
   target: string;
   type: MappingType;
-}
-
-/** 派生字段行（rule 为预设 id，见 DERIVED_PRESETS） */
-export interface DerivedRule {
-  field: string;
-  rule: string;
-  source: string;
+  /** 派生预设 id（有值即按预设计算产出 target） */
+  rule?: DerivedRuleId;
+  /** 行来源标记：自动映射生成 = 'auto'；手动添加/回填缺省 = 'manual' */
+  origin?: MappingOrigin;
 }
 
 /** Step 3 数据变换总配置（编译层输入；D96 增 filters，D97 收敛 clean/removeRows） */
@@ -81,12 +92,12 @@ export interface DataTransformConfig {
   formats: ColumnFormatRule[];
   clean: RowCleanFlag[];
   processes: ColumnProcessRule[];
+  /** 列映射 / 派生统一行（rule 有值即派生计算行） */
   mappings: ColumnMapping[];
-  derived: DerivedRule[];
 }
 
 export function emptyTransform(): DataTransformConfig {
-  return { removeRows: [], filters: [], formats: [], clean: [], processes: [], mappings: [], derived: [] };
+  return { removeRows: [], filters: [], formats: [], clean: [], processes: [], mappings: [] };
 }
 
 /** 模板配置快照（readTemplateConfig / saveTemplateConfig 载体，D95/D98：模板 = Step 3 配置源） */
@@ -298,10 +309,10 @@ export const ROW_CLEAN_LABELS: ReadonlyArray<{ value: RowCleanFlag; label: strin
   { value: 'filterInvalid', label: '过滤无效数据' }
 ];
 
-/* ── 派生字段预设（ui/layout.md §5.7） ────────────────────── */
+/* ── 派生字段预设（区块 5「类型/规则」下拉的派生分组，D108 起不再单列区块/预设弹窗） ── */
 
 export interface DerivedPreset {
-  id: string;
+  id: DerivedRuleId;
   label: string;
   needsSource: boolean;
 }
@@ -315,7 +326,7 @@ export const DERIVED_PRESETS: readonly DerivedPreset[] = [
 ];
 
 /** 派生规则默认生成的目标字段名 */
-export function deriveFieldName(presetId: string, source: string): string {
+export function deriveFieldName(presetId: DerivedRuleId, source: string): string {
   if (!source) return presetId;
   switch (presetId) {
     case 'genderFromID':
@@ -532,54 +543,61 @@ export function applyColumnProcesses(records: DataRecord[], rules: ColumnProcess
   return records.map((r) => rules.reduce((acc, rule) => applyColumnProcess(acc, rule), { ...r }));
 }
 
-/* ── 列映射 ─────────────────────────────────────────────── */
+/* ── 列映射（含派生统一行，区块 5 合并） ─────────────── */
 
-/** 列映射：存在映射时仅保留映射到的目标字段（未映射列忽略），ignore 直接丢弃（JS 语义层） */
+/** 列映射 / 派生统一执行（JS 语义层，单测/兼容；正式执行走 D98 编译段）：
+ *  - 纯映射行（无 rule）：存在纯映射时仅保留映射到的目标字段（未映射列忽略），ignore 直接丢弃；
+ *  - 派生行（rule 有值）：在既有记录上按预设追加 target 字段（源缺失/无源预设 → 空串），语义同旧 applyDerivedFields。
+ */
 export function applyColumnMappings(records: DataRecord[], mappings: ColumnMapping[]): DataRecord[] {
   if (mappings.length === 0) return records;
-  return records.map((r) => {
-    const next: DataRecord = {};
-    for (const m of mappings) {
-      if (m.type === 'ignore') continue;
-      if (m.source in r) next[m.target || m.source] = r[m.source];
-    }
-    return next;
-  });
+  let out = records;
+  const mapRows = mappings.filter((m) => !m.rule);
+  if (mapRows.length > 0) {
+    out = records.map((r) => {
+      const next: DataRecord = {};
+      for (const m of mapRows) {
+        if (m.type === 'ignore') continue;
+        if (m.source in r) next[m.target || m.source] = r[m.source];
+      }
+      return next;
+    });
+  }
+  for (const m of mappings) {
+    if (!m.rule || m.type === 'ignore') continue;
+    const key = m.target || m.rule;
+    out = out.map((r) => {
+      const source = m.source && m.source in r ? String(r[m.source] ?? '') : '';
+      return { ...r, [key]: deriveValue(m.rule as DerivedRuleId, source) };
+    });
+  }
+  return out;
 }
 
-/** 自动映射：源列名 == 目标字段名（类型默认文本） */
+/** 自动映射：为每个未被纯映射行消费的源列生成 source→target 同名映射（type=text，origin='auto'）；
+ *  派生行（rule）不消费源列（可重复读取）。已有行原样保留。 */
 export function autoMapColumns(columns: string[], existing: ColumnMapping[]): ColumnMapping[] {
-  const mappedSources = new Set(existing.map((m) => m.source));
+  const mappedSources = new Set(existing.filter((m) => !m.rule).map((m) => m.source));
   const added: ColumnMapping[] = [];
   for (const col of columns) {
-    if (!mappedSources.has(col)) added.push({ source: col, target: col, type: 'text' });
+    if (!mappedSources.has(col)) added.push({ source: col, target: col, type: 'text', origin: 'auto' });
   }
   return [...existing, ...added];
 }
 
-/** 可参与映射的"未映射源列" */
+/** 供「🗑 删除所有自动映射」：仅移除 origin==='auto' 的行（手动添加/回填行保留） */
+export function removeAutoMappings(mappings: ColumnMapping[]): ColumnMapping[] {
+  return mappings.filter((m) => m.origin !== 'auto');
+}
+
+/** 可参与纯映射的"未消费源列"（派生行 rule 不消费，可重复读取；供映射行来源下拉与「可用源列」提示） */
 export function unmappedColumns(columns: string[], mappings: ColumnMapping[]): string[] {
-  const used = new Set(mappings.map((m) => m.source));
+  const used = new Set(mappings.filter((m) => !m.rule).map((m) => m.source));
   return columns.filter((c) => !used.has(c));
 }
 
-/* ── 派生字段 ───────────────────────────────────────────── */
-
-/** 应用派生规则（rule 为预设 id），逐行追加到记录（JS 语义层） */
-export function applyDerivedFields(records: DataRecord[], rules: DerivedRule[]): DataRecord[] {
-  if (rules.length === 0) return records;
-  return records.map((r) => {
-    const next: DataRecord = { ...r };
-    for (const rule of rules) {
-      const source = rule.source && rule.source in next ? String(next[rule.source] ?? '') : '';
-      next[rule.field || rule.rule] = deriveValue(rule.rule, source);
-    }
-    return next;
-  });
-}
-
 /** 由预设 id + 源值计算派生值（纯函数） */
-export function deriveValue(presetId: string, source: string): unknown {
+export function deriveValue(presetId: DerivedRuleId, source: string): unknown {
   switch (presetId) {
     case 'genderFromID': {
       const id = String(source).trim();
@@ -645,12 +663,11 @@ export function applyTransformPreview(records: DataRecord[], cfg: DataTransformC
   if (cfg.clean.includes('filterInvalid')) {
     rows = rows.filter(({ row }) => Object.values(row).some((v) => v !== undefined && v !== null && v !== ''));
   }
-  // 列处理 / 列映射 / 派生（1:1）
+  // 列处理 / 列映射（含派生统一行，1:1）
   const values = rows.map((r) => r.row);
   const processed = applyColumnProcesses(values, cfg.processes);
   const mapped = applyColumnMappings(processed, cfg.mappings);
-  const derived = applyDerivedFields(mapped, cfg.derived);
-  return rows.map((r, j) => ({ src: r.src, row: derived[j] }));
+  return rows.map((r, j) => ({ src: r.src, row: mapped[j] }));
 }
 
 /** JS 整链变换（去行号）。见 applyTransformPreview（D98 起 UI 不再调用，改 applyWizardTransform）。 */
@@ -735,12 +752,20 @@ function hbQuote(s: string): string {
   return `"${String(s ?? '').replace(/"/g, '\\"')}"`;
 }
 
+/** 生成 pipe 形态子表达式（D99–D101）：源表达式 + 阶段链（阶段名与固定参数已转义）；值从左到右流经各阶段 */
+function pipeExpr(source: string, stages: Array<{ name: string; args: string[] }>): string {
+  const parts = stages.map((s) => `(stage ${hbQuote(s.name)}${s.args.length > 0 ? ` ${s.args.join(' ')}` : ''})`);
+  return `(pipe ${source}${parts.length > 0 ? ` ${parts.join(' ')}` : ''})`;
+}
+
 /** 生成单条行筛选规则的条件表达式（compile；语义与 rowMatchesFilter 一致） */
 function filterCondition(rule: RowFilterRule): string {
   const v = hbQuote(rule.value);
   const colExpr = `(col ${hbQuote(rule.column)})`;
-  const emptyExpr = rule.column === ANY_COLUMN ? '(isEmptyRow this)' : `(isEmpty (trim ${colExpr}))`;
-  const notEmptyExpr = rule.column === ANY_COLUMN ? '(not (isEmptyRow this))' : `(isNotEmpty (trim ${colExpr}))`;
+  // 空值判定/清理用编译专用 Helper（D102–D104：strTrim/isEmptyValue 保留单元格安全语义；公开 trim/isEmpty 随库）
+  const emptyExpr = rule.column === ANY_COLUMN ? '(isEmptyRow this)' : `(isEmptyValue (strTrim ${colExpr}))`;
+  const notEmptyExpr =
+    rule.column === ANY_COLUMN ? '(not (isEmptyRow this))' : `(isNotEmpty (strTrim ${colExpr}))`;
   switch (rule.op) {
     case 'empty':
       return emptyExpr;
@@ -802,7 +827,7 @@ function formatProcessBody(kind: 'format' | 'process', rules: Array<ColumnFormat
 function formatExpr(r: ColumnFormatRule, val: string): string | null {
   switch (r.op) {
     case 'trim':
-      return `(trim ${val})`;
+      return `(strTrim ${val})`; // D102–D104：编译引用 strTrim（单元格安全清理），公开 trim 随库
     case 'toNumber':
       return `(toNumber ${val})`;
     case 'toString':
@@ -830,7 +855,7 @@ function formatExpr(r: ColumnFormatRule, val: string): string | null {
 function processExpr(r: ColumnProcessRule, val: string): string | null {
   switch (r.op) {
     case 'split':
-      return `(split ${val} ${hbQuote(r.param || ',')})`;
+      return `(strSplit ${val} ${hbQuote(r.param || ',')})`; // D102–D104：编译引用 strSplit（单元格安全），公开 split 随库
     case 'merge':
       return `(merge ${val} (lookup this ${hbQuote(r.param)}) ${hbQuote(r.param2 || ' ')})`;
     case 'map':
@@ -838,16 +863,16 @@ function processExpr(r: ColumnProcessRule, val: string): string | null {
     case 'regexExtract':
       return `(regexExtract ${val} ${hbQuote(r.param)})`;
     case 'fillDefault':
-      return `(default ${val} ${hbQuote(r.param)})`;
+      return `(fillDefault ${val} ${hbQuote(r.param)})`; // D102–D104：空串兜底迁至编译专用 Helper fillDefault（公开 default 随库）
     default:
       return null;
   }
 }
 
-/** 列映射段体：类型 ignore 跳过；源列存在才 set 目标字段（D98：映射为字段复制/更名，未映射列不再被丢弃） */
+/** 列映射段体（仅无 rule 的纯映射行）：类型 ignore 跳过；源列存在才 set 目标字段（D98：字段复制/更名，未映射列不被丢弃） */
 function mappingBody(mappings: ColumnMapping[]): string {
   const lines = mappings
-    .filter((m) => m.type !== 'ignore')
+    .filter((m) => !m.rule && m.type !== 'ignore')
     .map((m) => {
       const target = hbQuote(m.target || m.source);
       const source = hbQuote(m.source);
@@ -856,27 +881,40 @@ function mappingBody(mappings: ColumnMapping[]): string {
   return lines.join('\n');
 }
 
-/** 派生字段段体：rule id → 内置 Helper */
-function derivedBody(rules: DerivedRule[]): string {
-  const lines = rules.map((r) => {
-    const key = hbQuote(r.field || r.rule);
-    const srcVal = `(lookup this ${hbQuote(r.source)})`;
-    switch (r.rule) {
+/** 派生字段段体（仅 rule 行）：预设 id → 内置 Helper；多步变换编译为 pipe 管道形态（D99–D101）；needsSource=false 的预设 source 留空 */
+function derivedBody(rows: ColumnMapping[]): string {
+  const lines: string[] = [];
+  for (const m of rows) {
+    if (!m.rule || m.type === 'ignore') continue;
+    const key = hbQuote(m.target || m.rule);
+    const srcVal = `(lookup this ${hbQuote(m.source)})`;
+    switch (m.rule) {
       case 'genderFromID':
-        return `{{set ${key} (genderFromID ${srcVal})}}`;
+        lines.push(`{{set ${key} (genderFromID ${srcVal})}}`);
+        break;
       case 'birthFromID':
-        return `{{set ${key} (birthFromID ${srcVal})}}`;
+        lines.push(`{{set ${key} (birthFromID ${srcVal})}}`);
+        break;
       case 'md5Short':
-        // 空源不产出（避免对空串计算哈希）
-        return `{{#if (isNotEmpty ${srcVal})}}{{set ${key} (substring (md5 ${srcVal}) 0 10)}}{{/if}}`;
+        // 空源不产出（避免对空串计算哈希）；md5→substring(0,10) 为 ≥2 步，编译为 pipe（D99）
+        lines.push(
+          `{{#if (isNotEmpty ${srcVal})}}{{set ${key} ${pipeExpr(srcVal, [
+            { name: 'md5', args: [] },
+            { name: 'substring', args: [hbQuote('0'), hbQuote('10')] }
+          ])}}}{{/if}}`
+        );
+        break;
       case 'nowTimestamp':
-        return `{{set ${key} (now)}}`;
+        lines.push(`{{set ${key} (now)}}`);
+        break;
       case 'currentYear':
-        return `{{set ${key} (substring (now) 0 4)}}`;
+        // now→substring(0,4) 为 ≥2 步，编译为 pipe（源为无源预设的 (now)）
+        lines.push(`{{set ${key} ${pipeExpr('(now)', [{ name: 'substring', args: [hbQuote('0'), hbQuote('4')] }])}}}`);
+        break;
       default:
-        return ''; // 未知预设：跳过
+        break; // 未知预设：跳过
     }
-  });
+  }
   return lines.filter(Boolean).join('\n');
 }
 
@@ -893,7 +931,7 @@ export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproS
   if (process !== '') seg['column-process'] = process;
   const mapping = mappingBody(cfg.mappings);
   if (mapping !== '') seg['column-mapping'] = mapping;
-  const derived = derivedBody(cfg.derived);
+  const derived = derivedBody(cfg.mappings);
   if (derived !== '') seg.derived = derived;
   return seg;
 }
@@ -1000,7 +1038,7 @@ function filterCondToRule(cond: string): RowFilterRule | null {
       return { column: colOf(call.args[0] ?? '') ?? ANY_COLUMN, op: 'startsWith', value: stripQuotes(call.args[1] ?? '') };
     case 'strEndsWith':
       return { column: colOf(call.args[0] ?? '') ?? ANY_COLUMN, op: 'endsWith', value: stripQuotes(call.args[1] ?? '') };
-    case 'isEmpty':
+    case 'isEmptyValue': // D102–D104：编译空值判定用编译专用 Helper isEmptyValue
       return { column: colOf(call.args[0] ?? '') ?? ANY_COLUMN, op: 'empty', value: '' };
     case 'isNotEmpty':
       return { column: colOf(call.args[0] ?? '') ?? ANY_COLUMN, op: 'notEmpty', value: '' };
@@ -1054,7 +1092,8 @@ function decodeFormatProcessBody(body: string, kind: 'format' | 'process') {
     const call = parseParenCall(set.expr);
     if (!call) continue;
     if (kind === 'format') {
-      const op = call.name as ColumnFormatOp;
+      // helper 名 → 列格式化 op（D102–D104：编译引用 strTrim，反编译还原为 trim）
+      const op = (call.name === 'strTrim' ? 'trim' : call.name) as ColumnFormatOp;
       switch (op) {
         case 'trim':
         case 'toNumber':
@@ -1076,7 +1115,10 @@ function decodeFormatProcessBody(body: string, kind: 'format' | 'process') {
           break;
       }
     } else {
-      const op = call.name as ColumnProcessOp;
+      // helper 名 → 列处理 op（D102–D104：strSplit→split、mapValue→map；fillDefault 现以同名 Helper 编译）
+      const op = (
+        call.name === 'strSplit' ? 'split' : call.name === 'mapValue' ? 'map' : call.name
+      ) as ColumnProcessOp;
       switch (op) {
         case 'split':
           out.push({ column: set.key, op, param: stripQuotes(call.args[1] ?? '') || ',', param2: '' });
@@ -1111,8 +1153,8 @@ function decodeMappingBody(body: string): ColumnMapping[] {
   return out;
 }
 
-function decodeDerivedBody(body: string): DerivedRule[] {
-  const out: DerivedRule[] = [];
+function decodeDerivedBody(body: string): ColumnMapping[] {
+  const out: ColumnMapping[] = [];
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t) continue;
@@ -1120,17 +1162,30 @@ function decodeDerivedBody(body: string): DerivedRule[] {
     if (!set) continue;
     const call = parseParenCall(set.expr);
     if (!call) continue;
-    let rule = '';
+    let rule: DerivedRuleId | '' = '';
     if (call.name === 'genderFromID') rule = 'genderFromID';
     else if (call.name === 'birthFromID') rule = 'birthFromID';
     else if (call.name === 'now') rule = 'nowTimestamp';
     else if (call.name === 'substring') {
+      // 旧嵌套括号形态（D99 起仍兼容回填）：(substring (md5 …) 0 10) / (substring (now) 0 4)
       const arg0 = parseParenCall(call.args[0] ?? '');
       if (arg0?.name === 'md5') rule = 'md5Short';
       else if (arg0?.name === 'now') rule = 'currentYear';
+    } else if (call.name === 'pipe') {
+      // pipe 管道形态（D99–D101）：首参为源表达式，后续为 (stage "名" 参数…) 阶段链；
+      // 阶段名位于各 stage 子表达式的首参（如 (stage "md5") → "md5"）
+      const srcExpr = call.args[0] ?? '';
+      const stages = call.args
+        .slice(1)
+        .map((a) => parseParenCall(a))
+        .filter((s): s is { name: string; args: string[] } => s !== null);
+      const stageNames = stages.map((s) => stripQuotes(s.args[0] ?? ''));
+      if (stageNames.includes('md5')) rule = 'md5Short'; // md5Short 编译 = pipe 源 (stage md5) (stage substring 0 10)
+      else if (stageNames.includes('substring') && parseParenCall(srcExpr)?.name === 'now') rule = 'currentYear';
     }
     if (!rule) continue;
-    out.push({ field: set.key, rule, source: colOf(set.expr) ?? '' });
+    // 派生段行反编译为带 rule 的统一映射行（field → target；source 为空即无源预设）
+    out.push({ source: colOf(set.expr) ?? '', target: set.key, type: 'text', rule });
   }
   return out;
 }
@@ -1145,7 +1200,8 @@ export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   if (seg['column-process'])
     cfg.processes = decodeFormatProcessBody(seg['column-process'], 'process') as ColumnProcessRule[];
   if (seg['column-mapping']) cfg.mappings = decodeMappingBody(seg['column-mapping']);
-  if (seg.derived) cfg.derived = decodeDerivedBody(seg.derived);
+  // 派生段反编译为带 rule 的统一映射行，接在纯映射行之后
+  if (seg.derived) cfg.mappings = [...cfg.mappings, ...decodeDerivedBody(seg.derived)];
   return cfg;
 }
 

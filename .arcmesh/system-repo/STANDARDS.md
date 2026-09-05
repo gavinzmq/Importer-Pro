@@ -1,8 +1,8 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.8.6"
-last_updated: "2026-09-04"
+version: "1.10.0"
+last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
 tags: ["standards", "code-style", "testing", "documentation"]
@@ -117,8 +117,26 @@ src/
 | **能抽离的尽量抽离** | 可复用/可独立测试的算法（规则 → Handlebars 编译、标记段解析、规则标签、命名示例渲染）一律抽离为独立导出纯函数，禁止以私有方法形式埋在组件类里 |
 | **配置唯一事实源** | Step 3 配置保存 = 编译为 preprocess 标记段写回模板（`readTemplateConfig` / `saveTemplateConfig`）；UI 状态只是模板 Handlebars 的镜像，不作为独立持久化源 |
 | **能力统一原则（D97）** | 互补语义共用同一匹配引擎——排除式删除与包含式筛选不得维护两套等价实现（`byContent` 删除并入行筛选、`removeEmpty` 改为预置筛选规则 `{ column:'*', op:'notEmpty' }`）；快捷开关内部生成为预置规则，与筛选列表联动 |
+| **多步值型 set 统一 pipe（D99–D101）** | 一个 `set` 的目标值含 **≥2 个变换阶段**时，编译产物必须用内置 `pipe`/`stage` 表达（`(pipe 源 (stage "阶段名" 固定参数…) …)`，左→右求值，禁止深嵌套括号硬拼）；单阶段保持 `(helper 源)` 直调；阶段仅限内置白名单（外部 Helper 不得入 `PipeStages` 注册表，防注入）；`pipe` 为纯值链、不含空值守卫，守卫放外层 `#if`；反编译器须同时接受 pipe 与旧嵌套两种形态 |
+| **列侧唯一段 column-mapping（D105–D107）** | 列侧 UI 只产出 `column-mapping` 段：列格式化/列处理/派生全部并入列映射行的 `settings` 链（不再产出 column-format / column-process / derived 段）；每行一条 set——无设置=复制、1 步=直调、**≥2 步=pipe**（D99）；类型=快捷转换（隐含转换去重）；旧段/旧 frontmatter 读取折叠迁移 |
 
-> 权威设计见 `architecture.md` §2.10 与 `ui/layout.md` §5.4–§5.6；决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D96）。
+> 权威设计见 `architecture.md` §2.10 与 `ui/layout.md` §5.4–§5.6；决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D96）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
+>
+> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设；编译仍按 rule 拆段、反编译合并，旧模板/旧 frontmatter 可读回迁移），上方 D105 段「添加设置」行内设置链（chips + pipe）仍为后续增强未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md。
+
+### 1.2.4 Helper 实现委托原则（D102–D104，v1.2.0，2026-09-05 已实现）
+
+| 规范项 | 标准 |
+| :--- | :--- |
+| **复用优先（不重复自研）** | 通用 Helper 若 `handlebars-helpers`（0.10.0）白名单类内已有，一律采用其实现，禁止另写一份（2026-09-05 已实现：采纳 array/collection/comparison/math/number/string 六类重叠件，见 handlebars-helpers.ts） |
+| **库有即用库注册名（v1.2.0）** | 凡库有实现者，**以其注册名注册**（`upper`→`uppercase`、`lower`→`lowercase`），不保留我方名；edge 语义随库。改名属模板级破坏性（v1.0 未发布可接受，文档/示例已随实现迁移） |
+| **特化件自研** | 仅库**没有**者保留我方名与实现：身份证/哈希/校验（库无件）/链接、D98 编译白名单、运行时辅助（`set`/`pipe`/`stage` 等）、`substring`/`concat`/`formatNumber`/`ifEquals` 等 |
+| **例外专用名** | 库有同名但语义不等价且我方语义为**编译段**必需 → 改用我方专用名登记；**不得**以我方实现覆盖库同名。本实现：编译段空值/清理/拆分/兜底用 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`（公开 `trim`/`split`/`default`/`isEmpty` 随库）；`has`（编译守卫）保留我方（库 comparison.has 为 block/inline 混合语义） |
+| **按需注册** | 仅白名单纯浏览器类别内**按名挑选**注册（实际采纳：array/collection/comparison/math/number/string）；禁止 Node/IO 类（fs/path/code/markdown/match/html/i18n/inflection/logging） |
+| **对拍定稿** | 委托清单以 `tests/unit/helpers.test.ts` 全绿为准（语义回归网）；改名/专用名条目登记迁移清单 |
+| **第三方门禁** | 新 helper 只取自白名单类；esbuild browser + CI 构建验证无 Node 内置泄漏（沿用 D58/js-md5 排查法） |
+
+> 决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md（D102–D104，v1.2.0 已实现）。
 
 ### 1.3 跨平台脚本与子进程调用
 
@@ -329,4 +347,4 @@ const ERROR_CODES = {
 
 ---
 
-_版本: 1.8.6
+_版本: 1.10.0

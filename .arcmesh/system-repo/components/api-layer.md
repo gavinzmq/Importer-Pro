@@ -1,8 +1,8 @@
 ---
 title: "API Layer 组件"
 type: "component"
-version: "1.2.0"
-last_updated: "2026-09-02"
+version: "1.4.0"
+last_updated: "2026-09-05"
 status: "active"
 ---
 
@@ -348,6 +348,8 @@ listValidators(): string[];
 
 ## 6. Helper API
 
+> **委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用 Helper 委托 `handlebars-helpers@0.10.0`（白名单类别按名注册、edge 语义随库）；公开名随库修订——`upper`→`uppercase`、`lower`→`lowercase`（非字符串输入返回 `''`）；`isEmpty` 为库 collection 语义（判空数组/对象，空串 `''` → false，null/undefined 抛错）；`default` 为库语义（返回首个非 null，缺省 `''`）；`contains` 支持字符串子串与数组包含；数学件随库（`add` 两参、`sum`/`avg` 变参、`round` 忽略精度参、非数字抛错项见各自签名）。编译段单元格安全语义专用 Helper（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`）为**编译专用、不入公开 37 清单**。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
+
 ### 6.1 访问 Helper
 
 ```typescript
@@ -373,39 +375,39 @@ hashShort(value: string, length: number): string;
 ### 6.4 字符串 Helper
 
 ```typescript
-split(str: string, delimiter: string): string[];
-join(arr: string[], delimiter: string): string;
-trim(str: string): string;
-upper(str: string): string;
-lower(str: string): string;
-replace(str: string, search: string, replacement: string): string;
-substring(str: string, start: number, length?: number): string;
-concat(...args: string[]): string;
-isEmpty(value: any): boolean;
+split(str: string, delimiter: string): string[];      // 库：输入非字符串 → ''
+join(arr: any[], delimiter?: string): string;         // 库（array.join）：默认分隔符 ', '；字符串原样返回
+trim(str: string): string;                            // 库：输入非字符串 → ''
+uppercase(str: string): string;                       // 库（原 upper）：输入非字符串 → ''
+lowercase(str: string): string;                       // 库（原 lower）：输入非字符串 → ''
+replace(str: string, search: string, replacement: string): string;  // 库：按普通文本全局替换
+substring(str: string, start: number, length?: number): string;     // 我方
+concat(...args: string[]): string;                    // 我方
+isEmpty(value: any): boolean;                         // 库（collection）：空数组/空对象 → true；空串 '' → false（空值判定用编译专用 isEmptyValue）
 ```
 
 ### 6.5 数学 Helper
 
 ```typescript
-add(...nums: number[]): number;
-subtract(a: number, b: number): number;
-multiply(a: number, b: number): number;
-divide(a: number, b: number): number;
-sum(...nums: number[]): number;
-avg(...nums: number[]): number;
-round(value: number, digits?: number): number;
-toFixed(value: number, digits: number): string;
-formatNumber(value: number): string;
+add(a: number, b: number): number;        // 库：两参相加；数字字符串按数字相加；混合类型 → ''
+subtract(a: number, b: number): number;   // 库：非数字抛错
+multiply(a: number, b: number): number;   // 库：非数字抛错
+divide(a: number, b: number): number;     // 库：非数字抛错
+sum(...nums: number[]): number;           // 库：变参/数组，跳过非数字
+avg(...nums: number[]): number;           // 库：变参平均
+round(value: number): number;             // 库：四舍五入到整数（忽略精度参数）
+toFixed(value: number, digits?: number): string;  // 库
+formatNumber(value: number): string;      // 我方（zh-CN locale，库 addCommas 不覆盖）
 ```
 
 ### 6.6 逻辑 Helper
 
 ```typescript
-ifEquals(a: any, b: any): boolean;
-contains(arr: any[], value: any): boolean;
-default(value: any, fallback: any): any;
-or(...args: any[]): boolean;
-and(...args: any[]): boolean;
+ifEquals(a: any, b: any): boolean;             // 我方
+contains(collection: any, value: any): boolean; // 库：字符串子串或数组包含
+default(value: any, ...rest: any[]): any;       // 库：返回首个非 null，全部 null 缺省 ''
+or(...args: any[]): boolean;                    // 库（变参）
+and(...args: any[]): boolean;                   // 库（变参）
 ```
 
 ### 6.7 校验 Helper
@@ -627,4 +629,4 @@ interface GeneratedFileInfo {
 
 ---
 
-*版本: 1.2.0 | 最后更新: 2026-09-02*
+*版本: 1.4.0 | 最后更新: 2026-09-05*

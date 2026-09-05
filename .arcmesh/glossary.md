@@ -1,8 +1,8 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.4.5"
-last_updated: "2026-09-04"
+version: "1.6.0"
+last_updated: "2026-09-05"
 status: "active"
 ---
 
@@ -114,6 +114,12 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 传递给钩子函数的上下文对象，包含当前处理的数据和状态。
 
+### 管道 (Pipe Pipeline)
+
+> 实现状态：2026-09-05 已实现（D99–D101：builtin `pipe`/`stage` + `PipeStages` 注册表；编译层多步派生预设 `md5Short`/`currentYear` 编译产物改产 pipe 形态、反编译兼容旧嵌套）。
+
+模板预处理中，把「源值」从左到右依次经多个变换**阶段**、最终作为 `{{set}}` 目标值的**值型变换管道**（D99–D101）：`{{set "字段" (pipe 源 (stage "阶段名" 固定参数…) …)}}`。阶段是**基于函数返回**的（`(stage …)` 调用返回一元函数 `(value)=>out`，`pipe` 串行调用透传）；用于 `set` 目标值含 **≥2 个变换阶段**的情形，单阶段保持直调；`pipe`/`stage` 为内置 Helper（不入公开 37 清单），阶段名仅限内置白名单，旧嵌套括号写法永久兼容。权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9、Helper 见 [template-engine.md](system-repo/components/template-engine.md)。
+
 ---
 
 ## H
@@ -121,6 +127,8 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 ### Handlebars Helper
 
 在 Handlebars 模板中可调用的 JavaScript 函数，用于执行特定转换或逻辑。
+
+> **实现委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件（字符串/数学/数组等）实现委托 `handlebars-helpers`（0.10.0）——白名单类别（array/collection/comparison/math/number/string）内按名注册、**采用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库）；仅库没有者（身份证/哈希/校验/链接/编译白名单/运行时辅助、`substring`/`concat`/`formatNumber`/`ifEquals`）保留我方名。公开名随库修订已完成（模板/示例已迁移、api-layer §6 与 template-engine 权威清单已同步；编译段空值/清理/拆分/兜底用专用名 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`；v1.0 未发布可接受，见 decisions/2026-09-05-handlebars-helpers-on-demand.md v1.2.0）。
 
 ### 哈希 (Hash)
 
@@ -173,6 +181,10 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 ### 列映射 (Column Mapping)
 
 将源文件列名映射到模板字段名的规则（`mapping: [{ source, target }]`），缺省为同名映射。
+
+> **设置链（D105–D107）**：Step 3 区块 5 收敛为单一列映射表，每行可挂「添加设置」（列格式化 / 列处理 / 派生选项，沿用行上下文）；行内设置 ≥2 步以 `pipe` 写入 `set`（无设置=复制、1 步=直调），列侧仅产出 `column-mapping` 段（见 decisions/2026-09-05-step3-column-mapping-settings-chain.md）。
+>
+> **D108（2026-09-05 已实现）收敛注记**：列侧当前以「映射与派生合并单表」落地——区块 5/6 合并、行内「类型/规则」直接选派生预设，不再有独立派生区块/预设 SuggestModal，也不含 chips/pipe 设置链；D105「添加设置」行内设置链仍为后续增强未实现（见 decisions/2026-09-05-step3-mapping-derived-merge.md）。
 
 ---
 
@@ -348,4 +360,4 @@ Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全�
 
 ---
 
-*版本: 1.4.5 | 最后更新: 2026-09-04*
+*版本: 1.6.0 | 最后更新: 2026-09-05*

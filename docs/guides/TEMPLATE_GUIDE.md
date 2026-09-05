@@ -100,10 +100,11 @@ output:
 {{set "全名" (concat record.姓 record.名)}}
 ```
 
-**默认值**：
+**默认值 / 仅空值填充**（自 v1.1.0 起 `default` 委托 handlebars-helpers、语义 = 返回首个非 null；空串/空值兜底请用编译专用 `fillDefault`）：
 
 ```handlebars
-{{set "备注" (default record.备注 "暂无备注")}}
+{{set "备注" (fillDefault record.备注 "暂无备注")}}   <!-- 空串/空值 → "暂无备注" -->
+{{set "风险" (default record.风险 "无")}}            <!-- default：仅 undefined/null 兜底 -->
 ```
 
 **数据分流**：
@@ -210,8 +211,10 @@ output:
 |---|---|---|
 |`split`|`{{split "a;b;c" ";"}}`|["a", "b", "c"]|
 |`join`|`{{join 标签数组 "、"}}`|"技术、管理、产品"|
+|`uppercase`|`{{uppercase "abc"}}`|"ABC"（原 `upper`，委托库）|
+|`lowercase`|`{{lowercase "ABC"}}`|"abc"（原 `lower`，委托库）|
 |`concat`|`{{concat "张" "三"}}`|"张三"|
-|`isEmpty`|`{{isEmpty ""}}`|true|
+|`isEmpty`|`{{isEmpty 空数组}}`|true（库语义：判空集合/对象；空串 `""` → false，空值判定请用 `isEmptyValue`）|
 
 ### 4.4 数学 Helper
 

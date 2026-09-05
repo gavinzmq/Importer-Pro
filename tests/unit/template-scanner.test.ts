@@ -144,8 +144,7 @@ row:
         formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
         clean: ['dedupe' as const],
         processes: [],
-        mappings: [],
-        derived: []
+        mappings: []
       }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
@@ -179,8 +178,10 @@ row:
         formats: [{ column: '姓名', op: 'trim' as const, param: '' }],
         clean: [],
         processes: [{ column: 'tags', op: 'split' as const, param: ',', param2: '' }],
-        mappings: [{ source: '身份证号码', target: '身份证号', type: 'text' as const }],
-        derived: [{ field: '性别', rule: 'genderFromID' as const, source: '身份证号' }]
+        mappings: [
+          { source: '身份证号码', target: '身份证号', type: 'text' as const },
+          { source: '身份证号', target: '性别', type: 'text' as const, rule: 'genderFromID' as const }
+        ]
       }
     };
     const raw = composeStep3Snapshot(LEGACY, snap);
@@ -192,7 +193,6 @@ row:
     expect(back.transform.formats).toEqual(snap.transform.formats);
     expect(back.transform.processes).toEqual(snap.transform.processes);
     expect(back.transform.mappings).toEqual(snap.transform.mappings);
-    expect(back.transform.derived).toEqual(snap.transform.derived);
     expect(back.outputFolder).toBe('出');
   });
 

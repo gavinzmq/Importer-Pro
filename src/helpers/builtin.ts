@@ -1,13 +1,63 @@
 import type Handlebars from 'handlebars';
 import type { LinkIndex } from '../core/cache/provider';
+import type { PipeStageDef, PipeStageFn } from '../types';
 import { md5Hash, sha256Hash, hashShort as shortHash } from '../utils/crypto';
+import { adoptedLibraryHelpers } from './handlebars-helpers';
 
 /**
  * 内置 Helper：7 类 37 个（权威清单见 components/api-layer.md §6）
  * + 模板运行时辅助（set/array/object/push/first/second/now/log/比较运算，供预处理模板使用）
+ * + pipe 值型变换管道（D99–D101：pipe/stage + PipeStages 阶段注册表）
  */
 
 type HB = typeof Handlebars;
+
+/** pipe 阶段名白名单（D99–D101）：编译产物可引用的变换集合，权威见 components/template-engine.md；外部 Helper 不自动入注册表 */
+export const PIPE_STAGE_WHITELIST = [
+  'md5',
+  'sha256',
+  'hashShort',
+  'substring',
+  'trim',
+  'uppercase',
+  'lowercase',
+  'replace',
+  'replaceText',
+  'toNumber',
+  'toString',
+  'toDate',
+  'toIDCard',
+  'merge',
+  'mapValue',
+  'regexExtract',
+  'default',
+  'genderFromID',
+  'birthFromID',
+  'multiply'
+] as const;
+
+/** pipe 阶段注册表（D99–D101）：阶段名 → 阶段工厂；`registerPipeStages` 按白名单从已注册 Helper 构建 */
+export const PipeStages = new Map<string, PipeStageDef>();
+
+/**
+ * 以当前 Handlebars 实例已注册的 Helper 构建 PipeStages 阶段注册表：
+ * 阶段 = `(value) => helper(value, ...fixedArgs)`（基于函数返回），helper 取自已注册实现，语义与模板内直调一致。
+ * 注册顺序须在所有 Helper 注册完成后调用（registerBuiltinHelpers 尾部）。
+ */
+export function registerPipeStages(hb: HB): void {
+  PipeStages.clear();
+  const helpers = hb.helpers as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of PIPE_STAGE_WHITELIST) {
+    const fn = helpers[name];
+    if (typeof fn !== 'function') continue; // 白名单中尚未注册的 Helper 不作为阶段（防御）
+    PipeStages.set(name, {
+      name,
+      create(...fixedArgs: unknown[]): PipeStageFn {
+        return (value: unknown) => fn(value, ...fixedArgs);
+      }
+    });
+  }
+}
 
 export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | undefined): void {
   // ── 身份证（3）──
@@ -33,17 +83,10 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     shortHash(String(value ?? ''), Number(length) || 10)
   );
 
-  // ── 字符串（9）──
-  hb.registerHelper('split', (str: unknown, delimiter: unknown) => String(str ?? '').split(String(delimiter)));
-  hb.registerHelper('join', (arr: unknown, delimiter: unknown) =>
-    Array.isArray(arr) ? arr.join(String(delimiter ?? '')) : String(arr ?? '')
-  );
-  hb.registerHelper('trim', (str: unknown) => String(str ?? '').trim());
-  hb.registerHelper('upper', (str: unknown) => String(str ?? '').toUpperCase());
-  hb.registerHelper('lower', (str: unknown) => String(str ?? '').toLowerCase());
-  hb.registerHelper('replace', (str: unknown, search: unknown, replacement: unknown) =>
-    String(str ?? '').split(String(search)).join(String(replacement ?? ''))
-  );
+  // ── 字符串（公开 9；D102–D104 委托）──
+  // split / join / trim / replace / isEmpty 与改名项 uppercase / lowercase（原 upper / lower）已委托
+  // handlebars-helpers@0.10.0（库注册名 + 实现，见 registerAdoptedLibraryHelpers 与 handlebars-helpers.ts）；
+  // 仅库没有者保留我方实现：
   hb.registerHelper('substring', (str: unknown, start: unknown, length?: unknown) => {
     const s = String(str ?? '');
     const from = Number(start) || 0;
@@ -55,27 +98,17 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     void options;
     return rest.map((v) => String(v ?? '')).join('');
   });
-  hb.registerHelper('isEmpty', (value: unknown) => value === undefined || value === null || value === '');
 
-  // ── 数学（9）──
-  hb.registerHelper('add', (...args: unknown[]) => args.slice(0, -1).reduce((a: number, v) => a + Number(v), 0));
-  hb.registerHelper('subtract', (a: unknown, b: unknown) => Number(a) - Number(b));
-  hb.registerHelper('multiply', (a: unknown, b: unknown) => Number(a) * Number(b));
-  hb.registerHelper('divide', (a: unknown, b: unknown) => (Number(b) === 0 ? 0 : Number(a) / Number(b)));
-  hb.registerHelper('sum', (...args: unknown[]) => args.slice(0, -1).reduce((a: number, v) => a + Number(v), 0));
-  hb.registerHelper('avg', (...args: unknown[]) => {
-    const nums = args.slice(0, -1);
-    if (nums.length === 0) return 0;
-    return nums.reduce((a: number, v) => a + Number(v), 0) / nums.length;
-  });
-  hb.registerHelper('round', (value: unknown, digits?: unknown) => {
-    const p = Math.pow(10, Number(digits) || 0);
-    return Math.round(Number(value) * p) / p;
-  });
-  hb.registerHelper('toFixed', (value: unknown, digits: unknown) => Number(value).toFixed(Number(digits)));
+  // ── 数学（公开 9；D102–D104 委托）──
+  // add/subtract/multiply/divide/sum/avg/round/toFixed 已委托 handlebars-helpers@0.10.0（库语义随库：数字校验/两参/变参，
+  // 见 handlebars-helpers.ts）；仅库没有者保留我方实现：
+  // formatNumber：zh-CN locale 千分位（库 number.addCommas 不覆盖 zh-CN，保留我方）
   hb.registerHelper('formatNumber', (value: unknown) => Number(value).toLocaleString('zh-CN'));
 
-  // ── 逻辑（5）──
+  // ── 逻辑（公开 5；D102–D104 委托）──
+  // contains / default / or / and 已委托 handlebars-helpers（comparison 类别；行内/子表达式返回原始布尔，块用法渲染块）；
+  // default 为库语义「首个非 null，缺省 ''」（我方空串兜底语义迁至编译专用 Helper `fillDefault`，见下）。
+  // 仅库没有者保留我方实现：
   hb.registerHelper('ifEquals', function (this: unknown, a: unknown, b: unknown, options: any) {
     const eq = a === b;
     if (options && typeof options.fn === 'function') {
@@ -83,12 +116,6 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     }
     return eq; // API 直接调用时返回 boolean
   });
-  hb.registerHelper('contains', (arr: unknown, value: unknown) => Array.isArray(arr) && arr.includes(value));
-  hb.registerHelper('default', (value: unknown, fallback: unknown) =>
-    value === undefined || value === null || value === '' ? fallback : value
-  );
-  hb.registerHelper('or', (...args: unknown[]) => args.slice(0, -1).some(Boolean));
-  hb.registerHelper('and', (...args: unknown[]) => args.slice(0, -1).every(Boolean));
 
   // ── 校验（6）──
   hb.registerHelper('isEmail', (v: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '')));
@@ -157,7 +184,7 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     list.push(item);
     return list;
   });
-  hb.registerHelper('first', (arr: unknown) => (Array.isArray(arr) ? arr[0] : undefined));
+  // first 已委托 handlebars-helpers（array.first：无 n 返回首元素；undefined 输入返回 ''）；second 库无对应，保留我方
   hb.registerHelper('second', (arr: unknown) => (Array.isArray(arr) ? arr[1] : undefined));
   hb.registerHelper('now', () => new Date().toISOString().replace(/\.\d{3}Z$/, ''));
   hb.registerHelper('log', (value: unknown) => {
@@ -168,16 +195,22 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
   hb.registerHelper('>', (a: unknown, b: unknown) => Number(a) > Number(b));
   hb.registerHelper('<=', (a: unknown, b: unknown) => Number(a) <= Number(b));
   hb.registerHelper('>=', (a: unknown, b: unknown) => Number(a) >= Number(b));
-  hb.registerHelper('eq', (a: unknown, b: unknown) => a === b);
+  // eq 已委托 handlebars-helpers（comparison.eq：行内/子表达式返回 a===b）
 
   // ── D98 编译段所需 Helper（预处理标记段仅引用内置白名单；权威见 template-schema §9）──
+  // not / gt / gte / lt / lte 已委托 handlebars-helpers（comparison 类别，行内/子表达式返回原始布尔）；编译段数值比较走
+  // cellOp（JS cmpCells，D96 语义），不受委托影响。neq / col / has 等编译守卫保留我方实现（库 comparison.has 为
+  // block/inline 混合语义，且与编译段 `(has this "列")` 守卫语义需严格一致，作为例外保留我方，不入委托清单）。
   hb.registerHelper('neq', (a: unknown, b: unknown) => a !== b);
-  hb.registerHelper('not', (v: unknown) => !v);
-  // 数字比较：先数值化，非数值回落字符串比较（D96 语义）
-  hb.registerHelper('gt', (a: unknown, b: unknown) => cmpCells(a, b) > 0);
-  hb.registerHelper('gte', (a: unknown, b: unknown) => cmpCells(a, b) >= 0);
-  hb.registerHelper('lt', (a: unknown, b: unknown) => cmpCells(a, b) < 0);
-  hb.registerHelper('lte', (a: unknown, b: unknown) => cmpCells(a, b) <= 0);
+
+  // 编译例外专用 Helper（D102–D104 §3）：库同名（trim/split/default/isEmpty）对**非字符串输入返回 ''/抛错**，
+  // 会破坏编译段对数值单元格的处理（如 trim 0 → '' 被误判为空）。我方单元格安全语义以专用名注册，编译层引用专用名：
+  hb.registerHelper('strTrim', (s: unknown) => String(s ?? '').trim());
+  hb.registerHelper('strSplit', (s: unknown, d: unknown) => String(s ?? '').split(String(d ?? ',')));
+  hb.registerHelper('isEmptyValue', (v: unknown) => v === undefined || v === null || v === '');
+  hb.registerHelper('fillDefault', (v: unknown, fallback: unknown) =>
+    v === undefined || v === null || v === '' ? fallback : v
+  );
 
   // 列取值：普通列名取该列值；'*' 返回整行非保留列值数组（供「任意列」匹配，D97）
   hb.registerHelper('col', function (this: unknown, name: unknown, options: { data?: { root?: Record<string, any> } }) {
@@ -274,6 +307,40 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
       return s; // 非法正则保持原值
     }
   });
+
+  // ── pipe / stage：值型变换管道（D99–D101，运行时辅助 Helper，不入公开 API 清单）──
+  // 阶段基于函数返回：`(stage "名" 固定参数…)` → 一元函数；未注册名防御（记警告并返回原值）。
+  hb.registerHelper('stage', (name: unknown, ...rest: unknown[]) => {
+    const stageName = String(name ?? '');
+    const def = PipeStages.get(stageName);
+    if (!def) {
+      console.warn(`[Importer Pro] 未知 pipe 阶段 "${stageName}"，返回原值`);
+      return (value: unknown) => value;
+    }
+    const fixedArgs = rest.slice(0, -1); // 末位为 Handlebars options
+    return def.create(...fixedArgs);
+  });
+  // 纯值链：以源为初值从左到右调用各阶段函数；无副作用/不跳过空值（守卫由外层 #if 表达）。
+  hb.registerHelper('pipe', (source: unknown, ...rest: unknown[]) => {
+    const stages = rest.slice(0, -1); // 末位为 Handlebars options
+    let value = source;
+    for (const s of stages) {
+      if (typeof s === 'function') value = (s as PipeStageFn)(value);
+    }
+    return value;
+  });
+  // D102–D104：注册 handlebars-helpers 委托件（公开通用件采用库注册名与实现；须在我方实现注册后调用，防同名覆盖）
+  registerAdoptedLibraryHelpers(hb);
+  // 阶段注册表须在所有 Helper 注册完成后构建（阶段实现 = 已注册 Helper，语义与直调一致）
+  registerPipeStages(hb);
+}
+
+/** 注册 handlebars-helpers 委托件（D102–D104）：按注册名注册采纳项（我方重叠实现已删除，不覆盖库同名） */
+function registerAdoptedLibraryHelpers(hb: HB): void {
+  const adopted = adoptedLibraryHelpers();
+  for (const [name, fn] of Object.entries(adopted)) {
+    hb.registerHelper(name, fn as Handlebars.HelperDelegate);
+  }
 }
 
 /** GB11643-1999 身份证校验（18 位） */

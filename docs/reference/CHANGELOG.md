@@ -1,8 +1,8 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.9.0"
-last_updated: "2026-09-04"
+version: "1.13.0"
+last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
 tags: ["changelog", "releases"]
@@ -36,6 +36,10 @@ arcmesh:
 - **Handlebars 引擎**：支持条件、循环、自定义 Helper
 - **双阶段渲染**：预处理模板（数据转换）+ 内容模板（笔记生成）
 - **37 个内置 Helper**：身份证、哈希、字符串、数学、逻辑、校验、链接
+- **值型 set pipe 管道（已实现，2026-09-05，D99–D101）**：值型 `set` 目标值含 ≥2 步变换时编译为内置 `pipe`/`stage` 管道（阶段注册表、左→右求值；`md5Short`/`currentYear` 等派生预设编译产物改管道形态，旧嵌套括号写法永久兼容）。落点：builtin 增 `pipe`/`stage` + `PipeStages` 注册表（20 阶段白名单、按已注册 Helper 构建）；wizard-data 编译改产 pipe/反编译兼容旧嵌套；wizard-data 84 + 全量 108 例全绿、type-check 通过。见 decisions/2026-09-05-pipe-pipeline-set-config.md（v1.1.0）
+- **按需加载 handlebars-helpers（已实现，2026-09-05 v1.2.0，D102–D104）**：通用 Helper（字符串/数学/数组/比较/数字等）不再自研，委托 `handlebars-helpers@0.10.0`——新增依赖、`src/helpers/handlebars-helpers.ts` 按名采纳 array/collection/comparison/math/number/string 六类重叠件、跳过 Node/IO 类；**库有即用库注册名**（`upper`→`uppercase`/`lower`→`lowercase`、edge 语义随库）；仅库没有者（身份证/哈希/校验/链接/编译白名单/运行时辅助、`substring`/`concat`/`formatNumber`/`ifEquals`）保留我方名与实现。编译段单元格安全语义用**专用名**（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`，公开 `trim`/`split`/`default`/`isEmpty` 随库；pipe 阶段白名单改名 `uppercase`/`lowercase`）。改名属模板级破坏性（v1.0 未发布可接受，模板/示例/api-layer §6/template-engine 权威清单已迁移）。单测：helpers.test 增委托/改名/库语义对拍与编译例外专用名用例（全量 Vitest 114 例全绿、type-check 通过）。见 decisions/2026-09-05-handlebars-helpers-on-demand.md（v1.2.0））
+- **Step 3 列侧收敛：列映射 + 行内设置链（设计定稿，2026-09-05，D105–D107）**：区块 5 收敛为单一「列映射」表（目标字段 / 来源 / 类型 / 添加设置 / 操作），删除区块 6 派生字段（Step 3 变 6 区块、预览顺延区块 6）；「添加设置」弹出可加列格式化/列处理/列派生内容为行内设置（沿用行上下文不再重填目标/来源），行内设置 ≥2 步以 `pipe` 写入 `set`（无设置=复制、1 步=直调）；列侧仅产出 `column-mapping` 段，旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移；类型=快捷转换。决策先行、实现待排，见 decisions/2026-09-05-step3-column-mapping-settings-chain.md）
+- **Step 3 区块 5/6 合并实现：列映射与派生合并单表（2026-09-05，D108 已实现）**：区块 5「列映射」与原区块 6「派生字段」合并为**一张统一列映射表**——行内「类型/规则」下拉含两组（`类型`：文本/身份证/数字/日期/忽略；`派生字段`：性别/生日/MD5 短哈希/时间戳/年份），某行选派生预设即派生计算行（无源预设可留空来源、自动取默认产出名）；按钮行 = `添加映射行` / `自动映射` / `删除所有自动映射` / `清除所有`，行来源显式标记 `origin`（`auto` = 自动映射生成），`删除所有自动映射` 仅删除 `auto` 行（手动/回填/派生行保留）；原「📋 预设规则 SuggestModal」与独立派生区块删除（派生行删除 = 行内 ✕）。数据模型：`cfg.mappings` 统一行（`rule?` 有值即派生，取代旧 `derived` 数组），编译按 rule 拆 `column-mapping`/`derived` 段、反编译按段合并，旧模板两段与旧 frontmatter `derived` 兼容读取/一次性迁移。落点：`wizard-data`/`template-scanner`/`import-modal`/`styles` 与单测同步（Vitest 102 例全绿）。D105「添加设置」行内设置链（chips + `pipe`）仍为后续增强、未实现。见 decisions/2026-09-05-step3-mapping-derived-merge.md
 
 #### 图形化配置
 - **4 步导入向导**：来源选择 → 文件管理 → 模板配置 → 进度执行（模板配置内含数据处理/列映射/校验/派生字段/匹配规则/分流/输出/预览）
@@ -92,4 +96,4 @@ arcmesh:
 
 ---
 
-*版本: 1.9.0 | 最后更新: 2026-09-04*
+*版本: 1.13.0 | 最后更新: 2026-09-05*

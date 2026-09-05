@@ -239,6 +239,15 @@ export interface RowFilterRule {
   value: string; // 比较值（regex 为正则文本；empty/notEmpty 忽略）
 }
 
+/** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */
+export type PipeStageFn = (value: unknown) => unknown;
+
+/** pipe 阶段定义（登记于引擎 `PipeStages` 注册表）：`create` 以固定参数返回一元函数（基于函数返回） */
+export interface PipeStageDef {
+  name: string; // 阶段名（模板内 `(stage "name" …)` 引用，仅内置白名单）
+  create(...fixedArgs: unknown[]): PipeStageFn; // 工厂：绑定固定参数后返回 (value) => out
+}
+
 /** 插件设置（architecture §9.1） */
 export interface PluginSettings {
   schemaVersion: number;

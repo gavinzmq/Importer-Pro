@@ -123,6 +123,22 @@
   color: var(--text-error);
   background: var(--background-modifier-hover);
 }
+/* 列映射/派生统一行「操作」单元格容器 + 「自动」来源标记（D108） */
+.ipw-cell-ops {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+}
+.ipw-origin {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  padding: 2px 5px;
+  flex: 0 0 auto;
+}
 .ipw-link {
   background: none;
   border: none;

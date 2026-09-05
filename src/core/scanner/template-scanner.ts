@@ -5,13 +5,14 @@ import { ImporterProError, ERROR_CODES } from '../../utils/errors';
 import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 import {
   configToSegments,
+  DERIVED_PRESETS,
   handlebarsToConfig,
   presetFilterEmptyRows,
   rowFilterFromRemove,
   upsertSegments,
   type Step3TemplateSnapshot
 } from '../../ui/wizard-data';
-import type { LegacyByContentRule } from '../../ui/wizard-data';
+import type { ColumnMapping, DerivedRuleId, LegacyByContentRule } from '../../ui/wizard-data';
 
 /** 模板扫描器（architecture §2.7） */
 export interface ITemplateScanner {
@@ -456,8 +457,18 @@ function migrateLegacyColumnConfig(
   const derived: any[] = Array.isArray(fm.derived) ? fm.derived : [];
   if (derived.length > 0 && !segmentsPresent.derived) {
     for (const d of derived) {
-      if (d && d.field && d.rule && !transform.derived.some((x) => x.field === d.field)) {
-        transform.derived.push({ field: String(d.field), rule: String(d.rule), source: d.source ? String(d.source) : '' });
+      if (d && d.field && typeof d.rule === 'string' && DERIVED_PRESETS.some((p) => p.id === d.rule)) {
+        const rule = d.rule as DerivedRuleId;
+        if (!transform.mappings.some((x) => x.rule === rule && x.target === String(d.field))) {
+          // 旧派生行并入统一映射行（rule 有值）；source 缺失置空（无源预设）
+          const row: ColumnMapping = {
+            source: d.source ? String(d.source) : '',
+            target: String(d.field),
+            type: 'text',
+            rule
+          };
+          transform.mappings.push(row);
+        }
       }
     }
   }

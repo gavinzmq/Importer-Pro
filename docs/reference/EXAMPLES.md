@@ -50,7 +50,7 @@ created_at: "2026-09-02T14:30:00Z"
 
 ```handlebars
 {{#with this as |record|}}
-  {{#if (or (isEmpty record.身份证号) (isEmpty record.姓名))}}
+  {{#if (or (isEmptyValue record.身份证号) (isEmptyValue record.姓名))}}
     {{set "_skip" true}}
   {{else}}
     {{#if (validateID record.身份证号)}}
@@ -127,7 +127,7 @@ created_at: "2026-09-02T14:30:00Z"
 
 ```handlebars
 {{#with this as |record|}}
-  {{#if (isEmpty record.身份证号)}}
+  {{#if (isEmptyValue record.身份证号)}}
     {{set "_skip" true}}
   {{else}}
     {{set "性别" (genderFromID record.身份证号)}}
@@ -169,7 +169,7 @@ created_at: "2026-09-02T14:30:00Z"
               "_template" "templates/工作经历模板.md"
               "姓名" ../record.姓名
               "公司" (first 经历项)
-              "职位" (default (second 经历项) "员工")
+              "职位" (fillDefault (second 经历项) "员工")
             ))}}
           {{/with}}
         {{/each}}
@@ -183,7 +183,7 @@ created_at: "2026-09-02T14:30:00Z"
 
 ```handlebars
 {{#with this as |record|}}
-  {{#if (isEmpty record.销售员)}}
+  {{#if (isEmptyValue record.销售员)}}
     {{set "_skip" true}}
   {{else}}
     {{set "销售额" (multiply record.单价 record.数量)}}
@@ -216,12 +216,12 @@ created_at: "2026-09-02T14:30:00Z"
 
 ```handlebars
 {{#with this as |record|}}
-  {{#if (isEmpty record.项目名称)}}
+  {{#if (isEmptyValue record.项目名称)}}
     {{set "_skip" true}}
   {{else}}
     {{set "本周进度" record.进度}}
     {{set "下周计划" record.计划}}
-    {{set "风险" (default record.风险 "无")}}
+    {{set "风险" (fillDefault record.风险 "无")}}
     {{set "状态" (if (>= record.进度 80) "正常" "需关注")}}
     {{set "_hash" (hashShort (md5 record.项目名称) 10)}}
     {{set "_folder" "项目周报"}}

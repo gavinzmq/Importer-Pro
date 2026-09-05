@@ -1,8 +1,8 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.4.0"
-last_updated: "2026-09-04"
+version: "1.8.0"
+last_updated: "2026-09-05"
 status: "active"
 ---
 
@@ -124,9 +124,11 @@ status: "active"
 {{!-- ipro:end:row-remove --}}
 ```
 
-段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-format`（列格式化）/ `column-process`（列处理）/ `column-mapping`（列映射）/ `derived`（派生字段）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-mapping`（列映射，D105 起每行含列转换设置链——列格式化/列处理/派生均并入该段）。`column-format` / `column-process` / `derived` 段 **D105 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行，见下「列侧段收敛」）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
 
 **编译映射**（向导状态 → Handlebars，目标代码**仅引用内置 Helper 白名单**）：
+
+> **编译专用 Helper 名（D102–D104，2026-09-05 已实现）**：公开 `trim`/`split`/`default`/`isEmpty` 自 v1.1.0 起随 `handlebars-helpers` 委托（非字符串输入返回 `''`/库语义），编译段对**数值单元格安全**的空值清理/判定/兜底改用**专用名**——`(isEmptyValue (strTrim col))`（空值筛选）、`(strTrim val)`（格式化 trim）、`(strSplit val d)`（拆分）、`(fillDefault val param)`（仅空值填充，替代旧 `(default …)`）；反编译按专用名还原为对应规则（empty/trim/split/fillDefault）。
 
 | 向导配置 | 编译产物 |
 | :--- | :--- |
@@ -134,10 +136,10 @@ status: "active"
 | 行筛选·任意列 | `col "*"` 内置 Helper 返回整行列值（任一列命中即通过，D97） |
 | 删除行·按行号 | `{{#if (inRange _index "2,5,8-10")}}{{set "_skip" true}}{{/if}}`（`_index` 引擎注入，§3） |
 | 行清洗·去除空行（预置规则） | `{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}` |
-| 列格式化 | `{{set "身份证号" (toIDCard 身份证号)}}` 等，按 `ColumnFormatOp` 映射 Helper |
-| 列处理 | `{{set "姓名" (trim 姓名)}}` 等，按 `ColumnProcessOp` 映射 Helper |
-| 列映射 | `{{set "身份证号" (lookup this "身份证号码")}}`（类型 `ignore` 的列编译为删除该字段或跳过映射） |
-| 派生字段 | `{{set "性别" (genderFromID 身份证号)}}`（`rule` id → 内置 Helper） |
+| 列映射（D105 起列侧唯一产出） | `{{set "目标" (lookup this "来源")}}`（无设置=复制）；含设置链时——1 步=直调 `(op 源)`、**≥2 步 = `(pipe 源 (stage …) …)`**；`ignore` / 类型不产出该行 |
+| 列格式化 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
+| 列处理 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
+| 派生字段 | （D105 起并入列映射行的设置链——派生预设作「添加设置」项，不再独立成段；旧模板读取折叠回列映射行 settings） |
 | 输出位置及命名 | **不生成代码段**——渲染时由 `output.folder` / `output.note_name`（Handlebars 表达式，§2）求值 |
 
 编译产物禁止引用外部 Helper，保证模板跨库可迁移；编译所需 Helper（`strContains`/`strStartsWith`/`strEndsWith`/`isEmpty`/`isNotEmpty`/`inRange`/`isEmptyRow`/`regexTest`/`col`）计入内置 Helper 白名单。
@@ -168,14 +170,35 @@ status: "active"
 {{!-- ipro:end:derived --}}
 ```
 
+**多步值型 set → pipe（D99–D101，2026-09-05 已实现）**：一个 `set` 的目标值含 **≥2 个变换阶段**时，编译层一律以内置 `pipe`/`stage` 表达（值从左到右流经各阶段）；单阶段变换保持直调（`(helper 源)`）。语法：
+
+```handlebars
+{{set "字段" (pipe 源表达式 (stage "阶段名" 固定参数…) …)}}
+```
+
+示例（派生「MD5 取前 10 位」——旧嵌套括号 vs 新 pipe 形态，均可在 preprocess 段出现）：
+
+```handlebars
+{{!-- 旧：嵌套括号（兼容，引擎可执行、可反编译回填） --}}
+{{#if (isNotEmpty (lookup this "身份证号"))}}{{set "_hash" (substring (md5 (lookup this "身份证号")) 0 10)}}{{/if}}
+{{!-- 新：pipe（编译层默认形态，左→右可读） --}}
+{{#if (isNotEmpty (lookup this "身份证号"))}}{{set "_hash" (pipe (lookup this "身份证号") (stage "md5") (stage "substring" "0" "10"))}}{{/if}}
+```
+
+- `pipe`/`stage` 为内置 Helper（权威见 components/template-engine.md）；阶段名仅限内置白名单，未注册名防御处理。
+- **纯值变换链**：不跳过空值、无副作用；「空源不产出」等守卫仍由外层 `{{#if (isNotEmpty …)}}` 表达（编译层保留现有守卫）。
+- **兼容**：旧嵌套括号写法仍可执行、可反编译回填，**永久兼容**；反编译器须同时接受 pipe 与旧嵌套两种形态（往返测试覆盖）。
+
+**列侧段收敛（D105–D107）**：Step 3 区块 7 → 6（删除派生字段区块，预览顺延区块 6）；区块 5 收敛为**单一列映射表**，列格式化 / 列处理 / 派生预设全部并入列映射行的 **设置链 `settings`**（「添加设置」弹出分组选择，沿用行上下文不再重填目标/来源）。列侧 UI **仅产出 `column-mapping` 段**，不再产出 `column-format` / `column-process` / `derived` 段；每行一条 set——无设置 `(lookup this 源)`、1 步直调、**≥2 步 `(pipe 源 (stage …) …)`**（D99）。`类型` = 快捷转换（身份证→toIDCard / 数字→toNumber / 日期→toDate / 忽略=不产出，隐含转换去重）；无源预设（当前时间戳/年份）来源可空。**兼容读取**：旧模板的 column-format / column-process / derived 段与旧 frontmatter `columns` / `derived` / `mapping` 一次性折叠为对应列映射行 settings（[💾] 重存即收敛）。决策见 decisions/2026-09-05-step3-column-mapping-settings-chain.md。
+
 **读写规则**：
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
 - **读取（反编译）**：进入 Step 3 时解析 preprocess 标记段回填 UI（覆盖向导默认值）；段内代码被用户深度手改致无法反编译时，该区块回退默认值、保留代码不阻断。
 - **兼容迁移（D95→D98）**：读取旧模板时，frontmatter `row` / `columns` / `mapping` / `derived`（含 D97 的 `byContent`→neq/notContains、`removeEmpty`→预置规则）一次性编译进 preprocess 标记段；下次保存不再写这些 frontmatter 字段。`match` / `output` / `row.clean`（跨行引擎开关）保留 frontmatter。
 - **执行语义**：全部行/列/派生逻辑由 `renderPreprocess` 逐行执行，`_skip` 行由 DataPipeline 跳过；**跨行操作**（去重 `dedupe`、删除重复标题行 `duplicateHeader`）单行 Handlebars 无法表达，由引擎在渲染前按 `row.clean` 开关处理（D98 例外）；`row.header_row` 为解析级参数（ParseOptions），仅表格类数据源生效。
-- 执行顺序（D96/D97）：行删除 → 行筛选 → 列格式化 → 行清洗 → 列处理 → 列映射 → 派生，与编译段的代码顺序一致。
+- 执行顺序：行级段（行删除 → 行筛选；行清洗为跨行引擎开关，渲染前处理）→ `column-mapping` 段——列映射每行内设置链按序执行（类型隐含转换置前；D105 起列格式化/列处理/派生并入行内链），与编译段代码顺序一致（D96/D97/D105）。
 
 ---
 
-*版本: 1.4.0 | 最后更新: 2026-09-04*
+*版本: 1.8.0 | 最后更新: 2026-09-05*

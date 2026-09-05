@@ -13,7 +13,6 @@ import {
   applyColumnMappings,
   applyColumnProcess,
   applyColumnProcesses,
-  applyDerivedFields,
   applyRowCleaning,
   applyRowFilter,
   applyRowRemoval,
@@ -39,6 +38,7 @@ import {
   isPresetEmptyFilter,
   parseRowNumbers,
   presetFilterEmptyRows,
+  removeAutoMappings,
   rowFilterFromRemove,
   rowFilterRuleLabel,
   rowMatchesFilter,
@@ -47,6 +47,7 @@ import {
   unmappedColumns,
   upsertSegments,
   emptyTransform,
+  type ColumnMapping,
   type DataTransformConfig,
   type RowFilterRule
 } from '../../src/ui/wizard-data';
@@ -201,8 +202,7 @@ describe('行删除与并集语义（D97：byIndex + duplicateHeader 并集，ap
       formats: [],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: []
+      mappings: []
     };
     expect(applyTransform(rows, cfg)).toEqual([
       { 姓名: '李四', 部门: '市场部' },
@@ -230,8 +230,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
       formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: []
+      mappings: []
     };
     expect(applyTransform(data, cfg)).toEqual([
       { 姓名: '张三', 年龄: '18' },
@@ -248,8 +247,7 @@ describe('applyTransformPreview / applyTransform：行删除置于变换首步�
       formats: [],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: []
+      mappings: []
     };
     const rows = applyTransformPreview(data, cfg);
     expect(rows.map((r) => r.src)).toEqual([1, 3, 4, 5]);
@@ -332,8 +330,7 @@ describe('D96 行筛选：cellPassesFilter / rowMatchesFilter', () => {
       formats: [],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: []
+      mappings: []
     };
     expect(countRowsAfterSelection(rows, cfg)).toBe(2);
   });
@@ -447,24 +444,51 @@ describe('applyColumnMappings：列映射', () => {
   });
 });
 
-describe('autoMapColumns / unmappedColumns：列映射助手', () => {
-  it('自动映射追加未映射列，避免重复', () => {
+describe('autoMapColumns / removeAutoMappings / unmappedColumns：列映射助手（D108）', () => {
+  it('自动映射追加未映射列，标记 origin=auto，避免重复', () => {
     const existing = [{ source: 'a', target: 'x', type: 'text' as const }];
     const out = autoMapColumns(['a', 'b', 'c'], existing);
     expect(out).toHaveLength(3);
-    expect(out[0]).toBe(existing[0]);
+    expect(out[0]).toBe(existing[0]); // 已有行原样保留（不重打标记）
     expect(out.slice(1)).toEqual([
-      { source: 'b', target: 'b', type: 'text' },
+      { source: 'b', target: 'b', type: 'text', origin: 'auto' },
+      { source: 'c', target: 'c', type: 'text', origin: 'auto' }
+    ]);
+  });
+
+  it('派生行（rule）不消费源列：仍会被自动映射补充为同名纯映射', () => {
+    const existing: ColumnMapping[] = [
+      { source: 'a', target: 'a', type: 'text' },
+      { source: 'b', target: '性别', type: 'text', rule: 'genderFromID' }
+    ];
+    const out = autoMapColumns(['a', 'b', 'c'], existing);
+    expect(out.map((m) => m.source)).toEqual(['a', 'b', 'b', 'c']);
+  });
+
+  it('removeAutoMappings 仅删除 origin=auto 的行', () => {
+    const rows: ColumnMapping[] = [
+      { source: 'a', target: 'a', type: 'text', origin: 'auto' },
+      { source: 'b', target: 'b', type: 'text', origin: 'manual' },
+      { source: 'c', target: 'c', type: 'text' } // 缺省视为手动
+    ];
+    expect(removeAutoMappings(rows)).toEqual([
+      { source: 'b', target: 'b', type: 'text', origin: 'manual' },
       { source: 'c', target: 'c', type: 'text' }
     ]);
   });
 
-  it('unmappedColumns 返回未使用源列', () => {
+  it('unmappedColumns 返回未消费源列（派生行不计数）', () => {
     expect(unmappedColumns(['a', 'b', 'c'], [{ source: 'b', target: 'b', type: 'text' }])).toEqual(['a', 'c']);
+    expect(
+      unmappedColumns(['a', 'b', 'c'], [
+        { source: 'a', target: 'a', type: 'text' },
+        { source: 'a', target: '性别', type: 'text', rule: 'genderFromID' }
+      ])
+    ).toEqual(['b', 'c']);
   });
 });
 
-describe('applyDerivedFields / deriveValue：派生字段', () => {
+describe('派生值 deriveValue / 统一行 applyColumnMappings（D108 派生并入列映射单表）', () => {
   it('genderFromID / birthFromID / md5Short / 时间类 / 未知预设', () => {
     expect(deriveValue('genderFromID', '110101199001011233')).toBe('男');
     expect(deriveValue('genderFromID', '110101199001011223')).toBe('女');
@@ -475,16 +499,41 @@ describe('applyDerivedFields / deriveValue：派生字段', () => {
     expect(deriveValue('md5Short', '')).toBe('');
     expect(deriveValue('nowTimestamp', 'x')).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
     expect(deriveValue('currentYear', '')).toBe(`${new Date().getFullYear()}`);
-    expect(deriveValue('unknownPreset', 'x')).toBe('');
+    expect(deriveValue('unknownPreset' as never, 'x')).toBe('');
   });
 
-  it('applyDerivedFields：按行追加派生字段，源缺失置空', () => {
+  it('仅派生行（rule）时：在原始记录上追加 target，源缺失置空', () => {
     const records = [{ id: '110101199001011233', name: '张三' }];
-    const out = applyDerivedFields(records, [
-      { field: '性别', rule: 'genderFromID', source: 'id' },
-      { field: '无源', rule: 'genderFromID', source: 'missing' }
+    const out = applyColumnMappings(records, [
+      { source: 'id', target: '性别', type: 'text', rule: 'genderFromID' },
+      { source: 'missing', target: '无源', type: 'text', rule: 'genderFromID' }
     ]);
     expect(out).toEqual([{ id: '110101199001011233', name: '张三', 性别: '男', 无源: '' }]);
+  });
+
+  it('纯映射 + 派生并存：纯映射保留目标字段，派生按映射后字段计算', () => {
+    const records = [{ id: '110101199001011237', name: '张三', extra: 'x' }];
+    const out = applyColumnMappings(records, [
+      { source: 'name', target: '姓名', type: 'text' },
+      { source: 'id', target: '身份证号', type: 'text' },
+      { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' }
+    ]);
+    expect(out).toEqual([{ 姓名: '张三', 身份证号: '110101199001011237', 性别: '男' }]);
+  });
+
+  it('ignore 行不产出（含 rule 行的防御忽略）', () => {
+    const records = [{ a: 1, b: 2 }];
+    expect(
+      applyColumnMappings(records, [
+        { source: 'a', target: 'a', type: 'ignore' },
+        { source: 'b', target: 'B', type: 'text' }
+      ])
+    ).toEqual([{ B: 2 }]);
+    expect(
+      applyColumnMappings(records, [
+        { source: 'a', target: '性别', type: 'ignore', rule: 'genderFromID' }
+      ])
+    ).toEqual([{ a: 1, b: 2 }]); // 无纯映射 → 原样；ignore+rule 行被跳过
   });
 
   it('deriveFieldName：默认字段名', () => {
@@ -506,9 +555,9 @@ describe('applyTransform：整套变换链路（JS 语义层）', () => {
       processes: [],
       mappings: [
         { source: '姓名', target: '姓名', type: 'text' },
-        { source: '性别', target: '性别', type: 'text' }
-      ],
-      derived: [{ field: '年份', rule: 'currentYear', source: '' }]
+        { source: '性别', target: '性别', type: 'text' },
+        { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+      ]
     });
     expect(out).toEqual([{ 姓名: '张三', 性别: '男', 年份: `${new Date().getFullYear()}` }]);
   });
@@ -532,10 +581,10 @@ describe('D98 编译/反编译：标记段与往返', () => {
         { column: '身份证号', op: 'toIDCard', param: '' }
       ],
       processes: [{ column: 'tags', op: 'split', param: ',', param2: '' }],
-      mappings: [{ source: '身份证号码', target: '身份证号', type: 'text' }],
-      derived: [
-        { field: '性别', rule: 'genderFromID', source: '身份证号' },
-        { field: '年份', rule: 'currentYear', source: '' }
+      mappings: [
+        { source: '身份证号码', target: '身份证号', type: 'text' },
+        { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' },
+        { source: '', target: '年份', type: 'text', rule: 'currentYear' }
       ],
       clean: ['dedupe']
     };
@@ -559,8 +608,7 @@ describe('D98 编译/反编译：标记段与往返', () => {
     expect(back.filters).toEqual(cfg.filters);
     expect(back.formats).toEqual(cfg.formats);
     expect(back.processes).toEqual(cfg.processes);
-    expect(back.mappings).toEqual(cfg.mappings);
-    expect(back.derived).toEqual(cfg.derived);
+    expect(back.mappings).toEqual(cfg.mappings); // 纯映射行 + rule 派生行统一还原
     expect(back.clean).toEqual([]); // 引擎开关不入段（由 frontmatter 承载）
   });
 
@@ -590,8 +638,10 @@ describe('D98 编译/反编译：标记段与往返', () => {
       formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
       processes: [],
-      mappings: [{ source: '身份证号', target: '身份证号', type: 'text' }],
-      derived: [{ field: '性别', rule: 'genderFromID', source: '身份证号' }]
+      mappings: [
+        { source: '身份证号', target: '身份证号', type: 'text' },
+        { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' }
+      ]
     };
     const rows = await applyWizardTransform(engine, data, cfg);
     expect(rows.map((r) => r.src)).toEqual([2]);
@@ -611,8 +661,7 @@ describe('D98 编译/反编译：标记段与往返', () => {
       formats: [],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: [{ field: '备注_hash', rule: 'md5Short', source: '备注' }]
+      mappings: [{ source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' }]
     };
     const rows = await applyWizardTransform(engine, data, cfg);
     expect(rows.map((r) => r.src)).toEqual([2]);
@@ -630,8 +679,7 @@ describe('D98 编译/反编译：标记段与往返', () => {
       formats: [{ column: '姓名', op: 'trim', param: '' }],
       clean: [],
       processes: [],
-      mappings: [],
-      derived: []
+      mappings: []
     };
     const real = (await applyWizardTransform(engine, data, cfg)).map((r) => {
       const { _index: _omit, ...rest } = r.row; // 真实渲染含 _index 保留字段，比较前去除
@@ -677,8 +725,7 @@ describe('编译段与 JS 筛选语义一致性（rowMatchesFilter vs applyWizar
         formats: [],
         clean: [],
         processes: [],
-        mappings: [],
-        derived: []
+        mappings: []
       };
       const kept = await applyWizardTransform(engine, rows, cfg);
       const expected = applyRowFilter(rows, [rule]);
@@ -712,8 +759,10 @@ describe('编译段真实渲染：列格式化/列处理/派生映射与 JS 语�
         { column: 'code', op: 'regexExtract', param: '(\\d{2,})', param2: '' },
         { column: '备注', op: 'fillDefault', param: 'NA', param2: '' }
       ],
-      mappings: [{ source: '姓名', target: '姓名', type: 'text' }],
-      derived: [{ field: '年份', rule: 'currentYear', source: '' }]
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+      ]
     };
     const real = await applyWizardTransform(engine, data, cfg);
     expect(real[0].row.姓名).toBe('张三');
@@ -724,6 +773,88 @@ describe('编译段真实渲染：列格式化/列处理/派生映射与 JS 语�
     expect(real[0].row.备注).toBe('NA');
     expect(real[0].row.年份).toBe(`${new Date().getFullYear()}`);
     // 注：真实渲染（set 复制）保留未映射列，与旧 JS 层「仅保留映射列」语义不同（D98 对齐模板自包含）
+  });
+});
+
+describe('D99 pipe 值型变换管道：编译/反编译/真实渲染', () => {
+  const engine = new TemplateEngine();
+
+  function cfgWithMappings(mappings: ColumnMapping[]): DataTransformConfig {
+    return { removeRows: [], filters: [], formats: [], clean: [], processes: [], mappings };
+  }
+
+  it('编译：md5Short / currentYear 派生行产出 pipe 形态（≥2 步）', () => {
+    const cfg = cfgWithMappings([
+      { source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' },
+      { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(pipe (lookup this "备注") (stage "md5") (stage "substring" "0" "10"))');
+    expect(hb).toContain('(pipe (now) (stage "substring" "0" "4"))');
+    // 单步派生保持直调（不包 pipe）
+    const single = configToHandlebars(
+      cfgWithMappings([{ source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' }])
+    );
+    expect(single).toContain('(genderFromID (lookup this "身份证号"))');
+    expect(single).not.toContain('pipe');
+  });
+
+  it('反编译：pipe 形态往返还原（含源 md5Short / 无源 currentYear）', () => {
+    const cfg = cfgWithMappings([
+      { source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' },
+      { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+    ]);
+    const back = handlebarsToConfig(configToHandlebars(cfg));
+    expect(back.mappings).toEqual(cfg.mappings);
+  });
+
+  it('反编译兼容：旧嵌套括号形态仍可还原（D99 永久兼容）', () => {
+    const oldPre = [
+      '{{!-- ipro:begin:derived --}}',
+      '{{set "备注_hash" (substring (md5 (lookup this "备注")) 0 10)}}',
+      '{{set "年份" (substring (now) 0 4)}}',
+      '{{!-- ipro:end:derived --}}'
+    ].join('\n');
+    const back = handlebarsToConfig(oldPre);
+    expect(back.mappings).toEqual([
+      { source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' },
+      { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+    ]);
+  });
+
+  it('真实渲染：pipe 与 JS deriveValue 结果一致，空源防护保留', async () => {
+    const cfg = cfgWithMappings([
+      { source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' },
+      { source: '', target: '年份', type: 'text', rule: 'currentYear' }
+    ]);
+    const rows = await applyWizardTransform(engine, [{ 备注: 'abc' }], cfg);
+    expect(rows[0].row.备注_hash).toBe('900150983c'); // md5('abc') 前 10 位
+    expect(rows[0].row.年份).toBe(`${new Date().getFullYear()}`);
+    const empty = await applyWizardTransform(engine, [{ 备注: '' }], cfg);
+    expect(empty[0].row.备注_hash).toBeUndefined(); // 空源不产出
+  });
+
+  it('真实渲染：pipe 语义（参数/子表达式固定参数/未知阶段防御/空值直传）', async () => {
+    const tpl = [
+      '{{set "a" (pipe "abcdef" (stage "substring" "1" "3"))}}',
+      '{{set "b" (pipe (lookup this "单价") (stage "multiply" (lookup this "数量")))}}',
+      '{{set "c" (pipe "xyz" (stage "noSuchStage"))}}',
+      '{{set "d" (pipe "" (stage "substring" "0" "10"))}}'
+    ].join('\n');
+    const out = await engine.renderPreprocess(tpl, { 单价: '5', 数量: '3' });
+    expect(out.a).toBe('bcd');
+    expect(out.b).toBe(15);
+    expect(out.c).toBe('xyz'); // 未知阶段返回原值
+    expect(out.d).toBe(''); // 纯值链不跳过空值
+  });
+
+  it('真实渲染：手写 pipe 与旧嵌套两种形态等价', async () => {
+    const pipe =
+      '{{#if (isNotEmpty (lookup this "备注"))}}{{set "h1" (pipe (lookup this "备注") (stage "md5") (stage "substring" "0" "10"))}}{{/if}}';
+    const nested =
+      '{{#if (isNotEmpty (lookup this "备注"))}}{{set "h2" (substring (md5 (lookup this "备注")) 0 10)}}{{/if}}';
+    const out = await engine.renderPreprocess(`${pipe}\n${nested}`, { 备注: 'abc' });
+    expect(out.h1).toBe(out.h2);
   });
 });
 
