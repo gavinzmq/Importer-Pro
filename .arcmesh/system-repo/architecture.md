@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.30.0"
+version: "1.31.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -220,10 +220,10 @@ export interface ITemplateScanner {
     matchPattern: string;
     columns: string[];
   }): Promise<TemplateInfo>;
-  /** D95：读取模板 frontmatter 中持久化的向导配置（output/row/columns/mapping/derived），供 Step 3 回填 */
-  readTemplateConfig(templateId: string): Promise<TemplateTransformConfig | null>;
-  /** D95：把 Step 3 全部配置写回模板 frontmatter（模板即配置源），写入仅限 paths.templates 目录 */
-  saveTemplateConfig(templateId: string, config: TemplateTransformConfig): Promise<void>;
+  /** D95/D98：读取模板持久化的 Step 3 配置（preprocess 标记段反编译 + frontmatter 元信息/引擎开关 + 旧配置迁移），供 Step 3 回填 */
+  readTemplateConfig(templateId: string): Promise<Step3TemplateSnapshot | null>;
+  /** D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回（模板即配置源；写入仅限 paths.templates 目录） */
+  saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void>;
 }
 
 export interface IDataPipeline {
@@ -243,7 +243,7 @@ export interface IValidator {
 
 | 模块 | 职责 | 输入 → 输出 |
 | :--- | :--- | :--- |
-| `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖）；**D95 起兼任模板配置读写**（`readTemplateConfig` / `saveTemplateConfig`：Step 3 向导配置写回模板 frontmatter，模板即配置源） | `fileName` → `TemplateInfo` |
+| `TemplateScanner` | 维护模板索引、按文件名匹配模板；**D92 起兼任模板引导创建**（`createTemplate`：按向导配置生成模板骨架写入 `paths.templates`，目录不存在时自动创建，重名不覆盖）；**D95/D98 起兼任模板配置读写**（`readTemplateConfig` / `saveTemplateConfig`：Step 3 向导配置编译进模板 preprocess 标记段写回，模板即配置源） | `fileName` → `TemplateInfo` |
 | `DataPipeline` | 按条件分流到 noteType、生成派生字段与 `_notes`（D125 起不再承担校验） | `DataRecord` → `NoteSpec[]` |
 | `Validator` | **D125 起 @deprecated**：字段级/记录级校验规则执行（校验规则功能已废弃删除，保留至 v1.1 供 API 兼容） | `DataRecord` + `rules` → `ValidationResult` |
 
@@ -277,7 +277,7 @@ export interface IValidator {
 | 原则 | 内容 |
 | :--- | :--- |
 | **容器持久** | Step 3 的 body 滚动容器（`.ipw-body`）在整个 Step 内保持 DOM 身份不变；控件变更**禁止**重建 header/footer/body 与整个 `contentEl` |
-| **分级刷新** | L1 仅预览（`refreshPreviewOnly`）/ L2 区块内重建（规则列表、映射行、派生行增删改）/ L3 数据源级（表单、表头行、数据文件、模板切换 → 重解析后按依赖链刷新 映射→派生→预览） |
+| **分级刷新** | L1 仅预览（`refreshPreviewOnly`）/ L2 区块内重建（规则列表、映射行、派生行增删改）/ L3 数据源级（表单、数据文件、模板切换 → 重解析后按依赖链刷新 映射→派生→预览） |
 | **滚动与焦点保持** | 任何刷新前记录 `scrollTop`，刷新后恢复；输入类控件的状态即数据源（渲染仅回填值），局部刷新不丢失输入焦点 |
 | **步骤切换例外** | Step 1/2/3/4 间跳转属页面结构切换，仍全量渲染（滚动置顶合理） |
 
@@ -289,15 +289,14 @@ export interface IValidator {
 
 | 原则 | 内容 |
 | :--- | :--- |
-| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选编译为写 `_skip` 的条件块，列格式化/列处理/列映射/派生编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录；**唯一例外**：行清洗（过滤空行/过滤重复表头，跨行结构操作，D124 起二者拆为独立原语 `removeEmptyRows`/`removeDuplicateHeaderRows` 按序执行）与表头提升为引擎开关（core/row-clean.ts，D122/D123/D124） |
+| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选编译为写 `_skip` 的条件块，列映射（含行内设置链：列格式化/列处理）/ 派生 / 多笔记输出（note-output）编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录；**唯一例外**：行清洗（过滤空行/过滤重复表头，跨行结构操作，D124 起二者拆为独立原语 `removeEmptyRows`/`removeDuplicateHeaderRows` 按序执行）与表头提升为引擎开关（core/row-clean.ts，D122/D123/D124） |
 | **配置写回模板** | Step 3 全部配置经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写模板——保存 = 编译进 preprocess 标记段（内存编译不落盘，仅保存时写回）；读取 = 从标记段反编译回填各区块；字段规范见 template-schema.md §2/§9；写入仅限 `paths.templates` 目录 |
 | **[💾 保存到模板] 按钮** | Step 3 区块 3 模板元信息操作行 [📝 编辑模板代码] [➕ 新建模板] [💾 保存到模板]（D94/D95）——点击「保存到模板」即把 Step 3 全部配置编译并写回所选模板 preprocess 块；未选模板时禁用并提示先新建/选择；写入失败抛 `TEMPLATE_005` 内联提示；保存成功仅 Notice 不刷新页面 |
-| **UI 只调用** | 行筛选/删除/列变换等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
-| **区块归类** | Step 3 区块按影响粒度归类：模板级（模板元信息，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 行级（行配置：表头行/行清洗/行筛选）→ 列级（列配置：格式化/处理/映射）→ 字段级（派生）→ 结果（预览）；布局权威见 ui/layout.md §5 |
+| **UI 只调用** | 行筛选/列变换/派生等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
+| **区块归类** | Step 3 按影响粒度编排 **6 区块**（D108/D113/D117/D123，布局权威见 ui/layout.md §5.1）：区块 1 文件信息条 → 区块 2 数据表单选择（多 Sheet 时显示）→ 区块 3 模板元信息（模板级，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 区块 4 行配置（行级：行清洗 + 行筛选；D125 起无校验卡）→ 区块 5 列映射与派生（列级，合并单表）→ 区块 6 预览区 |
 | **行清洗与表头（D122/D123/D124，2026-09-06 已实现）** | 跨行引擎开关（不产编译段）：过滤空行（含第一行，trim 判定）/ 过滤重复表头；语义权威 core/row-clean.ts（API 值==列名 `applyRowCleaning`；向导 rawRows 原语 `removeEmptyRows`/`removeDuplicateHeaderRows`）；**表头 = 空行+行筛选+重复表头后剩余第一行**（promoteHeaderRow，占位 rawRows 列名 → 最终列名，行移除）；**D124 执行顺序**（向导表格类）= 过滤空行 → 行筛选 → 过滤重复表头[基准 = 清洗+筛选后剩余第一行] → 表头提升 → 列映射，随 frontmatter `row.clean` 保存；**原删除行 / 去重 / 过滤无效数据 / 合并行 / headerRow 已废弃删除** |
-| **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；D124 执行顺序在过滤空行之后、过滤重复表头之前（`空行 → 行筛选 → 重复表头 → 列格式化`，向导表格类）；类型 `RowFilterRule` / `RowFilterOp` 见 §7；`RowFilterRule.column` 支持 `'*'` 任意列；旧 byContent 删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」，D97） |
+| **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；D124 执行顺序在过滤空行之后、过滤重复表头之前（`空行 → 行筛选 → 重复表头 → 表头提升 → 列映射`，向导表格类）；类型 `RowFilterRule` / `RowFilterOp` 见 §7；`RowFilterRule.column` 支持 `'*'` 任意列；旧 byContent 删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」，D97） |
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
-| **列侧收敛：列映射 + 行内设置链（D105–D107）** | Step 3 区块 7 → 6：区块 5 = 单一列映射表（目标字段/来源/类型/添加设置/操作），删除区块 6 派生（预览顺延区块 6）；列格式化/列处理/派生并入列映射行 `settings` 链，列侧仅产出 `column-mapping` 段（无设置=复制、1 步=直调、**≥2 步=pipe** 写 set）；类型=快捷转换；旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移 |
 | **能力补齐对齐 EXAMPLES（D118–D121；D118 于 D125 废弃删除）** | 校验规则（D118）→ **D125 废弃删除**（frontmatter `validation` 契约一并移除）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120；D125 映射行 `noteType` 增「所有笔记」）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
@@ -310,7 +309,7 @@ export interface IValidator {
 
 [文件（按路径引用原文件）] → DataParser → DataRecord[]
     → TemplateScanner → 匹配模板
-    → DataPipeline → 预处理渲染（Handlebars 承载向导全部配置：行删除/行筛选/列格式化/行清洗/列处理/列映射/派生均编译自 Step 3，D98）→ 分流 → 派生字段
+    → DataPipeline → 预处理渲染（Handlebars 承载向导全部配置，均编译自 Step 3（D98）：行筛选 `row-filter` / 列映射 `column-mapping`（含行内设置链，D113）/ 派生 `derived` / 多笔记输出 `note-output`（D120）；行清洗与表头提升为跨行引擎开关（core/row-clean.ts，D122/D123/D124））→ 分流 → 派生字段
     → 组装 _notes 数组（每元素 = 1 个待生成笔记 NoteSpec）
     → NoteGenerator → 冲突检测 → 合并/覆盖/追加/跳过
     → 增量更新（内容哈希比对）→ 写入文件
@@ -353,6 +352,7 @@ importer-pro/
 │   └── workflows/
 │       ├── ci.yml              # lint + test + build + package
 │       └── release.yml         # 标签触发发布
+├── .arcmesh/                   # 蓝图、决策与规范（见 STANDARDS.md）
 ├── docs/                       # 用户文档
 │   ├── README.md               # 文档中心
 │   ├── guides/
@@ -365,38 +365,49 @@ importer-pro/
 │       ├── FAQ.md
 │       └── CHANGELOG.md
 ├── src/                        # 源代码
-│   ├── api/
+│   ├── api/                    # API 门面（window.ImporterPro）
 │   ├── core/
-│   │   ├── cache/
+│   │   ├── cache/              # 缓存提供者
+│   │   ├── events/             # 事件总线
+│   │   ├── generator/          # 笔记生成
 │   │   ├── hooks/              # 钩子系统
-│   │   ├── log/
-│   │   ├── merge/
-│   │   ├── parser/
+│   │   ├── log/                # 日志
+│   │   ├── merge/              # 合并引擎
+│   │   ├── parser/             # 数据解析器（7 类）
 │   │   ├── pipeline/           # 数据管道（分流/派生；D125 起不再含校验）
 │   │   ├── scanner/            # 模板扫描与匹配
-│   │   ├── template/
-│   │   └── validator/
-│   ├── ui/
-│   ├── helpers/
-│   ├── extensions/
-│   ├── types/
+│   │   ├── template/           # 模板引擎
+│   │   ├── validator/          # 校验器（D125 起 @deprecated）
+│   │   ├── dataview.ts         # Dataview 索引刷新（R11）
+│   │   ├── import-service.ts   # 导入服务
+│   │   ├── pause-controller.ts # 暂停令牌（R09）
+│   │   └── row-clean.ts        # 行清洗引擎开关（D122–D124 语义权威）
+│   ├── extensions/             # 扩展运行时（命名/冲突注册表，D114）
+│   ├── helpers/                # 内置 Helper
+│   ├── types/                  # 公共类型
+│   ├── ui/                     # 导入向导与设置页
 │   ├── utils/
 │   ├── main.ts
 │   └── settings.ts
-├── scripts/                    # 构建辅助脚本（package.mjs 等）
-├── tests/                      # 测试
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-├── .eslintrc.js
+├── scripts/                    # 构建辅助
+│   ├── package.mjs             # 发布打包
+│   └── shims/
+│       └── fumanchu-node-deps-empty.mjs   # esbuild browser 空壳（D110）
+├── tests/                      # 测试（Vitest）
+│   ├── unit/                   # 单元测试
+│   └── stubs/                  # 测试替身（obsidian stub）
+├── .eslintrc.cjs
 ├── .prettierrc
 ├── esbuild.config.mjs
 ├── package.json
+├── pnpm-lock.yaml
 ├── pnpm-workspace.yaml
+├── settings.json               # 本地 VS Code 设置
 ├── tsconfig.json
+├── versions.json               # Obsidian 插件版本清单
+├── vitest.config.ts
 ├── manifest.json
-├── styles.css                  # Obsidian 插件样式（发布必需）
-└── README.md
+└── styles.css                  # Obsidian 插件样式（发布必需）
 ```
 
 ## 7. 核心数据类型
@@ -523,6 +534,7 @@ interface TemplateInfo {
 interface MatchRule {
   pattern: string;
   type: 'regex' | 'glob' | 'exact';
+  priority?: number;   // D121：匹配优先级（默认 0，值越大越优先；自动匹配按优先级降序 + 先匹配先得）
 }
 
 /** D125 起 @deprecated：校验规则功能废弃删除（类型保留供旧校验 API 使用，v1.1 移除） */
@@ -533,59 +545,58 @@ interface ValidationRule {
   options?: Record<string, any>;
 }
 
+/** D125 起 @deprecated：校验结果（类型保留供旧校验 API 使用，v1.1 移除） */
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  data: DataRecord;
+}
+
 type ValidatorFn = (data: any) => Promise<ValidationResult> | ValidationResult;
 
-/** 模板 Frontmatter 元数据（D95/D98：match/output 为元信息；row/columns/derived 自 D98 起仅兼容旧模板读取，执行契约在 preprocess 编译段，权威规范见 components/template-schema.md §2/§9） */
+/** 模板 Frontmatter 元数据（D95/D98：match/output 为元信息；row/columns/mapping/derived 自 D98 起仅兼容旧模板读取，执行契约在 preprocess 编译段，权威规范见 components/template-schema.md §2/§9；代码口径见 src/types/index.ts TemplateConfig） */
 interface TemplateFrontmatter {
   template_id: string;
   name: string;
   version?: string;
   description?: string;
   match?: { enabled: boolean; patterns: MatchRule[] };
-  /** 输出位置及命名规则（D94：输出文件夹 + 文件名 Handlebars 表达式） */
+  /** 输出位置及命名规则（D94：输出文件夹 + 文件名 Handlebars 表达式；运行时求值 D112） */
   output?: {
     folder: string;
     note_name: string;
     conflict_strategy?: OutputConfig['conflictStrategy'];
     incremental_mode?: OutputConfig['incrementalMode'];
   };
-  row?: TemplateRowConfig;        // 行配置（行清洗/筛选）
-  columns?: TemplateColumnConfig; // 列配置（格式化/处理）
-  mapping?: { source: string; target: string }[];
+  row?: {
+    /** 行清洗引擎开关（D122/D123/D124，跨行操作，不产编译段）：过滤空行（含第一行）/ 过滤重复表头 */
+    clean?: { remove_empty?: boolean; remove_duplicate_header?: boolean };
+  };
+  columns?: Record<string, any>;  // D98 起仅兼容旧模板读取（D113 起折叠为列映射行设置链）
+  mapping?: { source: string; target: string }[];  // D98 起仅兼容旧模板读取
   /** D125 起废弃：校验规则功能删除（旧模板读取忽略、保存不再写出） */
   validation?: ValidationRule[]; // @deprecated
-  derived?: { field: string; rule: string; source: string }[];
+  derived?: { field: string; rule: string; source: string }[];  // D98 起仅兼容旧模板读取
+  /** 多笔记类型配置（D120）：附加笔记类型声明 */
+  notes?: TemplateNoteSpec[];
 }
 
-/** 行配置（D94/D95/D97/D98/D122/D123/D124）：D98 起 row/columns/derived 不再作为执行契约（执行逻辑编译进 preprocess 块，template-schema §9）；此结构仅用于旧模板 frontmatter 兼容迁移与行清洗跨行引擎开关 */
-interface TemplateRowConfig {
-  /** 行清洗引擎开关（D122/D123/D124，跨行操作，不产编译段）：过滤空行（含第一行）/ 过滤重复表头 */
-  clean?: {
-    remove_empty?: boolean;
-    remove_duplicate_header?: boolean;
-  };
-  /** 旧字段（D97/D122/D123）：删除行 / 去重 / 过滤无效数据 / 合并行 / header_row 已废弃，读取时兼容迁移或忽略 */
-  remove?: { kind: 'byIndex' | 'duplicateHeader' | 'byContent'; param: string; mode?: string; column?: string }[];
-  header_row?: number;   // 已废弃（D123，读取忽略）
-  merge_rows?: never[];  // 已废弃（D123，读取忽略）
-  filter?: RowFilterRule[];   // 行筛选（D96，包含式；column 支持 '*' 任意列）
+/** 多笔记类型配置（模板 frontmatter `notes` 元素，D120；对应 NoteSpec 的模板级声明，代码口径见 src/types/index.ts） */
+interface TemplateNoteSpec {
+  noteType: string;
+  folder: string;
+  condition: string;
+  content: string;
 }
 
-/** 列配置（D94/D95）：写入模板 frontmatter 的 columns 字段 */
-interface TemplateColumnConfig {
-  format?: { column: string; op: string; param: string }[];
-  process?: { column: string; op: string; param: string; param2?: string }[];
-}
-
-/** Step 3 向导配置（编译/反编译层的配置模型，D95/D98：编译为 preprocess Handlebars 标记段后写入模板） */
-interface TemplateTransformConfig {
-  match?: TemplateFrontmatter['match'];
-  output?: TemplateFrontmatter['output'];
-  row?: TemplateRowConfig;
-  columns?: TemplateColumnConfig;
-  mapping?: TemplateFrontmatter['mapping'];
-  derived?: TemplateFrontmatter['derived'];
-}
+/**
+ * Step 3 向导配置快照：实际类型 = `Step3TemplateSnapshot`（src/ui/wizard-data.ts，D95/D98 载体：
+ * name/match/output 元信息 + `transform`（行清洗/行筛选/列映射含设置链/多笔记类型）），
+ * 经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写，编译为 preprocess 标记段写回模板。
+ * （D94 时期蓝图曾定义 TemplateRowConfig / TemplateColumnConfig / TemplateTransformConfig，已随
+ *   D98 编译段化、D113 列侧收敛、D122–D124 行清洗收敛废弃删除；权威口径见 template-schema.md §2/§9。）
+ */
 
 /** 行筛选操作（D96，Excel 式筛选，包含式保留） */
 type RowFilterOp = 'eq' | 'neq' | 'contains' | 'notContains' | 'startsWith' | 'endsWith'
@@ -745,7 +756,7 @@ interface PluginSettings {
 | :--- | :--- | :--- |
 | `TEMPLATE_` | 模板加载/解析/匹配 | `TEMPLATE_001` 模板未找到 |
 | `PARSE_` | 数据解析 | `PARSE_001` 不支持的文件格式 / `PARSE_002` 解析失败（含指定工作表不存在，D86） |
-| `VALIDATE_` | 数据校验 | `VALIDATE_001` 必填字段缺失 |
+| `VALIDATE_` | 数据校验（D125 起校验规则功能废弃删除；错误码随 @deprecated API 保留至 v1.1） | `VALIDATE_001` 必填字段缺失 |
 | `CACHE_` | 缓存 | `CACHE_001` 缓存未就绪 |
 | `IO_` | 文件读写 | `IO_001` 写入失败 / `IO_002` 文件读取失败 |
 | `GENERATE_` | 笔记生成 | `GENERATE_001` 命名冲突无策略 |
@@ -797,4 +808,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.30.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除）_
+_版本: 1.31.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除；1.31.0 过时内容清理：§2.7/§7 接口对齐代码 `Step3TemplateSnapshot`、删 TemplateRowConfig/TemplateColumnConfig/TemplateTransformConfig 旧口径、§2.10/§3 对齐当前 6 区块与编译段清单、§6 目录树对齐实际仓库、补 MatchRule.priority/TemplateNoteSpec/ValidationResult）_
