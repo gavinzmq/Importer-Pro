@@ -760,7 +760,7 @@ function isIDLike(s: string): boolean {
 function applyMappingsRuntime(records: DataRecord[], mappings: ColumnMapping[]): DataRecord[] {
   if (mappings.length === 0) return records;
   return records.map((r) => {
-    let next = { ...r };
+    const next = { ...r };
     for (const m of mappings) {
       if (m.type === 'ignore') continue;
       if (!m.rule) {
