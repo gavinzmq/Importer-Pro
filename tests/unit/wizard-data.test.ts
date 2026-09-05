@@ -1,8 +1,8 @@
 /**
  * wizard-data.ts 纯函数单元测试（Vitest，供 CI `ci:test` 消费）
  *
- * 覆盖（D94–D98）：列格式化 / 行清洗（收敛）/ 行删除（收敛）/ 列处理 / 列映射 / 派生字段
- *      / JS 整链变换 / D96 行筛选 / D97 迁移与预置 / D98 编译·反编译往返与真实渲染一致性
+ * 覆盖（D94–D122）：列格式化 / 行清洗（D122：合并行·重复表头·空行）/ 列处理 / 列映射 / 派生字段
+ *      / JS 整链变换 / D96 行筛选 / D122 迁移与兼容 / D98 编译·反编译往返与真实渲染一致性
  *      / Dry Run 统计 / 展示格式化。纯逻辑、无 Obsidian 依赖。
  */
 import { describe, expect, it } from 'vitest';
@@ -15,13 +15,11 @@ import {
   applyColumnProcesses,
   applyRowCleaning,
   applyRowFilter,
-  applyRowRemoval,
   applyTransform,
   applyTransformPreview,
   applyWizardTransform,
   autoMapColumns,
   cellPassesFilter,
-  computeRowRemovalSet,
   configToHandlebars,
   configToSegments,
   countRowsAfterSelection,
@@ -37,13 +35,12 @@ import {
   isDuplicateHeaderRow,
   isPresetEmptyFilter,
   MAPPING_TYPE_LABELS,
-  parseRowNumbers,
-  presetFilterEmptyRows,
+  MERGE_MODE_LABELS,
+  mergeRowRuleLabel,
   removeAutoMappings,
   rowFilterFromRemove,
   rowFilterRuleLabel,
   rowMatchesFilter,
-  rowRemoveRuleLabel,
   rowValidationBadge,
   segmentsToPreprocess,
   toBooleanCell,
@@ -125,137 +122,152 @@ describe('applyColumnFormats：应用列格式化规则', () => {
   });
 });
 
-describe('applyRowCleaning：行清洗（D97 收敛：dedupe / filterInvalid；removeEmpty 已并入行筛选）', () => {
-  it('dedupe 按 JSON 去重', () => {
-    const records = [{ a: 1 }, { a: 1 }, { a: 2 }];
-    expect(applyRowCleaning(records, ['dedupe'])).toEqual([{ a: 1 }, { a: 2 }]);
+describe('applyRowCleaning：行清洗（D122：合并行 / 过滤重复表头 / 过滤空行，含第一行）', () => {
+  it('过滤空行（含第一行）：空串/全空格/缺列行均过滤，含首行', () => {
+    const records = [{ a: '' }, { a: '  ', b: '\t' }, { a: 'x' }, {}];
+    expect(applyRowCleaning(records, { removeEmpty: true })).toEqual([{ a: 'x' }]);
   });
 
-  it('filterInvalid 过滤全空行', () => {
-    const records = [{ a: '' }, { a: '' }, { a: 'x' }];
-    expect(applyRowCleaning(records, ['filterInvalid'])).toEqual([{ a: 'x' }]);
-  });
-
-  it('组合开关', () => {
-    const records = [{ a: '' }, { a: 'x' }, { a: 'x' }, {}];
-    expect(applyRowCleaning(records, ['dedupe', 'filterInvalid'])).toEqual([{ a: 'x' }]);
-  });
-});
-
-describe('parseRowNumbers：行号串解析（D88）', () => {
-  it('单号 / 区间 / 混合，升序去重', () => {
-    expect(parseRowNumbers('2,5,8-10')).toEqual([2, 5, 8, 9, 10]);
-    expect(parseRowNumbers('10-8')).toEqual([8, 9, 10]); // 反向区间归一
-    expect(parseRowNumbers('1,1,3-3,5,5')).toEqual([1, 3, 5]); // 重复合并
-    expect(parseRowNumbers('')).toEqual([]);
-  });
-
-  it('非法片段 / 非正数忽略', () => {
-    expect(parseRowNumbers('a,0,-3,2,x-y')).toEqual([2]);
-  });
-});
-
-describe('applyRowRemoval / computeRowRemovalSet：行删除（D88/D97 收敛：仅 byIndex / duplicateHeader）', () => {
-  const records = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }];
-
-  it('byIndex 删除指定原始行号（越界忽略）', () => {
-    expect(applyRowRemoval(records, [{ kind: 'byIndex', param: '1,3,99' }])).toEqual([{ a: 2 }, { a: 4 }]);
-    expect(computeRowRemovalSet(records, [{ kind: 'byIndex', param: '1,3,99' }])).toEqual(new Set([0, 2]));
-  });
-
-  it('duplicateHeader 删除「所有值与其列名完全相同且非空」的行', () => {
+  it('过滤重复表头：所有非空值与其列名相同的行过滤（基于解析后列名）', () => {
     const data = [
-      { 姓名: '姓名', 年龄: '年龄' }, // 重复打印的标题行
+      { 姓名: '姓名', 年龄: '年龄' },
       { 姓名: '张三', 年龄: '18' },
-      {}, // 空行不因 duplicateHeader 删除（交由「去除空行」筛选）
-      { 姓名: '张三', 年龄: '18' }
+      { 姓名: '姓名', 年龄: '年龄' },
+      { 姓名: '李四', 年龄: '20' }
     ];
-    expect(applyRowRemoval(data, [{ kind: 'duplicateHeader', param: '' }])).toEqual([
+    expect(applyRowCleaning(data, { removeDuplicateHeader: true })).toEqual([
       { 姓名: '张三', 年龄: '18' },
-      {},
-      { 姓名: '张三', 年龄: '18' }
+      { 姓名: '李四', 年龄: '20' }
     ]);
   });
 
-  it('isDuplicateHeaderRow 单行判断', () => {
+  it('合并行（精确/包含/正则）：匹配的连续行合并到前一条不匹配的行', () => {
+    const records = [
+      { 姓名: '张三', 备注: '主行' },
+      { 姓名: '续', 备注: '附加一' },
+      { 姓名: '续', 备注: '附加二' },
+      { 姓名: '李四', 备注: '第二主行' }
+    ];
+    // 正则 ^续：两行续行并入「张三」行（同名列按连接符拼接）
+    expect(applyRowCleaning(records, { mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }] })).toEqual([
+      { 姓名: '张三 / 续 / 续', 备注: '主行 / 附加一 / 附加二' },
+      { 姓名: '李四', 备注: '第二主行' }
+    ]);
+    // 精确匹配：仅「续」整值命中
+    expect(
+      applyRowCleaning(
+        [{ 姓名: '张三' }, { 姓名: '续', 备注: 'x' }],
+        { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] }
+      )
+    ).toEqual([{ 姓名: '张三 续', 备注: 'x' }]);
+    // 包含匹配
+    expect(
+      applyRowCleaning(
+        [{ 姓名: '张三' }, { 姓名: '（续）', 备注: 'y' }],
+        { mergeRows: [{ mode: 'contains', pattern: '续', separator: '-' }] }
+      )
+    ).toEqual([{ 姓名: '张三-（续）', 备注: 'y' }]);
+  });
+
+  it('合并行：首行即匹配（无目标）原样保留；目标缺列新建', () => {
+    const records = [
+      { 姓名: '续', 备注: 'x' },
+      { 姓名: '张三' }
+    ];
+    expect(applyRowCleaning(records, { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] })).toEqual(records);
+    // 缺列新建：合并行独有的列在目标行新建
+    expect(
+      applyRowCleaning(
+        [{ 姓名: '张三' }, { 电话: '138', 备注: '续' }],
+        { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] }
+      )
+    ).toEqual([{ 姓名: '张三', 电话: '138', 备注: '续' }]);
+  });
+
+  it('执行顺序：合并行 → 过滤重复表头 → 过滤空行', () => {
+    const records = [
+      { 姓名: '张三' },
+      { 姓名: '续' },
+      { 姓名: '姓名', 年龄: '年龄' }, // 重复表头
+      { 姓名: '', 年龄: '' } // 空行
+    ];
+    expect(
+      applyRowCleaning(records, {
+        mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }],
+        removeDuplicateHeader: true,
+        removeEmpty: true
+      })
+    ).toEqual([{ 姓名: '张三 续' }]);
+  });
+
+  it('无配置 / 空规则时原样返回', () => {
+    const records = [{ a: 1 }];
+    expect(applyRowCleaning(records, {})).toBe(records);
+    expect(applyRowCleaning(records, { mergeRows: [] })).toBe(records);
+  });
+
+  it('isDuplicateHeaderRow 单行判断（保留字段不参与数据列判定）', () => {
     expect(isDuplicateHeaderRow({ 姓名: '姓名', 年龄: '年龄' })).toBe(true);
     expect(isDuplicateHeaderRow({ 姓名: '张三', 年龄: '18' })).toBe(false);
     expect(isDuplicateHeaderRow({})).toBe(false);
-    // 保留字段不参与数据列判定（_index 使数据仍按普通列判断）
     expect(isDuplicateHeaderRow({ _index: 1, 姓名: '姓名' })).toBe(true);
     expect(isDuplicateHeaderRow({ _index: 1, 姓名: '张三' })).toBe(false);
   });
 
-  it('空规则原样返回', () => {
-    expect(applyRowRemoval(records, [])).toBe(records);
+  it('mergeRowRuleLabel / MERGE_MODE_LABELS：合并行规则展示', () => {
+    expect(MERGE_MODE_LABELS.map((m) => m.value)).toEqual(['exact', 'contains', 'regex']);
+    expect(mergeRowRuleLabel({ mode: 'regex', pattern: '^续', separator: ' ' })).toBe('正则 ^续 → 合并到上一行（连接符: 空格）');
+    expect(mergeRowRuleLabel({ mode: 'exact', pattern: '续', separator: ',' })).toBe('精确匹配 续 → 合并到上一行（连接符: ,）');
   });
 });
 
-describe('行删除与并集语义（D97：byIndex + duplicateHeader 并集，applyTransform 首步）', () => {
-  it('byIndex 与 duplicateHeader 并集，预览保留原始行号', () => {
-    const rows = [
-      { a: 'a', b: 'b' }, // duplicateHeader
-      { 姓名: '张三', 部门: '研发部' },
-      { 姓名: '李四', 部门: '市场部' },
-      { 姓名: '王五', 部门: '研发部' }
-    ];
-    const cfg: DataTransformConfig = {
-      removeRows: [
-        { kind: 'byIndex', param: '2' },
-        { kind: 'duplicateHeader', param: '' }
-      ],
-      filters: [],
-      formats: [],
-      clean: [],
-      processes: [],
-      mappings: []
-    };
-    expect(applyTransform(rows, cfg)).toEqual([
-      { 姓名: '李四', 部门: '市场部' },
-      { 姓名: '王五', 部门: '研发部' }
-    ]);
-    expect(applyTransformPreview(rows, cfg).map((r) => r.src)).toEqual([3, 4]);
-  });
-
-  it('rowRemoveRuleLabel 展示标签（已收敛，无 byContent）', () => {
-    expect(rowRemoveRuleLabel({ kind: 'byIndex', param: '2,5,8-10' })).toBe('按行号删除: 2,5,8-10');
-    expect(rowRemoveRuleLabel({ kind: 'duplicateHeader', param: '' })).toBe('删除重复标题行（值与列名全同的行）');
-  });
-});
-
-describe('applyTransformPreview / applyTransform：行删除置于变换首步（D88/D96 顺序）', () => {
-  it('duplicateHeader 先行删除后，后续映射行内设置链生效，预览保留原始行号', () => {
+describe('applyTransformPreview / applyTransform：行清洗置于变换首步（D122 顺序：行清洗 → 行筛选 → 列映射）', () => {
+  it('过滤空行（含第一行）+ 映射行内设置链生效，预览保留原始行号', () => {
     const data = [
-      { 姓名: '姓名', 年龄: '年龄' },
+      { 姓名: '  ', 年龄: '' }, // 第一行空行（应被过滤，D122 修复）
       { 姓名: ' 张三 ', 年龄: '18' },
       { 姓名: ' 李四 ', 年龄: '20' }
     ];
     const cfg: DataTransformConfig = {
-      removeRows: [{ kind: 'duplicateHeader', param: '' }],
+      clean: { removeEmpty: true },
       filters: [],
-      clean: [],
       mappings: [{ source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] }]
     };
     expect(applyTransform(data, cfg)).toEqual([
-      { 姓名: '张三', 年龄: '18' },
-      { 姓名: '李四', 年龄: '20' }
+      { 姓名: '张三', 年龄: '18', _index: 2 },
+      { 姓名: '李四', 年龄: '20', _index: 3 }
     ]);
     expect(applyTransformPreview(data, cfg).map((r) => r.src)).toEqual([2, 3]);
   });
 
-  it('byIndex 删除后预览行号不重排（# 显示原始行号）', () => {
+  it('合并行后预览行号 = 合并目标原始行号（# 显示）', () => {
     const data = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }];
     const cfg: DataTransformConfig = {
-      removeRows: [{ kind: 'byIndex', param: '2' }],
+      clean: { mergeRows: [{ mode: 'exact', pattern: '2', separator: ' ' }] },
       filters: [],
       formats: [],
-      clean: [],
       processes: [],
       mappings: []
     };
     const rows = applyTransformPreview(data, cfg);
     expect(rows.map((r) => r.src)).toEqual([1, 3, 4, 5]);
-    expect(rows.map((r) => r.row)).toEqual([{ a: 1 }, { a: 3 }, { a: 4 }, { a: 5 }]);
+  });
+
+  it('countRowsAfterSelection：行清洗 + 行筛选后的保留计数（D122 统计口径）', () => {
+    const rows = [
+      { 姓名: '姓名', 部门: '部门' }, // 重复表头
+      { 部门: '研发部', 姓名: '张三' },
+      { 部门: '研发部', 姓名: '李四' },
+      { 部门: '市场部', 姓名: '王五' }
+    ];
+    const cfg: DataTransformConfig = {
+      clean: { removeDuplicateHeader: true },
+      filters: [{ column: '部门', op: 'eq', value: '研发部' }],
+      formats: [],
+      processes: [],
+      mappings: []
+    };
+    expect(countRowsAfterSelection(rows, cfg)).toBe(2);
   });
 });
 
@@ -322,17 +334,17 @@ describe('D96 行筛选：cellPassesFilter / rowMatchesFilter', () => {
     expect(applyRowFilter(rows, rules)).toEqual([{ 部门: '研发部', 姓名: '张三' }]);
   });
 
-  it('countRowsAfterSelection：行删除 + 行筛选后的保留计数（D96 统计口径）', () => {
+  it('countRowsAfterSelection：行清洗 + 行筛选后的保留计数（D122 统计口径）', () => {
     const rows = [
-      { a: 'a', b: 'b' },
+      { a: 'a', b: 'b' }, // 重复表头
       { 部门: '研发部', 姓名: '张三' },
-      { 部门: '研发部', 姓名: '李四' }
+      { 部门: '研发部', 姓名: '李四' },
+      { 部门: '市场部', 姓名: '王五' }
     ];
     const cfg: DataTransformConfig = {
-      removeRows: [{ kind: 'duplicateHeader', param: '' }],
+      clean: { removeDuplicateHeader: true },
       filters: [{ column: '部门', op: 'eq', value: '研发部' }],
       formats: [],
-      clean: [],
       processes: [],
       mappings: []
     };
@@ -340,12 +352,11 @@ describe('D96 行筛选：cellPassesFilter / rowMatchesFilter', () => {
   });
 });
 
-describe('D97 迁移与预置：removeEmpty → 预置筛选规则；byContent → 筛选规则', () => {
-  it('presetFilterEmptyRows / isPresetEmptyFilter', () => {
-    const preset = presetFilterEmptyRows();
-    expect(preset).toEqual({ column: ANY_COLUMN, op: 'notEmpty', value: '' });
-    expect(isPresetEmptyFilter(preset)).toBe(true);
+describe('D122 迁移与兼容：旧「去除空行」预置规则 / byContent 迁移', () => {
+  it('isPresetEmptyFilter：识别旧「去除空行」预置筛选规则（读取时迁移为 clean.removeEmpty）', () => {
+    expect(isPresetEmptyFilter({ column: ANY_COLUMN, op: 'notEmpty', value: '' })).toBe(true);
     expect(isPresetEmptyFilter({ column: ANY_COLUMN, op: 'notEmpty', value: 'x' })).toBe(false);
+    expect(isPresetEmptyFilter({ column: '姓名', op: 'notEmpty', value: '' })).toBe(false);
   });
 
   it('rowFilterFromRemove：exact → 任意列 ≠ X；contains → 任意列 不包含 X；限定列保留', () => {
@@ -554,14 +565,16 @@ describe('applyTransform：整套变换链路（JS 语义层，D113 set 语义�
     const records = [{ 姓名: ' 张三 ', 性别: '男', extra: 'x' }];
     const out = applyTransform(records, {
       filters: [],
-      clean: [],
+      clean: {},
       mappings: [
         { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
         { source: '性别', target: '性别', type: 'text' },
         { source: '', target: '年份', type: 'text', rule: 'currentYear' }
       ]
     });
-    expect(out).toEqual([{ 姓名: '张三', 性别: '男', extra: 'x', 年份: `${new Date().getFullYear()}` }]);
+    expect(out).toEqual([
+      { 姓名: '张三', 性别: '男', extra: 'x', _index: 1, 年份: `${new Date().getFullYear()}` }
+    ]);
   });
 });
 
@@ -570,15 +583,12 @@ describe('D98 编译/反编译：标记段与往返', () => {
 
   function sampleConfig(): DataTransformConfig {
     return {
-      removeRows: [
-        { kind: 'byIndex', param: '2,5' },
-        { kind: 'duplicateHeader', param: '' }
-      ],
-      filters: [
-        { column: '部门', op: 'contains', value: '研发' },
-        presetFilterEmptyRows()
-      ],
-      clean: ['dedupe'],
+      clean: {
+        removeEmpty: true,
+        removeDuplicateHeader: true,
+        mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }]
+      },
+      filters: [{ column: '部门', op: 'contains', value: '研发' }],
       // D113：列格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
       mappings: [
         { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
@@ -590,13 +600,12 @@ describe('D98 编译/反编译：标记段与往返', () => {
     };
   }
 
-  it('configToHandlebars 生成含 ipro 标记段的 preprocess 文本', () => {
+  it('configToHandlebars 生成含 ipro 标记段的 preprocess 文本（行清洗为引擎开关，不入段）', () => {
     const hb = configToHandlebars(sampleConfig());
-    expect(hb).toContain('{{!-- ipro:begin:row-remove --}}');
+    expect(hb).toContain('{{!-- ipro:begin:row-filter --}}');
     expect(hb).toContain('{{!-- ipro:end:derived --}}');
-    expect(hb).toContain('(inRange _index "2,5")');
-    // duplicateHeader 为跨行引擎开关，不进入编译段
-    expect(hb).not.toContain('duplicateHeader');
+    expect(hb).not.toContain('row-remove'); // D122：删除行段已废弃
+    expect(hb).not.toContain('removeEmpty'); // 行清洗引擎开关不入段
   });
 
   it('handlebarsToConfig(configToHandlebars(cfg)) 往返还原（段编码部分）', () => {
@@ -604,36 +613,48 @@ describe('D98 编译/反编译：标记段与往返', () => {
     const hb = configToHandlebars(cfg);
     const back = handlebarsToConfig(hb);
     // 段编码部分一致（D113：映射行含设置链，派生 rule 行统一还原）
-    expect(back.removeRows).toEqual([{ kind: 'byIndex', param: '2,5' }]);
     expect(back.filters).toEqual(cfg.filters);
     expect(back.mappings).toEqual(cfg.mappings);
-    expect(back.clean).toEqual([]); // 引擎开关不入段（由 frontmatter 承载）
+    expect(back.clean).toEqual({}); // 行清洗引擎开关不入段（由 frontmatter 承载）
   });
 
-  it('segmentsToPreprocess / extractSegments / upsertSegments：保留段外用户代码', () => {
+  it('旧「去除空行」预置筛选规则读取时迁移为 clean.removeEmpty（D122）', () => {
+    const oldPre = [
+      '{{!-- ipro:begin:row-filter --}}',
+      '{{#unless (not (isEmptyRow this))}}{{set "_skip" true}}{{/unless}}',
+      '{{!-- ipro:end:row-filter --}}'
+    ].join('\n');
+    const cfg = handlebarsToConfig(oldPre);
+    expect(cfg.filters).toEqual([]);
+    expect(cfg.clean).toEqual({ removeEmpty: true });
+  });
+
+  it('segmentsToPreprocess / extractSegments / upsertSegments：保留段外用户代码并清理废弃段', () => {
     const user = '{{!-- 用户手写预处理 --}}\n{{set "_folder" "人员档案"}}\n';
     const seg = configToSegments(sampleConfig());
     const merged = upsertSegments(user, seg);
     expect(merged).toContain('用户手写预处理');
-    expect(merged).toContain('ipro:begin:row-remove');
+    expect(merged).toContain('ipro:begin:row-filter');
     const extracted = extractSegments(merged);
-    expect(extracted['row-remove']).toBeDefined();
+    expect(extracted['row-filter']).toBeDefined();
     expect(extracted.derived).toBeDefined();
     // 再次 upsert（模拟重复保存）不产生重复段
     const again = upsertSegments(merged, configToSegments(sampleConfig()));
-    expect(again.match(/ipro:begin:row-remove/g) ?? []).toHaveLength(1);
+    expect(again.match(/ipro:begin:row-filter/g) ?? []).toHaveLength(1);
+    // D122：旧 row-remove 段在保存时被清理（废弃段）
+    const withDeprecated = `${merged}\n\n{{!-- ipro:begin:row-remove --}}\n{{#if (inRange _index "2")}}{{set "_skip" true}}{{/if}}\n{{!-- ipro:end:row-remove --}}`;
+    expect(upsertSegments(withDeprecated, configToSegments(sampleConfig()))).not.toContain('row-remove');
   });
 
-  it('applyWizardTransform：真实 Handlebars 渲染（行号删除/筛选/行内设置链/派生），预览与导入统一路径', async () => {
+  it('applyWizardTransform：真实 Handlebars 渲染（行清洗/筛选/行内设置链/派生），预览与导入统一路径', async () => {
     const data = [
-      { 姓名: '姓名', 部门: '部门', 身份证号: 'x', tags: 'a,b' }, // duplicateHeader
+      { 姓名: '  ', 部门: '', 身份证号: '', tags: '' }, // 空行（首行，全空格）→ 行清洗过滤
       { 姓名: ' 张三 ', 部门: '研发部', 身份证号: '110101199001011237', tags: 'a,b' },
       { 姓名: ' 李四 ', 部门: '市场部', 身份证号: '110101199001011223', tags: 'c' }
     ];
     const cfg: DataTransformConfig = {
-      removeRows: [{ kind: 'byIndex', param: '1' }],
+      clean: { removeEmpty: true },
       filters: [{ column: '部门', op: 'contains', value: '研发' }],
-      clean: [],
       mappings: [
         { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
         { source: '身份证号', target: '身份证号', type: 'text' },
@@ -647,16 +668,34 @@ describe('D98 编译/反编译：标记段与往返', () => {
     expect(rows[0].row._index).toBe(2);
   });
 
+  it('applyWizardTransform：合并行跨行引擎开关与筛选/派生组合', async () => {
+    const data = [
+      { 姓名: '张三', 备注: '主行' },
+      { 姓名: '续', 备注: '附加' },
+      { 姓名: '李四', 备注: '' }
+    ];
+    const cfg: DataTransformConfig = {
+      clean: { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] },
+      filters: [],
+      formats: [],
+      processes: [],
+      mappings: [{ source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' }]
+    };
+    const rows = await applyWizardTransform(engine, data, cfg);
+    expect(rows.map((r) => r.src)).toEqual([1, 3]); // 合并行继承目标行号
+    expect(rows[0].row.姓名).toBe('张三 续');
+    expect(rows[0].row.备注_hash).toBe(deriveValue('md5Short', '主行 附加')); // 合并后同名列拼接为派生源
+  });
+
   it('applyWizardTransform：行筛选任意列 + 派生 md5Short 空源防护', async () => {
     const data = [
       { 姓名: '张三', 备注: '测试备注' },
       { 姓名: '李四', 备注: '' }
     ];
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [{ column: ANY_COLUMN, op: 'notContains', value: '测试' }],
       formats: [],
-      clean: [],
+      clean: {},
       processes: [],
       mappings: [{ source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' }]
     };
@@ -671,9 +710,8 @@ describe('D98 编译/反编译：标记段与往返', () => {
       { 姓名: ' 李四 ', 部门: '市场部' }
     ];
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [{ column: '部门', op: 'contains', value: '研发' }],
-      clean: [],
+      clean: {},
       mappings: [{ source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] }]
     };
     const real = (await applyWizardTransform(engine, data, cfg)).map((r) => {
@@ -681,7 +719,11 @@ describe('D98 编译/反编译：标记段与往返', () => {
       void _omit;
       return rest;
     });
-    const js = applyTransform(data, cfg);
+    const js = applyTransform(data, cfg).map((r) => {
+      const { _index: _omit, ...rest } = r;
+      void _omit;
+      return rest;
+    });
     expect(real).toEqual(js);
   });
 });
@@ -715,10 +757,9 @@ describe('编译段与 JS 筛选语义一致性（rowMatchesFilter vs applyWizar
   for (const rule of rules) {
     it(`行筛选规则 ${rowFilterRuleLabel(rule)}：JS 与 Handlebars 渲染一致`, async () => {
       const cfg: DataTransformConfig = {
-        removeRows: [],
         filters: [rule],
         formats: [],
-        clean: [],
+        clean: {},
         processes: [],
         mappings: []
       };
@@ -740,9 +781,8 @@ describe('编译段真实渲染：行内设置链（格式化/处理）/派生�
 
   it('行内设置链（格式化/处理/类型快捷）/派生渲染结果与 JS 层一致（去 _index 后）', async () => {
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [],
-      clean: [],
+      clean: {},
       mappings: [
         { source: '姓名', target: '姓名', type: 'text', settings: [{ group: 'format', op: 'trim', param: '' }] },
         { source: '金额', target: '金额', type: 'number' }, // 类型快捷转换
@@ -767,9 +807,8 @@ describe('编译段真实渲染：行内设置链（格式化/处理）/派生�
 
   it('≥2 步设置链编译为 pipe 并真实渲染（类型快捷 + 处理/格式化组合）', async () => {
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [],
-      clean: [],
+      clean: {},
       mappings: [
         {
           source: '手机号',
@@ -800,7 +839,7 @@ describe('D99 pipe 值型变换管道：编译/反编译/真实渲染', () => {
   const engine = new TemplateEngine();
 
   function cfgWithMappings(mappings: ColumnMapping[]): DataTransformConfig {
-    return { removeRows: [], filters: [], formats: [], clean: [], processes: [], mappings };
+    return { filters: [], formats: [], clean: {}, processes: [], mappings };
   }
 
   it('编译：md5Short / currentYear 派生行产出 pipe 形态（≥2 步）', () => {
@@ -882,7 +921,7 @@ describe('D117：FrontMatter 类型收敛 + 派生行可携带设置（统一管
   const engine = new TemplateEngine();
 
   function cfgOf(mappings: ColumnMapping[]): DataTransformConfig {
-    return { removeRows: [], filters: [], clean: [], mappings };
+    return { filters: [], clean: {}, mappings };
   }
 
   it('toBooleanCell：空/真值/假值/不可识别', () => {
@@ -992,11 +1031,11 @@ describe('dryRunStats：Dry Run 统计（R10）', () => {
 });
 
 describe('emptyTransform：默认配置', () => {
-  it('含 filters 空数组（D96 字段）', () => {
+  it('含 filters 空数组与空行清洗（D122 字段）', () => {
     const t = emptyTransform();
     expect(t.filters).toEqual([]);
-    expect(t.removeRows).toEqual([]);
-    expect(t.clean).toEqual([]);
+    expect(t.clean).toEqual({});
+    expect(t.mappings).toEqual([]);
   });
 });
 
@@ -1039,7 +1078,7 @@ describe('D118：校验规则注入与状态回填（applyWizardTransform / 徽�
   ];
 
   function cfg(): DataTransformConfig {
-    return { removeRows: [], filters: [], clean: [], mappings: [] };
+    return { filters: [], clean: {}, mappings: [] };
   }
 
   it('规则回填 _valid/_errors/_warnings/_status（合法/非法/空必填）', async () => {
@@ -1059,24 +1098,17 @@ describe('D118：校验规则注入与状态回填（applyWizardTransform / 徽�
     expect(rows[2].row._errors).toContain('姓名不能为空');
   });
 
-  it('「过滤无效数据」+ 校验规则 → 按校验失败过滤（镜像运行时 D115）', async () => {
+  it('行清洗「过滤空行」含全空格与首行（D122）+ 校验回填不自动 _skip', async () => {
     const data = [
+      { 姓名: '  ', 身份证号: '' }, // 首行空行 → 过滤
       { 姓名: '张三', 身份证号: '110101199001011237' },
-      { 姓名: '李四', 身份证号: 'bad' }, // 校验失败 → 过滤
-      { 姓名: '', 身份证号: '110101199001011223' } // 校验失败 → 过滤
+      { 姓名: '李四', 身份证号: 'bad' } // 校验失败但不跳过（校验不自动 _skip）
     ];
-    const cfgFilter: DataTransformConfig = { removeRows: [], filters: [], clean: ['filterInvalid'], mappings: [] };
-    const rows = await applyWizardTransform(engine, data, cfgFilter, { rules });
-    expect(rows.map((r) => r.src)).toEqual([1]);
-    expect(rows[0].row.姓名).toBe('张三');
-  });
-
-  it('无规则时「过滤无效数据」回落全空行启发式、且不注入校验字段', async () => {
-    const data = [{ a: '' }, { a: 'x' }];
-    const cfgFilter: DataTransformConfig = { removeRows: [], filters: [], clean: ['filterInvalid'], mappings: [] };
-    const rows = await applyWizardTransform(engine, data, cfgFilter, { rules: [] });
-    expect(rows.map((r) => r.src)).toEqual([2]);
-    expect('_valid' in rows[0].row).toBe(false);
+    const cfgClean: DataTransformConfig = { filters: [], clean: { removeEmpty: true }, mappings: [] };
+    const rows = await applyWizardTransform(engine, data, cfgClean, { rules });
+    expect(rows.map((r) => r.src)).toEqual([2, 3]);
+    expect(rows[0].row._valid).toBe(true);
+    expect(rows[1].row._valid).toBe(false);
   });
 
   it('rowValidationBadge：err/warn/ok/未标记', () => {
@@ -1109,7 +1141,7 @@ describe('D119：计算 / 条件 / 链接 设置组（编译 · 反编译 · 真
   const engine = new TemplateEngine();
 
   function cfgOf(mappings: ColumnMapping[]): DataTransformConfig {
-    return { removeRows: [], filters: [], clean: [], mappings };
+    return { filters: [], clean: {}, mappings };
   }
 
   it('算术：直调（单步）+ ≥2 步 pipe + 数字常数/列名操作数 + 往返', async () => {
@@ -1214,9 +1246,8 @@ describe('D120：多笔记输出（noteTypes + 输出到 + note-output 段）', 
   const engine = new TemplateEngine();
 
   const cfgMulti = (): DataTransformConfig => ({
-    removeRows: [],
     filters: [],
-    clean: [],
+    clean: {},
     noteTypes: [
       { id: 'contact', name: '联系方式', condition: [{ column: '电话', op: 'notEmpty', value: '' }] }
     ],
@@ -1273,9 +1304,8 @@ describe('D120：多笔记输出（noteTypes + 输出到 + note-output 段）', 
 
   it('零回归：未使用附加类型（全部输出到主笔记）→ 不产 note-output 段', () => {
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [],
-      clean: [],
+      clean: {},
       noteTypes: [{ id: 'contact', name: '联系方式' }],
       mappings: [{ source: '姓名', target: '姓名', type: 'text' }] // 未指派任何行到 contact
     };
@@ -1288,9 +1318,8 @@ describe('D120：多笔记输出（noteTypes + 输出到 + note-output 段）', 
 
   it('多附加类型 + 显式文件夹/模板/文件名后缀：编译与往返', () => {
     const cfg: DataTransformConfig = {
-      removeRows: [],
       filters: [],
-      clean: [],
+      clean: {},
       noteTypes: [
         { id: 'contact', name: '联系方式', template: '_templates/联系方式.md', folder: '联系方式', noteName: '_联系' },
         { id: 'work', name: '工作经历' }

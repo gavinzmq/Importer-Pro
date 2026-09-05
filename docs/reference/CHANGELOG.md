@@ -1,8 +1,8 @@
 ---
 title: "变更日志"
 type: "changelog"
-version: "1.19.0"
-last_updated: "2026-09-05"
+version: "1.21.0"
+last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
 tags: ["changelog", "releases"]
@@ -47,6 +47,7 @@ arcmesh:
 - **Step 3 能力补齐对齐 EXAMPLES.md（2026-09-05，D118–D121 设计定稿，实现待排）**：以 `docs/reference/EXAMPLES.md` 四个示例为基准补 UI 第三步缺口——① **D118 校验规则 UI**：区块 4 新增「✅ 校验规则」卡（Validator 内置 8 种：必填/身份证/邮箱/手机号/日期/长度/数值范围/唯一），随 [💾 保存到模板] 写 frontmatter `validation`（复用 D115 运行时，不产编译段），预览区行首 ✅/⚠️/❌ 状态标记；② **D119 计算/条件/链接**：区块 5「添加设置」扩为五组（+ **计算**：加减乘除、条件计算 `(if (比较) 真值 假值)`、条件警告；+ **链接**：smartLink 目标/回退），白名单 21 → 24（add/subtract/divide），警告/链接为映射行附言；③ **D120 多笔记输出**：映射行「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），新编译段 `note-output`（`push _notes`），`_template` 引用模板内容渲染为阶段二；④ **D121 输出策略**：区块 3 增冲突策略/增量模式下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。蓝图同步：architecture 1.25.0 / ui/layout 1.19.0 / template-schema 1.12.0 / template-engine 1.7.0 / project 1.26.0 / glossary 1.7.1。见 decisions/2026-09-05-step3-examples-parity.md（v1.1.0 已实现，见下条）
 - **Step 3 能力补齐实现（2026-09-05，D118–D121 已实现）**：按 decisions/2026-09-05-step3-examples-parity.md 落地四缺口——
   ① **D121 输出策略 + 匹配优先级**：区块 3 增「冲突策略/增量模式」下拉与「优先级」输入，写 `output.conflict_strategy`/`incremental_mode`/`match.patterns[0].priority`；自动匹配改优先级降序 + 先匹配先得（`compareRuleMatch` 可测纯函数）；修复 `config.matchRules` 从未回填致 auto-match 恒失效的缺陷。② **D118 校验规则 UI**：区块 4「✅ 校验规则」卡（Validator 内置 8 种 + 消息 + length/range 参数），写 frontmatter `validation`；预览/Step 4 走 `applyWizardTransform {rules}` 与 `importRecords.validation` 真实校验回填 `_valid/_errors/_warnings/_status`，预览行首 ✅/⚠️/❌ 徽标；「过滤无效数据」有规则时按校验失败过滤（并修复 _index 干扰全空判定的缺陷）。③ **D119 计算/条件/链接**：「添加设置」扩五组——计算（加减乘除 / 条件计算 ternary / 条件警告附言）与链接（smartLink 附言）；`PIPE_STAGE_WHITELIST` 增 add/subtract/divide（24→27）+ 运行时 `ternary` helper；warn/link 为映射行 set 后附言、编译/反编译往返。④ **D120 多笔记输出**：「输出到」列 +「📑 笔记类型」面板（名称/模板引用/文件夹/文件名后缀/生成条件），新 IproSegment `note-output`（含主笔记在内全部笔记显式建为 `_notes` object、字段按输出到分区、条件 `{{#if}}` 包裹），反编译还原 noteTypes 与行 noteType；预览按源行展开多笔记清单；`_template` 引用内容渲染为阶段二（templateRef 透传、内容回落主模板）。落点：wizard-data（编译/反编译/校验/多笔记）、template-scanner、types、builtin、pipeline/import-service（validation 覆盖、normalizeSpec 多笔记）、import-modal（区块 3/4/5/预览）、styles.css。单测 +20（全量 Vitest **157 例全绿**、type-check 通过）。见 decisions/2026-09-05-step3-examples-parity.md
+- **行清洗重构（2026-09-05，D122 已实现）**：用户反馈「删除行没用 / 去重、过滤无效数据没用 / 去除空行对首行与全空格行失效」——① **删除「删除行」功能及代码**（byIndex/duplicateHeader 两类、`row-remove` 编译段、`RowRemoveRule`/`parseRowNumbers` 等全量移除，旧段保存时自动清理）；② **删除「去重 / 过滤无效数据」两开关**（`RowCleanFlag` 废弃）；③ **行清洗重做为三项跨行引擎开关**（语义统一 `src/core/row-clean.ts`，向导与 API 路径同源）：**合并行**（匹配 exact/contains/regex 的连续行合并到其前一条不匹配的行，同名列按连接符拼接、缺列新建、首行匹配原样保留、继承目标行号）/ **过滤重复表头**（值==列名，基于表头行应用后的解析列名）/ **过滤空行（含第一行）**——`isEmptyCell`/`isEmptyRow` 与 `builtin.isEmptyRow` 同步 **trim 判定**，修复全空格/首行空行漏判根因；执行顺序 = 合并行 → 重复表头 → 空行 → 行筛选；配置随 frontmatter `row.clean`（remove_empty/remove_duplicate_header）与 `row.merge_rows` 保存、不产编译段；④ **表头行（解析级）与行清洗「过滤重复表头」（数据级）不重复、均保留**（后者基于前者应用后的列名）；⑤ 旧配置迁移（`removeEmpty`→remove_empty、`duplicateHeader`→remove_duplicate_header、`byContent`→筛选、`dedupe`/`filterInvalid`/`byIndex` 忽略、旧「任意列 非空」预置规则→remove_empty）。落点：`core/row-clean.ts`（新）、`types`（MergeRowRule/RowCleanConfig）、`wizard-data`、`pipeline`、`template-scanner`、`import-modal`（区块 4 行清洗卡重做）、`builtin`。单测：`row-clean.test.ts` 新增 + wizard-data/template-scanner 更新（全量 Vitest **167 例全绿**、type-check 通过）。见 decisions/2026-09-05-row-clean-rework.md
 
 #### 图形化配置
 - **4 步导入向导**：来源选择 → 文件管理 → 模板配置 → 进度执行（模板配置内含数据处理/列映射/校验/派生字段/匹配规则/分流/输出/预览）

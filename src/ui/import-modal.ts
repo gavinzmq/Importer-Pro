@@ -53,19 +53,16 @@ import {
   formatTimeAgo,
   FORMAT_OP_LABELS,
   isPostscriptSetting,
-  isPresetEmptyFilter,
   LINK_OP_LABELS,
   mappingSettingLabel,
   MAPPING_TYPE_LABELS,
-  parseRowNumbers,
-  presetFilterEmptyRows,
+  MERGE_MODE_LABELS,
+  mergeRowRuleLabel,
   PROCESS_OP_LABELS,
   removeAutoMappings,
-  ROW_CLEAN_LABELS,
   rowFilterRuleLabel,
   ROW_FILTER_OP_LABELS,
   RowFilterRule,
-  rowRemoveRuleLabel,
   rowValidationBadge,
   settingParamSpec,
   unmappedColumns,
@@ -73,7 +70,7 @@ import {
   VALIDATION_TYPE_LABELS,
   validationRuleLabel
 } from './wizard-data';
-import type { ComputeCompareOp } from './wizard-data';
+import type { ComputeCompareOp, MergeRowMode, MergeRowRule } from './wizard-data';
 import { dryRunStats, type DryRunSummary } from './wizard-data';
 import { TemplateEngine } from '../core/template/engine';
 
@@ -1187,7 +1184,7 @@ export class ImportModal extends Modal {
     }
   }
 
-  /** 区块 4：行配置（行级，D94）：表头行 / 行清洗 / 删除行 / 行筛选 */
+  /** 区块 4：行配置（行级，D94/D122）：表头行 / 行清洗（合并行·重复表头·空行）/ 行筛选 / 校验规则 */
   private renderRowsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.rows = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
@@ -1197,74 +1194,75 @@ export class ImportModal extends Modal {
     // ── 表头行（D87，仅 Excel/CSV 显示；变更即带 headerRow 重解析） ──
     this.renderHeaderRowCard(wrap);
 
-    // ── 行清洗（D97 收敛：dedupe / filterInvalid + 「去除空行」预置筛选快捷开关） ──
+    // ── 行清洗（D122：过滤空行（含第一行）/ 过滤重复表头 / 合并行；跨行引擎开关，行筛选之前执行） ──
     const cleanCard = wrap.createDiv({ cls: 'ipw-card' });
-    cleanCard.createDiv({ cls: 'ipw-card-title', text: '🧹 行清洗' });
-    const cleanRow = cleanCard.createDiv({ cls: 'ipw-form-row ipw-checks' });
-    for (const { value, label } of ROW_CLEAN_LABELS) {
-      const cb = cleanRow.createEl('input', { type: 'checkbox' });
-      cb.checked = this.transform.clean.includes(value);
-      cleanRow.createSpan({ text: label });
-      cb.addEventListener('change', () => {
-        this.transform.clean = cb.checked
-          ? [...this.transform.clean, value]
-          : this.transform.clean.filter((f) => f !== value);
-        this.refreshPreviewOnly(); // D91 L1
-      });
-    }
-    // 「去除空行」快捷开关：内部实现为预置筛选规则（任意列 非空），与筛选列表联动（D97）。
-    // 行筛选列表在「行筛选」卡片内（layout.md §5.5），此处仅生成/移除预置规则。
-    let filterListBox: HTMLElement | null = null;
-    const emptyCb = cleanRow.createEl('input', { type: 'checkbox' });
-    emptyCb.checked = this.transform.filters.some((f) => isPresetEmptyFilter(f));
-    cleanRow.createSpan({ text: '去除空行(↪预置筛选)' });
+    cleanCard.createDiv({ cls: 'ipw-card-title', text: '🧹 行清洗（合并行 / 重复表头 / 空行）' });
+    const cleanCfg = this.transform.clean ?? (this.transform.clean = {});
+    const toggleRow = cleanCard.createDiv({ cls: 'ipw-form-row ipw-checks' });
+
+    const emptyCb = toggleRow.createEl('input', { type: 'checkbox' });
+    emptyCb.checked = cleanCfg.removeEmpty === true;
+    toggleRow.createSpan({ text: '过滤空行（含第一行）' });
     emptyCb.addEventListener('change', () => {
-      const has = this.transform.filters.some((f) => isPresetEmptyFilter(f));
-      this.transform.filters = has
-        ? this.transform.filters.filter((f) => !isPresetEmptyFilter(f))
-        : [...this.transform.filters, presetFilterEmptyRows()];
-      if (filterListBox) this.renderFilterList(filterListBox);
+      cleanCfg.removeEmpty = emptyCb.checked || undefined;
       this.refreshPreviewOnly(); // D91 L1
     });
-    // D118/D115：与校验规则联动提示（勾选「过滤无效数据」且已配置校验规则时 = 按校验失败过滤）
-    cleanCard.createDiv({ cls: 'ipw-muted ipw-note', text: 'ⓘ 已配置校验规则时，「过滤无效数据」= 按校验失败过滤（无规则回落全空行启发式）' });
 
-    // ── 删除行（D97 收敛：按行号 byIndex / 删除重复标题行 duplicateHeader；预览「#」列对号删除） ──
-    const delCard = wrap.createDiv({ cls: 'ipw-card' });
-    delCard.createDiv({ cls: 'ipw-card-title', text: '🗑 删除行（仅结构级）' });
-    const delRow = delCard.createDiv({ cls: 'ipw-form-row' });
-    delRow.createSpan({ cls: 'ipw-label', text: '按行号:' });
-    const delInput = delRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '原始行号 2,5,8-10（见预览 # 列）' });
-    const delAdd = delRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
-    delAdd.addEventListener('click', () => {
-      const val = delInput.value.trim();
-      if (parseRowNumbers(val).length === 0) {
-        new Notice('请输入有效行号（1 起始），如 2,5,8-10');
+    const dupCb = toggleRow.createEl('input', { type: 'checkbox' });
+    dupCb.checked = cleanCfg.removeDuplicateHeader === true;
+    toggleRow.createSpan({ text: '过滤重复表头行' });
+    dupCb.addEventListener('change', () => {
+      cleanCfg.removeDuplicateHeader = dupCb.checked || undefined;
+      this.refreshPreviewOnly(); // D91 L1
+    });
+
+    // 合并行规则编辑器（D122）：匹配方式（精确/包含/正则）+ 字符 + 连接符
+    const mergeCard = cleanCard.createDiv({ cls: 'ipw-merge-row' });
+    const mRow = mergeCard.createDiv({ cls: 'ipw-form-row' });
+    mRow.createSpan({ cls: 'ipw-label', text: '合并行:' });
+    const mMode = mRow.createEl('select', { cls: 'ipw-select' });
+    for (const o of MERGE_MODE_LABELS) mMode.createEl('option', { value: o.value, text: o.label });
+    const mPat = mRow.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      attr: { placeholder: mMode.value === 'regex' ? '正则表达式，如 ^续' : '匹配字符，如 续' }
+    });
+    const syncPatPlaceholder = (): void => {
+      mPat.setAttr('placeholder', mMode.value === 'regex' ? '正则表达式，如 ^续' : '匹配字符，如 续');
+    };
+    mMode.addEventListener('change', syncPatPlaceholder);
+    const mSep = mRow.createEl('input', { cls: 'ipw-input ipw-sep-input', type: 'text', value: ' ', attr: { placeholder: '连接符' } });
+    const mAdd = mRow.createEl('button', { cls: 'ipw-mini', text: '➕ 添加' });
+    mAdd.addEventListener('click', () => {
+      const pattern = mPat.value.trim();
+      if (pattern === '') {
+        new Notice('请填写匹配字符（正则模式填正则表达式）');
         return;
       }
-      this.transform.removeRows = [...(this.transform.removeRows ?? []), { kind: 'byIndex', param: val }];
-      delInput.value = '';
-      this.renderRemoveRowsList(delList); // 仅刷新「已配置」列表
+      const rule: MergeRowRule = {
+        mode: mMode.value as MergeRowMode,
+        pattern,
+        separator: mSep.value
+      };
+      cleanCfg.mergeRows = cleanCfg.mergeRows ?? [];
+      cleanCfg.mergeRows.push(rule);
+      mPat.value = '';
+      this.renderMergeRowsList(mergeList); // 仅刷新「已配置」列表
       this.refreshPreviewOnly(); // D91 L1
     });
-    const delDup = delRow.createEl('button', { cls: 'ipw-mini', text: '🗑 删除重复标题行' });
-    delDup.classList.toggle('is-active', (this.transform.removeRows ?? []).some((r) => r.kind === 'duplicateHeader'));
-    delDup.addEventListener('click', () => {
-      const rules = this.transform.removeRows ?? [];
-      if (rules.some((r) => r.kind === 'duplicateHeader')) {
-        this.transform.removeRows = rules.filter((r) => r.kind !== 'duplicateHeader');
-        delDup.classList.remove('is-active');
-      } else {
-        this.transform.removeRows = [...rules, { kind: 'duplicateHeader', param: '' }];
-        delDup.classList.add('is-active');
-      }
-      this.renderRemoveRowsList(delList);
-      this.refreshPreviewOnly();
+    mergeCard.createDiv({
+      cls: 'ipw-muted ipw-note',
+      text: '匹配的行（任一列命中）合并到其上一行：同名列按连接符拼接、缺列新建；首行即匹配时保留原样。'
     });
-    const delList = delCard.createDiv({ cls: 'ipw-del-list' }); // 删除行「已配置」列表（仅重建此列表，控件持久）
-    this.renderRemoveRowsList(delList);
+    const mergeList = mergeCard.createDiv({ cls: 'ipw-del-list' });
+    this.renderMergeRowsList(mergeList);
+    cleanCard.createDiv({
+      cls: 'ipw-muted ipw-note',
+      text: 'ⓘ 执行顺序：合并行 → 过滤重复表头 → 过滤空行 → 行筛选。重复表头基于「表头行」应用后的列名判定（值与列名相同即过滤）。'
+    });
 
     // ── 行筛选（D96：Excel 式包含式，列下拉含「任意列」） ──
+    let filterListBox: HTMLElement | null = null;
     const filterCard = wrap.createDiv({ cls: 'ipw-card' });
     filterCard.createDiv({ cls: 'ipw-card-title', text: '🔍 行筛选（保留全部规则均匹配的行）' });
     const filterRow = filterCard.createDiv({ cls: 'ipw-form-row' });
@@ -1383,7 +1381,6 @@ export class ImportModal extends Modal {
       rules.forEach((r, i) => {
         const row = list.createDiv({ cls: 'ipw-rule-row' });
         row.createSpan({ cls: 'ipw-rule-text', text: `• ${rowFilterRuleLabel(r)}` });
-        if (isPresetEmptyFilter(r)) row.createSpan({ cls: 'ipw-rule-tag', text: '去除空行' });
         const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
         del.addEventListener('click', () => {
           const next = [...rules];
@@ -1396,7 +1393,7 @@ export class ImportModal extends Modal {
     } else {
       container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)' });
     }
-    // 统计行：行删除 + 行筛选后的保留行数（D96）
+    // 统计行：行清洗 + 行筛选后的保留行数（D122）
     const kept = countRowsAfterSelection(this.parsed, this.transform);
     const stat = container.createDiv({ cls: 'ipw-muted ipw-note' });
     stat.setText(`保留「全部规则均匹配」的行（AND），筛选后 ${formatCount(kept)} / ${formatCount(this.parsed.length)} 行`);
@@ -1424,10 +1421,11 @@ export class ImportModal extends Modal {
     this.renderNoteTypesPanel(wrap);
   }
 
-  /** D91/D93：仅重建「删除行已配置」列表（不整块重建、不重置顶部控件），供 L1 级增删即时回显 */
-  private renderRemoveRowsList(container: HTMLElement): void {
+  /** D91/D122：仅重建「合并行已配置」列表（不整块重建、不重置顶部控件），供 L1 级增删即时回显 */
+  private renderMergeRowsList(container: HTMLElement): void {
     container.empty();
-    const rules = this.transform.removeRows ?? [];
+    const cleanCfg = this.transform.clean ?? (this.transform.clean = {});
+    const rules = cleanCfg.mergeRows ?? [];
     if (rules.length === 0) {
       container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)' });
       return;
@@ -1436,13 +1434,13 @@ export class ImportModal extends Modal {
     const list = container.createDiv({ cls: 'ipw-rule-list' });
     rules.forEach((r, i) => {
       const row = list.createDiv({ cls: 'ipw-rule-row' });
-      row.createSpan({ cls: 'ipw-rule-text', text: `• ${rowRemoveRuleLabel(r)}` });
+      row.createSpan({ cls: 'ipw-rule-text', text: `• ${mergeRowRuleLabel(r)}` });
       const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
       del.addEventListener('click', () => {
-        const arr = [...(this.transform.removeRows ?? [])];
+        const arr = [...(cleanCfg.mergeRows ?? [])];
         arr.splice(i, 1);
-        this.transform.removeRows = arr;
-        this.renderRemoveRowsList(container);
+        cleanCfg.mergeRows = arr;
+        this.renderMergeRowsList(container);
         this.refreshPreviewOnly();
       });
     });
@@ -1470,6 +1468,10 @@ export class ImportModal extends Modal {
       }
       this.headerRow = n - 1;
       void this.applyHeaderRowChange();
+    });
+    card.createDiv({
+      cls: 'ipw-muted ipw-note',
+      text: 'ⓘ 决定哪一行作为列名、从哪开始读取数据（解析级）。行清洗的「过滤重复表头」基于本设置应用后的列名，过滤数据中重复出现的表头行。'
     });
   }
 
@@ -2212,9 +2214,9 @@ export class ImportModal extends Modal {
     container.querySelector('.ipw-preview-head')?.remove();
     container.querySelector('.ipw-preview-grid-wrap')?.remove();
 
-    // 筛选统计（行删除 + 行筛选后保留，D96）
+    // 筛选统计（行清洗 + 行筛选后保留，D122）
     const kept = countRowsAfterSelection(this.parsed, this.transform);
-    const hasSel = (this.transform.filters?.length ?? 0) > 0 || (this.transform.removeRows?.length ?? 0) > 0;
+    const hasSel = this.hasRowSelection();
     const head = container.createDiv({ cls: 'ipw-muted ipw-note ipw-preview-head' });
     head.setText(hasSel ? `筛选后 ${formatCount(kept)} / ${formatCount(total)} 行` : `共 ${formatCount(total)} 行`);
 
@@ -2292,6 +2294,17 @@ export class ImportModal extends Modal {
     if (this.previewEl && this.previewEl.isConnected) {
       void this.renderPreviewRows(this.previewEl);
     }
+  }
+
+  /** 是否启用了行清洗 / 行筛选（预览「筛选后 X / Y 行」标题口径，D122） */
+  private hasRowSelection(): boolean {
+    const clean = this.transform.clean;
+    const cleanOn =
+      !!clean &&
+      (clean.removeEmpty === true ||
+        clean.removeDuplicateHeader === true ||
+        (clean.mergeRows?.length ?? 0) > 0);
+    return (this.transform.filters?.length ?? 0) > 0 || cleanOn;
   }
   /* ── Step 4：预检确认（R10 Dry Run）→ 进度执行（R09 暂停/恢复/停止/断点续跑） ── */
 

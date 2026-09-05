@@ -8,12 +8,11 @@ import {
   DERIVED_PRESETS,
   foldLegacyColumnOps,
   handlebarsToConfig,
-  presetFilterEmptyRows,
   rowFilterFromRemove,
   upsertSegments,
   type Step3TemplateSnapshot
 } from '../../ui/wizard-data';
-import type { ColumnMapping, DerivedRuleId, LegacyByContentRule } from '../../ui/wizard-data';
+import type { ColumnMapping, DerivedRuleId, LegacyByContentRule, MergeRowRule, RowCleanConfig } from '../../ui/wizard-data';
 
 /** 模板扫描器（architecture §2.7） */
 export interface ITemplateScanner {
@@ -100,7 +99,7 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：读取模板持久化的 Step 3 配置。
    * preprocess 标记段反编译 → transform；frontmatter 提供元信息（match/output/name）与引擎开关
-   * （row.header_row、row.clean dedupe/filterInvalid、row.remove duplicateHeader）；
+   * （row.header_row、行清洗 row.clean / row.merge_rows，D122）；
    * 旧模板 frontmatter（byContent 删除 / removeEmpty 清洗 / row.filter / columns / mapping / derived）
    * 一次性迁移入 transform（读取即迁移，保存不再产出旧字段）。
    */
@@ -118,7 +117,7 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回所选模板（模板即配置源）。
    * - 写入仅限 paths.templates 目录（STANDARDS §7）；模板不存在抛 TEMPLATE_001，越界抛 SECURITY_001；
-   * - frontmatter 仅写元信息（name/match/output）与引擎开关（row.header_row / row.clean / row.remove[duplicateHeader]），
+   * - frontmatter 仅写元信息（name/match/output）与引擎开关（row.header_row / 行清洗 row.clean + row.merge_rows，D122），
    *   列/映射/派生等旧字段不再写入（收敛进编译段）；失败抛 TEMPLATE_005。
    */
   async saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void> {
@@ -424,29 +423,45 @@ function ensureFilter(rules: RowFilterRule[], rule: RowFilterRule): void {
   if (!hit) rules.push(rule);
 }
 
-/** 旧 frontmatter 行/列配置一次性迁移进 transform（D97/D98：byContent→筛选、removeEmpty→预置规则；段已编码者不去重叠加） */
+/** 旧 frontmatter 行配置一次性迁移进 transform（D122：删除行/去重/过滤无效数据废弃；新行清洗 = 合并行/重复表头/空行） */
 function migrateLegacyRowConfig(transform: Step3TemplateSnapshot['transform'], row: Record<string, any> | undefined): void {
   if (!row || typeof row !== 'object') return;
-  const clean: string[] = Array.isArray(row.clean) ? row.clean : [];
-  for (const flag of clean) {
-    if (flag === 'removeEmpty') ensureFilter(transform.filters, presetFilterEmptyRows());
-    else if (flag === 'dedupe' && !transform.clean.includes('dedupe')) transform.clean.push('dedupe');
-    else if (flag === 'filterInvalid' && !transform.clean.includes('filterInvalid')) transform.clean.push('filterInvalid');
+  const clean: RowCleanConfig = transform.clean ?? (transform.clean = {});
+  const rc = row.clean;
+  if (Array.isArray(rc)) {
+    // 旧结构（字符串数组）：removeEmpty → removeEmpty；dedupe / filterInvalid 废弃忽略（D122）
+    if (rc.includes('removeEmpty')) clean.removeEmpty = true;
+  } else if (rc && typeof rc === 'object') {
+    // 新结构（对象）：remove_empty / remove_duplicate_header 直接读取
+    if (rc.remove_empty === true) clean.removeEmpty = true;
+    if (rc.remove_duplicate_header === true) clean.removeDuplicateHeader = true;
+  }
+  // 合并行规则（row.merge_rows 优先，兼容 row.clean.merge_rows）
+  const mergeSource = Array.isArray(row.merge_rows) ? row.merge_rows : (rc && typeof rc === 'object' && Array.isArray(rc.merge_rows) ? rc.merge_rows : []);
+  for (const m of mergeSource) {
+    if (!m || typeof m !== 'object') continue;
+    const mode = m.mode === 'exact' || m.mode === 'contains' || m.mode === 'regex' ? m.mode : null;
+    if (!mode || typeof m.pattern !== 'string' || m.pattern === '') continue;
+    const rule: MergeRowRule = {
+      mode,
+      pattern: m.pattern,
+      separator: typeof m.separator === 'string' && m.separator !== '' ? m.separator : ' '
+    };
+    clean.mergeRows = clean.mergeRows ?? [];
+    if (!clean.mergeRows.some((x) => x.mode === rule.mode && x.pattern === rule.pattern && x.separator === rule.separator)) {
+      clean.mergeRows.push(rule);
+    }
   }
   const remove: any[] = Array.isArray(row.remove) ? row.remove : [];
   for (const r of remove) {
     if (!r || typeof r !== 'object') continue;
     if (r.kind === 'byContent') {
+      // byContent 迁移为行筛选（保留既有语义，D97/D122）
       ensureFilter(transform.filters, rowFilterFromRemove(r as LegacyByContentRule));
-    } else if (r.kind === 'byIndex') {
-      const rules = transform.removeRows ?? (transform.removeRows = []);
-      if (r.param && !rules.some((x) => x.kind === 'byIndex' && x.param === r.param)) {
-        rules.push({ kind: 'byIndex', param: String(r.param) });
-      }
     } else if (r.kind === 'duplicateHeader') {
-      const rules = transform.removeRows ?? (transform.removeRows = []);
-      if (!rules.some((x) => x.kind === 'duplicateHeader')) rules.push({ kind: 'duplicateHeader', param: '' });
+      clean.removeDuplicateHeader = true;
     }
+    // byIndex（按行号删除行）废弃忽略（D122）
   }
   const legacyFilter: RowFilterRule[] = Array.isArray(row.filter) ? row.filter : [];
   for (const f of legacyFilter) {
@@ -581,11 +596,18 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   // D118：校验规则写 frontmatter validation（不产编译段——校验契约 = frontmatter，template-schema §2）
   if (Array.isArray(snap.validation) && snap.validation.length > 0) next.validation = snap.validation;
   else delete next.validation;
+  // D122：行清洗（引擎开关）写 frontmatter row.clean（对象）/ row.merge_rows；删除行/去重/过滤无效数据不再产出
   const row: Record<string, any> = {};
   if (snap.headerRow > 0) row.header_row = snap.headerRow;
-  if (t.clean.length > 0) row.clean = t.clean;
-  const dupHeader = (t.removeRows ?? []).filter((r) => r.kind === 'duplicateHeader');
-  if (dupHeader.length > 0) row.remove = dupHeader.map((r) => ({ kind: 'duplicateHeader', param: r.param ?? '' }));
+  const clean = t.clean ?? {};
+  const cleanObj: Record<string, any> = {};
+  if (clean.removeEmpty) cleanObj.remove_empty = true;
+  if (clean.removeDuplicateHeader) cleanObj.remove_duplicate_header = true;
+  if (Object.keys(cleanObj).length > 0) row.clean = cleanObj;
+  const mergeRows = (clean.mergeRows ?? []).filter((r) => r && r.pattern !== '');
+  if (mergeRows.length > 0) {
+    row.merge_rows = mergeRows.map((r) => ({ mode: r.mode, pattern: r.pattern, separator: r.separator || ' ' }));
+  }
   if (Object.keys(row).length > 0) next.row = row;
   else delete next.row;
   // D98：columns/mapping/derived 收敛进 preprocess 编译段，不再写 frontmatter（读取旧字段仅兼容迁移）

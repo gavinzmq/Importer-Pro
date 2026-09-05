@@ -117,7 +117,7 @@ row:
 \`\`\`
 `;
 
-  it('读取：frontmatter 元信息 + byContent/removeEmpty 一次性迁移为筛选规则', () => {
+  it('读取：frontmatter 元信息 + byContent/removeEmpty 一次性迁移（D122：removeEmpty → 行清洗开关）', () => {
     const snap = parseStep3Snapshot(LEGACY);
     expect(snap).not.toBeNull();
     if (!snap) return;
@@ -126,13 +126,13 @@ row:
     expect(snap.matchPattern).toBe('*.csv');
     expect(snap.outputFolder).toBe('人员档案');
     expect(snap.outputNoteName).toBe('{{_hash}}');
-    // byContent(contains) → 任意列 不包含；removeEmpty → 预置 notEmpty 规则
+    // byContent(contains) → 任意列 不包含（筛选迁移保留）；removeEmpty → clean.removeEmpty（行清洗引擎开关）
     const filter = snap.transform.filters;
     expect(filter.some((f) => f.op === 'notContains' && f.value === '测试' && f.column === '*')).toBe(true);
-    expect(filter.some((f) => f.column === '*' && f.op === 'notEmpty')).toBe(true);
+    expect(snap.transform.clean?.removeEmpty).toBe(true);
   });
 
-  it('写入：配置编译进 preprocess 段 + frontmatter 仅保留元信息/引擎开关，段外用户代码保留', () => {
+  it('写入：配置编译进 preprocess 段 + frontmatter 仅保留元信息/行清洗开关，段外用户代码保留', () => {
     const snap = {
       name: '新模板名',
       matchType: 'regex' as const,
@@ -145,9 +145,12 @@ row:
       headerRow: 2,
       validation: [],
       transform: {
-        removeRows: [{ kind: 'duplicateHeader' as const, param: '' }],
-        filters: [{ column: '*', op: 'notEmpty' as const, value: '' }],
-        clean: ['dedupe' as const],
+        clean: {
+          removeEmpty: true,
+          removeDuplicateHeader: true,
+          mergeRows: [{ mode: 'regex' as const, pattern: '^续', separator: ' / ' }]
+        },
+        filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
         // D113：格式化并入映射行设置链（不再产出 column-format 段）
         mappings: [{ source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] }]
       }
@@ -157,16 +160,19 @@ row:
     expect(next).toContain('ipro:begin:column-mapping');
     expect(next).toContain('用户手写预处理'); // 段外用户代码保留
     expect(next).toContain('- {{姓名}}'); // 第二个代码块（content）保留
-    // frontmatter：name/output 更新；row 仅引擎开关；旧 byContent/removeEmpty/columns/mapping/derived 不产出
+    // frontmatter：name/output 更新；row 仅行清洗开关；旧 byContent/removeEmpty/columns/mapping/derived 不产出
     expect(next).toContain('name: 新模板名');
     expect(next).toContain('^员工');
     expect(next).toContain('folder: 输出目录');
     expect(next).not.toContain('byContent');
     expect(next).not.toContain('removeEmpty');
     expect(next).not.toContain('columns:');
-    // row.remove 仅保留 duplicateHeader；row.clean 收敛 dedupe；header_row 写入
+    // D122：header_row 写入；row.clean 对象 + row.merge_rows 数组写入
     expect(next).toContain('header_row: 2');
-    expect(next).toContain('duplicateHeader');
+    expect(next).toContain('remove_empty: true');
+    expect(next).toContain('remove_duplicate_header: true');
+    expect(next).toContain('merge_rows:');
+    expect(next).toContain('pattern: ^续');
   });
 
   it('写入 → 读回：段配置往返还原（模板 = 配置源）', () => {
@@ -182,9 +188,8 @@ row:
       headerRow: 0,
       validation: [],
       transform: {
-        removeRows: [{ kind: 'byIndex' as const, param: '3' }],
+        clean: { removeEmpty: true },
         filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
-        clean: [],
         // D113：格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
         mappings: [
           { source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] },
@@ -198,7 +203,7 @@ row:
     const back = parseStep3Snapshot(raw);
     expect(back).not.toBeNull();
     if (!back) return;
-    expect(back.transform.removeRows).toEqual([{ kind: 'byIndex', param: '3' }]);
+    expect(back.transform.clean?.removeEmpty).toBe(true);
     expect(back.transform.filters).toEqual(snap.transform.filters);
     expect(back.transform.mappings).toEqual(snap.transform.mappings);
     expect(back.outputFolder).toBe('出');
@@ -238,7 +243,7 @@ output:
       incrementalMode: 'timestamp' as const,
       headerRow: 0,
       validation: [],
-      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+      transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).toContain('priority: 5');
@@ -304,7 +309,7 @@ match:
         { field: '身份证号', type: 'id-card', message: '身份证格式不正确' },
         { field: '薪资', type: 'range', message: '', options: { min: 0, max: 100000 } }
       ],
-      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+      transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).toContain('validation:');
@@ -329,7 +334,7 @@ match:
       incrementalMode: 'hash' as const,
       headerRow: 0,
       validation: [],
-      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+      transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).not.toContain('validation:');

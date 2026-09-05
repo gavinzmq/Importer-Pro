@@ -240,13 +240,13 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     return k in (obj as Record<string | symbol, any>);
   });
   hb.registerHelper('isNotEmpty', (v: unknown) => v !== undefined && v !== null && v !== '');
-  // 空行判定：无「任一非 _ 前缀列值非空」（供「去除空行」预置规则编译）
+  // 空行判定：无「任一非 _ 前缀列值非空」（D122：trim 后判定，修复全空格单元格漏判——与 core/row-clean.isEmptyRow 口径一致）
   hb.registerHelper('isEmptyRow', function (this: unknown, options: { data?: { root?: Record<string, any> } }) {
     const root = (options?.data?.root ?? this ?? {}) as Record<string, any>;
     const vals = Object.keys(root)
       .filter((k) => !k.startsWith('_'))
       .map((k) => root[k]);
-    return vals.length === 0 || vals.every((v) => v === undefined || v === null || v === '');
+    return vals.length === 0 || vals.every((v) => v === undefined || v === null || String(v).trim() === '');
   });
   // 字符串包含类（大小写敏感；str 为数组时任一元素命中即 true——支持 col "*"）
   const anyString = (str: unknown): unknown[] => (Array.isArray(str) ? str : [str]);

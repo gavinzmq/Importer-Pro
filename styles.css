@@ -445,6 +445,15 @@
   margin-left: 8px;
 }
 
+/* D122：行清洗·合并行规则编辑器（连接符窄输入） */
+.ipw-form-row .ipw-input.ipw-sep-input {
+  width: 72px;
+  flex: 0 0 72px;
+}
+.ipw-merge-row {
+  margin-top: 6px;
+}
+
 .ipw-rule-list {
   display: flex;
   flex-direction: column;

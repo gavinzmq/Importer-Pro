@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.26.0"
+version: "1.27.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -168,7 +168,9 @@ arcmesh:
 > ② **D119 计算/条件/链接**：区块 5「添加设置」扩为五组（+ 计算：加减乘除/条件计算/条件警告；+ 链接：smartLink 目标/回退），白名单 21 → 24（add/subtract/divide），warn/link 为映射行附言；
 > ③ **D120 多笔记输出**：映射行「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），新编译段 `note-output`（`push _notes`）；`_template` 引用模板内容渲染为阶段二；
 > ④ **D121 输出策略**：区块 3 增 冲突策略/增量模式 下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。
-> 蓝图同步：architecture 1.25.0 / ui/layout 1.19.0 / template-schema 1.12.0 / template-engine 1.7.0 / CHANGELOG 1.18.0 / glossary 1.7.1。
+> 蓝图同步：architecture 1.26.0 / ui/layout 1.20.0 / template-schema 1.13.0 / template-engine 1.7.0 / CHANGELOG 1.20.0 / glossary 1.8.0。
+
+> **行清洗重构（D122，2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：用户反馈「删除行没用 / 去重、过滤无效数据没用 / 去除空行对首行与全空格行失效」——① **删除「删除行」功能与代码**（byIndex/duplicateHeader、`row-remove` 段、`RowRemoveRule` 等全量移除）；② **删除「去重 / 过滤无效数据」两开关**；③ **行清洗重做为三项跨行引擎开关**（合并行 exact/contains/regex、过滤重复表头、过滤空行含第一行——`isEmptyRow`/`isEmptyCell` trim 判定修复失效根因），语义统一 `src/core/row-clean.ts`（向导与 API 路径同源），随 frontmatter `row.clean`/`row.merge_rows` 保存、不产编译段，执行顺序 = 合并行 → 重复表头 → 空行 → 行筛选；④ 表头行（解析级）与行清洗「过滤重复表头」（数据级）不重复、均保留；⑤ 旧配置迁移（removeEmpty/duplicateHeader→新开关、byContent→筛选、dedupe/filterInvalid/byIndex 忽略）。全量 Vitest **167 例全绿**、type-check 通过。
 
 ## 5. 里程碑
 
@@ -216,4 +218,4 @@ arcmesh:
 
 ---
 
-*版本: 1.26.0 | 最后更新: 2026-09-05*
+*版本: 1.27.0 | 最后更新: 2026-09-05*

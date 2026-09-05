@@ -286,7 +286,7 @@ export type RowFilterOp =
   | 'regex';
 
 /**
- * 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行删除之后（删除优先）。
+ * 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行清洗之后。
  * D97：column 支持 '*' 任意列（整行任一列值命中即通过）；empty/notEmpty 时忽略列。
  * D98：规则经编译层（wizard-data configToHandlebars）生成 preprocess Handlebars 条件块，不在运行时由 JS 执行。
  */
@@ -310,6 +310,36 @@ export interface NoteTypeConfig {
   condition?: RowFilterRule[];
   folder?: string;
   noteName?: string;
+}
+
+/** 合并行匹配方式（D122：行清洗「合并行」规则；exact=精确相等 / contains=包含 / regex=正则） */
+export type MergeRowMode = 'exact' | 'contains' | 'regex';
+
+/**
+ * 合并行规则（D122，行清洗引擎开关；随模板 frontmatter `row.merge_rows` 保存，不产编译段）：
+ * 匹配（任一数据列命中）的**连续行**合并到其**前一条不匹配的行**——同名列按 separator 拼接、
+ * 目标缺列新建；首行即匹配（无合并目标）时原样保留。
+ */
+export interface MergeRowRule {
+  mode: MergeRowMode;
+  /** 匹配字符（regex 模式下为正则源文本；非法正则视为不匹配） */
+  pattern: string;
+  /** 合并连接符（同名列拼接分隔，默认 ' '） */
+  separator: string;
+}
+
+/**
+ * 行清洗配置（D122，跨行引擎开关；随模板 frontmatter `row.clean` 保存，不产编译段）：
+ * 执行顺序 = 合并行 → 过滤重复表头 → 过滤空行（均在行筛选之前）。
+ * 取代旧 row.clean 数组（dedupe/filterInvalid 已废弃）与 row.remove（删除行已废弃）。
+ */
+export interface RowCleanConfig {
+  /** 过滤空行（含第一行；单元格 trim 后为空判定） */
+  removeEmpty?: boolean;
+  /** 过滤重复表头行（所有非空值与其列名完全相同；基于解析后列名判定） */
+  removeDuplicateHeader?: boolean;
+  /** 合并行规则列表（任一命中即合并） */
+  mergeRows?: MergeRowRule[];
 }
 /** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */
 export type PipeStageFn = (value: unknown) => unknown;

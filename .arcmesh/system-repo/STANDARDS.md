@@ -1,7 +1,7 @@
 ---
 title: "开发规范与标准"
 type: "standard"
-version: "1.11.0"
+version: "1.12.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -111,7 +111,7 @@ src/
 
 | 规范项 | 标准 |
 | :--- | :--- |
-| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的一切功能都是**为模板生成 Handlebars 逻辑**，不是调用 JS 函数——导入与预览统一走 `TemplateEngine.renderPreprocess`；禁止在导入流程中调用运行时变换函数（原 `applyTransform` 类废弃）；唯一例外：跨行操作（去重/重复标题行，`row.clean` 引擎开关）与解析级参数（表头行/表单选择） |
+| **Handlebars 唯一逻辑载体（D98/D122）** | UI Step 3 的一切功能都是**为模板生成 Handlebars 逻辑**，不是调用 JS 函数——导入与预览统一走 `TemplateEngine.renderPreprocess`；禁止在导入流程中调用运行时变换函数（原 `applyTransform` 类废弃）；唯一例外：行清洗（合并行/过滤重复表头/过滤空行，跨行结构操作，core/row-clean.ts 引擎开关）与解析级参数（表头行/表单选择） |
 | **UI 只调用** | 导入向导（`import-modal.ts`）仅负责渲染控件、绑定事件与调用；**不内联业务逻辑**（编译/反编译/匹配判断一律不放组件内），**不直接读写文件或 preprocess 代码** |
 | **逻辑归属编译层** | 行删除/行筛选/列格式化/列处理/列映射/派生的「配置 ↔ Handlebars」编译与反编译（ipro 标记段）收敛到 `wizard-data.ts` 纯函数层（往返可单测）；模板配置读写归 `TemplateScanner` 核心服务 |
 | **能抽离的尽量抽离** | 可复用/可独立测试的算法（规则 → Handlebars 编译、标记段解析、规则标签、命名示例渲染）一律抽离为独立导出纯函数，禁止以私有方法形式埋在组件类里 |
@@ -347,4 +347,4 @@ const ERROR_CODES = {
 
 ---
 
-_版本: 1.10.0
+_版本: 1.12.0

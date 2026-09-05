@@ -3,18 +3,22 @@
  * 权威：ui/layout.md §5 / architecture §2.7/§2.10 / template-schema §9 / decisions 2026-09-04-step3-template-config-restructure.md（D94–D98）
  *
  * - D96 行筛选：RowFilterOp 13 种（Excel 式包含式保留，多规则 AND）；`'*'` 任意列。
- * - D97 行能力收敛：删除行仅 byIndex/duplicateHeader（byContent → 筛选迁移）；行清洗收敛 dedupe/filterInvalid；
- *   「去除空行」= 预置筛选规则 `{ column:'*', op:'notEmpty' }` 快捷开关；旧配置读取自动迁移。
+ * - D122 行清洗重构：删除行（byIndex/duplicateHeader）与「去重 / 过滤无效数据」废弃删除；
+ *   行清洗重新设计为三项跨行引擎开关（合并行 / 过滤重复表头 / 过滤空行，含第一行）——
+ *   语义统一于 core/row-clean.ts（applyRowCleaning），执行顺序在行筛选之前，不产编译段、
+ *   随模板 frontmatter `row.clean` / `row.merge_rows` 保存；旧配置读取自动迁移。
  * - D98 执行载体：配置编译为 preprocess Handlebars 标记段（configToHandlebars / handlebarsToConfig / 段替换），
  *   预览与导入统一走 applyWizardTransform（真实 renderPreprocess，行/列逻辑不调用 JS 变换函数）。
  * - 列格式化 / 列处理 / 列映射 / 派生字段等纯函数（JS 语义层）保留：供配置编译参数换算、迁移与单测；
  *   正式执行（预览/导入）一律经 Handlebars 编译段。
  */
-import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, ValidationRule } from '../types';
+import type { ConflictStrategy, DataRecord, IncrementalMode, MergeRowMode, MergeRowRule, NoteTypeConfig, RowCleanConfig, ValidationRule } from '../types';
 import type { RowFilterOp, RowFilterRule } from '../types';
 import { md5Hash } from '../utils/crypto';
 import { Validator } from '../core/validator/validator';
+import { applyRowCleaning, isDuplicateHeaderRow } from '../core/row-clean';
 export type { NoteTypeConfig };
+export type { RowCleanConfig, MergeRowMode, MergeRowRule } from '../types';
 
 /** D118：向导/预览校验语义与运行时同源（复用 core Validator，无 Obsidian 依赖；保证「预览 == 导入」） */
 const validationEngine = new Validator();
@@ -34,16 +38,7 @@ export interface ColumnFormatRule {
   param: string;
 }
 
-/** 行清洗开关（D97 收敛：removeEmpty 已并入 filters 预置规则，不在此维护） */
-export type RowCleanFlag = 'dedupe' | 'filterInvalid';
-
-/** 行删除规则（D88/D97 收敛）：byIndex = 按原始行号（param='2,5,8-10'）；duplicateHeader = 删除值与列名全同的非空行（跨行引擎开关，不入编译段） */
-export type RowRemoveKind = 'byIndex' | 'duplicateHeader';
-export interface RowRemoveRule {
-  kind: RowRemoveKind;
-  /** byIndex：1-based 原始行号串（支持 `2,5,8-10` 区间）；duplicateHeader：忽略 */
-  param: string;
-}
+/** 行清洗开关（D122 收敛：合并行 / 过滤重复表头 / 过滤空行，见 RowCleanConfig） */
 
 /** 旧 byContent 删除规则（D93，仅旧模板 frontmatter 兼容迁移输入；写入不再产生，D97） */
 export interface LegacyByContentRule {
@@ -256,13 +251,15 @@ export function compareOpSymbol(op: ComputeCompareOp): string {
   return COMPUTE_COMPARE_LABELS.find((o) => o.value === op)?.label ?? op;
 }
 
-/** Step 3 数据变换总配置（编译层输入；D96 增 filters，D97 收敛 clean/removeRows；D113 列侧收敛进 mappings.settings） */
+/** Step 3 数据变换总配置（编译层输入；D96 增 filters，D122 clean 重构为 RowCleanConfig；D113 列侧收敛进 mappings.settings） */
 export interface DataTransformConfig {
-  /** 行删除（结构级）：byIndex 编译进 row-remove 段；duplicateHeader 为跨行引擎开关（不入段） */
-  removeRows?: RowRemoveRule[];
-  /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段；含「去除空行」预置规则 {column:'*',op:'notEmpty'} */
+  /**
+   * 行清洗（D122，跨行引擎开关，不产编译段）：合并行 / 过滤重复表头 / 过滤空行（含第一行），
+   * 语义统一于 core/row-clean.ts；执行顺序在行筛选之前；随模板 frontmatter row.clean/merge_rows 保存。
+   */
+  clean?: RowCleanConfig;
+  /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段 */
   filters: RowFilterRule[];
-  clean: RowCleanFlag[];
   /**
    * 列映射 / 派生统一行（rule 有值即派生计算行；settings 行内设置链）。
    * D113 起为列侧唯一执行字段；formats/processes 旧字段已折叠入 mappings.settings。
@@ -276,7 +273,7 @@ export interface DataTransformConfig {
 }
 
 export function emptyTransform(): DataTransformConfig {
-  return { removeRows: [], filters: [], clean: [], mappings: [], formats: [], processes: [] };
+  return { clean: {}, filters: [], mappings: [], formats: [], processes: [] };
 }
 
 /** 模板配置快照（readTemplateConfig / saveTemplateConfig 载体，D95/D98：模板 = Step 3 配置源） */
@@ -459,14 +456,9 @@ export function rowValidationBadge(row: DataRecord): 'ok' | 'warn' | 'err' | nul
   return null;
 }
 
-/* ── D97 迁移与预置 ──────────────────────────────────────── */
+/* ── D122 迁移与兼容 ─────────────────────────────────────── */
 
-/** 「去除空行」预置筛选规则：任意列至少一列非空（至少保留任意非空列的行） */
-export function presetFilterEmptyRows(): RowFilterRule {
-  return { column: ANY_COLUMN, op: 'notEmpty', value: '' };
-}
-
-/** 是否为「去除空行」预置规则（供快捷开关与筛选列表联动判定） */
+/** 是否为旧「去除空行」预置筛选规则（D97 遗留：{column:'*', op:'notEmpty'}；D122 读取时迁移为 clean.removeEmpty） */
 export function isPresetEmptyFilter(rule: RowFilterRule): boolean {
   return rule.column === ANY_COLUMN && rule.op === 'notEmpty' && rule.value === '';
 }
@@ -509,10 +501,19 @@ export const MAPPING_TYPE_LABELS: ReadonlyArray<{ value: MappingType; label: str
   { value: 'ignore', label: '忽略' }
 ];
 
-export const ROW_CLEAN_LABELS: ReadonlyArray<{ value: RowCleanFlag; label: string }> = [
-  { value: 'dedupe', label: '去重' },
-  { value: 'filterInvalid', label: '过滤无效数据' }
+/** 合并行匹配方式标签（D122） */
+export const MERGE_MODE_LABELS: ReadonlyArray<{ value: MergeRowMode; label: string }> = [
+  { value: 'exact', label: '精确匹配' },
+  { value: 'contains', label: '包含' },
+  { value: 'regex', label: '正则' }
 ];
+
+/** 合并行规则展示标签（D122）：`正则 ^续 → 合并到上一行（连接符: ' '）` */
+export function mergeRowRuleLabel(rule: MergeRowRule): string {
+  const mode = MERGE_MODE_LABELS.find((m) => m.value === rule.mode)?.label ?? rule.mode;
+  const sep = rule.separator === ' ' ? '空格' : rule.separator;
+  return `${mode} ${rule.pattern} → 合并到上一行（连接符: ${sep || '空格'}）`;
+}
 
 /* ── 校验规则（D118：区块 4「✅ 校验规则」卡；类型 = Validator 内置 8 种，契约 = frontmatter validation） ── */
 
@@ -657,89 +658,9 @@ export function applyColumnFormats(records: DataRecord[], rules: ColumnFormatRul
   });
 }
 
-/* ── 行删除（D88/D97 收敛：byIndex / duplicateHeader） ─────── */
+/* ── 行清洗（D122：合并行 / 过滤重复表头 / 过滤空行；语义权威 = core/row-clean.ts） ── */
 
-/** 解析行号串 `2,5,8-10` → 1-based 行号（升序去重；非法片段与 ≤0 的号忽略） */
-export function parseRowNumbers(param: string): number[] {
-  const set = new Set<number>();
-  for (const part of (param || '').split(/[,，;；\s]+/)) {
-    const seg = part.trim();
-    if (!seg) continue;
-    const m = /^(\d+)\s*-\s*(\d+)$/.exec(seg);
-    if (m) {
-      let a = Number(m[1]);
-      let b = Number(m[2]);
-      if (a > b) [a, b] = [b, a];
-      for (let n = Math.max(1, a); n <= b; n++) set.add(n);
-    } else if (/^[1-9]\d*$/.test(seg)) {
-      set.add(Number(seg));
-    }
-  }
-  return Array.from(set).sort((a, b) => a - b);
-}
-
-/** 是否「重复打印的标题行」：所有非空值均与其列名完全相同（跨行引擎开关用） */
-export function isDuplicateHeaderRow(record: DataRecord): boolean {
-  const keys = Object.keys(record).filter((k) => !k.startsWith('_'));
-  if (keys.length === 0) return false;
-  return keys.every((k) => {
-    const v = record[k];
-    return v !== undefined && v !== null && String(v) !== '' && String(v) === String(k);
-  });
-}
-
-/**
- * 计算应删除的行索引集合（0-based，相对 records 数组）。
- * byIndex：按 1-based 原始行号（越界忽略）；duplicateHeader：删除「所有值与其列名完全相同且非空」的行。
- * 两类为并集语义；byContent（D93）已废弃并入行筛选（D97）。
- */
-export function computeRowRemovalSet(records: DataRecord[], rules: RowRemoveRule[]): Set<number> {
-  const out = new Set<number>();
-  for (const rule of rules ?? []) {
-    if (rule.kind === 'byIndex') {
-      for (const one of parseRowNumbers(rule.param)) {
-        const idx = one - 1;
-        if (idx >= 0 && idx < records.length) out.add(idx);
-      }
-    } else if (rule.kind === 'duplicateHeader') {
-      records.forEach((r, idx) => {
-        if (isDuplicateHeaderRow(r)) out.add(idx);
-      });
-    }
-  }
-  return out;
-}
-
-/** 删除行规则展示标签（供已配置列表）：`按行号删除: 2,5,8-10` / `删除重复标题行` */
-export function rowRemoveRuleLabel(rule: RowRemoveRule): string {
-  if (rule.kind === 'duplicateHeader') return '删除重复标题行（值与列名全同的行）';
-  return `按行号删除: ${rule.param}`;
-}
-
-/** 应用行删除规则（JS 语义层） */
-export function applyRowRemoval(records: DataRecord[], rules: RowRemoveRule[]): DataRecord[] {
-  const removed = computeRowRemovalSet(records, rules ?? []);
-  if (removed.size === 0) return records;
-  return records.filter((_, i) => !removed.has(i));
-}
-
-/** 行清洗（D97 收敛：dedupe 内容级去重 / filterInvalid 过滤全无效行；removeEmpty 已并入行筛选） */
-export function applyRowCleaning(records: DataRecord[], flags: RowCleanFlag[]): DataRecord[] {
-  let out = records;
-  if (flags.includes('dedupe')) {
-    const seen = new Set<string>();
-    out = out.filter((r) => {
-      const key = JSON.stringify(r);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-  if (flags.includes('filterInvalid')) {
-    out = out.filter((r) => Object.values(r).some((v) => v !== undefined && v !== null && v !== ''));
-  }
-  return out;
-}
+export { applyRowCleaning, isDuplicateHeaderRow };
 
 /* ── 列处理 ─────────────────────────────────────────────── */
 
@@ -1008,30 +929,16 @@ export interface TransformRow {
 }
 
 /**
- * JS 整链变换并保留原始行号（执行顺序：行删除 → 行筛选 → 行清洗（跨行）→ 列映射/派生，D113 收敛）。
+ * JS 整链变换并保留原始行号（执行顺序：行清洗（合并行→重复表头→空行）→ 行筛选 → 列映射/派生，D122 收敛）。
  * 仅语义层/单测使用；Step 3 预览与 Step 4 导入一律改用 applyWizardTransform（Handlebars 真实渲染，D98）。
  */
 export function applyTransformPreview(records: DataRecord[], cfg: DataTransformConfig): TransformRow[] {
-  const removed = computeRowRemovalSet(records, cfg.removeRows ?? []);
-  let rows: TransformRow[] = [];
-  records.forEach((r, i) => {
-    if (!removed.has(i)) rows.push({ src: i + 1, row: r });
-  });
+  // 行清洗（跨行引擎开关：合并行 / 过滤重复表头 / 过滤空行；D122）。
+  // 以 _index 保留原始行号（合并保留目标行号、过滤自然保留；与预览「#」列一致）。
+  const seeded = records.map((r, i) => ({ ...r, _index: i + 1 }));
+  let rows: TransformRow[] = applyRowCleaning(seeded, cfg.clean).map((r) => ({ src: Number(r._index) || 0, row: r }));
   // 行筛选（D96 包含式，保留 AND）
   rows = rows.filter(({ row }) => cfg.filters.every((rule) => rowMatchesFilter(row, rule)));
-  // 行清洗（跨行：dedupe / filterInvalid）
-  const seen = new Set<string>();
-  rows = rows.filter(({ row }) => {
-    if (cfg.clean.includes('dedupe')) {
-      const key = JSON.stringify(row);
-      if (seen.has(key)) return false;
-      seen.add(key);
-    }
-    return true;
-  });
-  if (cfg.clean.includes('filterInvalid')) {
-    rows = rows.filter(({ row }) => Object.values(row).some((v) => v !== undefined && v !== null && v !== ''));
-  }
   // 列映射 / 派生统一行（D113：set 语义保留未映射列，仅覆写/追加目标字段，与真实渲染一致）
   const mapped = applyMappingsRuntime(
     rows.map((r) => r.row),
@@ -1045,22 +952,16 @@ export function applyTransform(records: DataRecord[], cfg: DataTransformConfig):
   return applyTransformPreview(records, cfg).map((r) => r.row);
 }
 
-/** 供预览「筛选后 X / Y 行」统计：行删除 + 行筛选后保留的行数（去重/格式化等不影响该计数口径，D96） */
+/** 供预览「筛选后 X / Y 行」统计：行清洗 + 行筛选后保留的行数（D122 统计口径） */
 export function countRowsAfterSelection(records: DataRecord[], cfg: DataTransformConfig): number {
-  const removed = computeRowRemovalSet(records, cfg.removeRows ?? []);
-  let kept = 0;
-  records.forEach((r, i) => {
-    if (removed.has(i)) return;
-    if (cfg.filters.every((rule) => rowMatchesFilter(r, rule))) kept++;
-  });
-  return kept;
+  const cleaned = applyRowCleaning(records, cfg.clean);
+  return cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule))).length;
 }
 
 /* ── D98 编译层：配置 ↔ Handlebars 标记段 ────────────────── */
 
 /** preprocess 编译段名（对应向导区块；无配置的区块省略整段） */
 export type IproSegment =
-  | 'row-remove'
   | 'row-filter'
   | 'column-format'
   | 'column-process'
@@ -1068,7 +969,6 @@ export type IproSegment =
   | 'derived'
   | 'note-output';
 export const IPRO_SEGMENT_ORDER: IproSegment[] = [
-  'row-remove',
   'row-filter',
   'column-format',
   'column-process',
@@ -1077,6 +977,9 @@ export const IPRO_SEGMENT_ORDER: IproSegment[] = [
   // D120：多笔记输出段（位于 derived 之后；未定义附加类型时不产出）
   'note-output'
 ];
+
+/** 废弃段（D122：row-remove 随「删除行」功能移除；保存/清理时一并清除旧模板遗留段） */
+export const DEPRECATED_SEGMENTS = ['row-remove'] as const;
 
 export function iproBegin(name: IproSegment): string {
   return `{{!-- ipro:begin:${name} --}}`;
@@ -1108,14 +1011,17 @@ export function extractSegments(preprocess: string): Partial<Record<IproSegment,
   return out;
 }
 
-/** 将指定段写入 preprocess（[💾 保存到模板]）：先移除既有同名段，再按规范顺序追加；段外用户代码保留 */
+/** 移除单个标记段（含废弃段） */
+function stripSegment(preprocess: string, name: string): string {
+  const re = new RegExp(`\\{\\{!-- ipro:begin:${name} --\\}\\}[\\s\\S]*?\\{\\{!-- ipro:end:${name} --\\}\\}\\n?`);
+  return preprocess.replace(re, '');
+}
+
+/** 将指定段写入 preprocess（[💾 保存到模板]）：先移除既有同名段与废弃段，再按规范顺序追加；段外用户代码保留 */
 export function upsertSegments(preprocess: string, segments: Partial<Record<IproSegment, string>>): string {
   let out = preprocess;
-  for (const name of IPRO_SEGMENT_ORDER) {
-    const re = new RegExp(
-      `\\{\\{!-- ipro:begin:${name} --\\}\\}[\\s\\S]*?\\{\\{!-- ipro:end:${name} --\\}\\}\\n?`
-    );
-    out = out.replace(re, '');
+  for (const name of [...IPRO_SEGMENT_ORDER, ...DEPRECATED_SEGMENTS]) {
+    out = stripSegment(out, name);
   }
   const additions = IPRO_SEGMENT_ORDER.map((n) => segBlock(n, segments[n] ?? '')).filter(Boolean);
   if (additions.length === 0) return out;
@@ -1178,14 +1084,6 @@ function rowFilterBody(rules: RowFilterRule[]): string {
   const conds = rules.map(filterCondition);
   const anded = conds.length === 1 ? conds[0] : `(and ${conds.join(' ')})`;
   return `{{#unless ${anded}}}{{set "_skip" true}}{{/unless}}`;
-}
-
-/** 删除行（byIndex）段体：`_index` 命中 → _skip（duplicateHeader 为跨行引擎开关，不入段） */
-function rowRemoveBody(rules: RowRemoveRule[] | undefined): string {
-  const lines = (rules ?? [])
-    .filter((r) => r.kind === 'byIndex' && r.param.trim() !== '')
-    .map((r) => `{{#if (inRange _index ${hbQuote(r.param.trim())})}}{{set "_skip" true}}{{/if}}`);
-  return lines.join('\n');
 }
 
 /** 单步骤的 Helper 形态：helper 名 + 附加参数表达式（值自动作为首参；stage 追加在值后） */
@@ -1474,11 +1372,10 @@ function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[])
   return lines.join('\n');
 }
 
-/** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链） */
+/** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链；
+ *  D122：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean/merge_rows 承载） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
-  const remove = rowRemoveBody(cfg.removeRows);
-  if (remove !== '') seg['row-remove'] = remove;
   const filter = rowFilterBody(cfg.filters);
   if (filter !== '') seg['row-filter'] = filter;
   const mapping = mappingBody(cfg.mappings);
@@ -1559,17 +1456,6 @@ function colOf(expr: string): string | null {
     if (x) return x;
   }
   return null;
-}
-
-function decodeRemoveBody(body: string): RowRemoveRule[] {
-  const out: RowRemoveRule[] = [];
-  for (const line of body.split('\n')) {
-    const t = line.trim();
-    if (!t) continue;
-    const m = /^\{\{#if \(inRange _index "([^"]*)"\)\}\}\{\{set "_skip" true\}\}\{\{\/if\}\}$/.exec(t);
-    if (m) out.push({ kind: 'byIndex', param: m[1] });
-  }
-  return out;
 }
 
 /** 条件表达式 → 筛选规则 */
@@ -2097,12 +1983,20 @@ function decodeNoteOutput(body: string): { noteTypes: NoteTypeConfig[]; targetNo
   return { noteTypes, targetNote };
 }
 
-/** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠；D120 note-output） */
+/** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠；
+ *  D120 note-output；D122：row-remove 废弃段忽略，旧「去除空行」预置规则（任意列 非空）迁移为 clean.removeEmpty） */
 export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   const seg = extractSegments(preprocess);
   const cfg = emptyTransform();
-  if (seg['row-remove']) cfg.removeRows = decodeRemoveBody(seg['row-remove']);
-  if (seg['row-filter']) cfg.filters = decodeFilterBody(seg['row-filter']);
+  if (seg['row-filter']) {
+    cfg.filters = decodeFilterBody(seg['row-filter']);
+    // D122：旧「去除空行」预置筛选规则 → 行清洗 removeEmpty（引擎开关），不再保留为普通筛选规则
+    const presetIdx = cfg.filters.findIndex((f) => isPresetEmptyFilter(f));
+    if (presetIdx >= 0) {
+      cfg.filters.splice(presetIdx, 1);
+      cfg.clean = { ...(cfg.clean ?? {}), removeEmpty: true };
+    }
+  }
   if (seg['column-mapping']) cfg.mappings = decodeMappingBody(seg['column-mapping']);
   // 旧 column-format / column-process 段 → 折叠为映射行设置链（先于映射行执行，等价旧「格式化→映射」顺序）
   const folded = foldLegacyColumnOps(
@@ -2135,10 +2029,10 @@ export interface PreprocessRenderer {
 
 /**
  * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
- * 中间嵌入跨行引擎开关（duplicateHeader 前置 / dedupe · filterInvalid 于格式化后）。
+ * 行筛选段之前嵌入行清洗引擎开关（合并行 / 过滤重复表头 / 过滤空行，D122）。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
- * D118：opts.rules（向导实时校验规则）——「过滤无效数据」勾选且有规则时按校验失败过滤
- * （镜像运行时 D115），阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`（供预览徽标与 `{{_status}}`）。
+ * D118：opts.rules（向导实时校验规则）阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`
+ * （供预览徽标与 `{{_status}}`）。
  */
 export async function applyWizardTransform(
   engine: PreprocessRenderer,
@@ -2147,9 +2041,8 @@ export async function applyWizardTransform(
   opts: { rules?: ValidationRule[] } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
-  // D113：列侧收敛为单一 column-mapping 段（含行内设置链），行清洗为渲染前跨行开关；D120：note-output 随阶段 B 执行
+  // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行
   const phaseA = segmentsToPreprocess({
-    'row-remove': seg['row-remove'],
     'row-filter': seg['row-filter']
   });
   const phaseB = segmentsToPreprocess({
@@ -2161,11 +2054,14 @@ export async function applyWizardTransform(
   // 附加原始行号（引擎保留字段 _index，template-schema §3）
   let rows: TransformRow[] = records.map((r, i) => ({ src: i + 1, row: { ...r, _index: i + 1 } }));
 
-  // 引擎级结构删除：duplicateHeader（跨行开关，编译段无法表达）
-  const hasDupHeader = (cfg.removeRows ?? []).some((r) => r.kind === 'duplicateHeader');
-  if (hasDupHeader) rows = rows.filter((t) => !isDuplicateHeaderRow(t.row));
+  // 行清洗（D122 跨行引擎开关：合并行 → 过滤重复表头 → 过滤空行，行筛选之前；语义 core/row-clean.ts）
+  const cleaned = applyRowCleaning(
+    rows.map((t) => t.row),
+    cfg.clean
+  );
+  rows = cleaned.map((r) => ({ src: Number(r._index) || 0, row: r }));
 
-  // 阶段 A：行删除(byIndex) → 行筛选（逐行 Handlebars）
+  // 阶段 A：行筛选（逐行 Handlebars）
   if (phaseA !== '') {
     const kept: TransformRow[] = [];
     for (const t of rows) {
@@ -2174,34 +2070,6 @@ export async function applyWizardTransform(
       kept.push({ src: t.src, row: (out as DataRecord) ?? t.row });
     }
     rows = kept;
-  }
-
-  // 行清洗（跨行引擎开关：渲染 column-mapping 前处理）
-  if (cfg.clean.includes('dedupe')) {
-    const seen = new Set<string>();
-    rows = rows.filter((t) => {
-      const key = JSON.stringify(t.row, (_k, v) => (_k === '_index' ? undefined : v));
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
-  if (cfg.clean.includes('filterInvalid')) {
-    // D118/D115：配置校验规则时按「校验失败」过滤无效行（回归「过滤无效数据」本义，镜像运行时引擎开关）；
-    // 无规则回落「全空行」启发式（忽略 _ 前缀保留字段——_index 等不被误判为非空，与 isEmptyRow 口径一致）
-    const rules = opts.rules ?? [];
-    if (rules.length > 0) {
-      rows = rows.filter((t) => validationEngine.validate(t.row, rules).valid);
-    } else {
-      rows = rows.filter((t) =>
-        Object.keys(t.row)
-          .filter((k) => !k.startsWith('_'))
-          .some((k) => {
-            const v = t.row[k];
-            return v !== undefined && v !== null && v !== '';
-          })
-      );
-    }
   }
 
   // D119/D120：链接附言与多笔记默认命名依赖派生 `_hash`（运行时 derive 在 preprocess 之后），

@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.25.0"
+version: "1.26.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -93,7 +93,7 @@ export interface IDataParser {
 |`NotionParser`|.zip（Notion 导出）|
 |`AppleNotesParser`|.notes（Apple Notes 导出）|
 
-> **表格类解析选项（D87/D88）**：`ExcelParser`/`CSVParser` 支持 `ParseOptions.headerRow`（表头所在物理行索引，跳过前 N 行后以该行为表头）；Excel 指定不存在的 `sheetName` 抛 `PARSE_002`（D86，不再静默返回空数组）；行删除等预处理位于向导数据变换层（ui/layout.md §5.5）。
+> **表格类解析选项（D87/D88，D122）**：`ExcelParser`/`CSVParser` 支持 `ParseOptions.headerRow`（表头所在物理行索引，跳过前 N 行后以该行为表头）；Excel 指定不存在的 `sheetName` 抛 `PARSE_002`（D86，不再静默返回空数组）；行清洗等预处理位于向导数据变换层（ui/layout.md §5.5）。
 
 ### 2.2 TemplateEngine（模板引擎）
 
@@ -249,7 +249,7 @@ export interface IValidator {
 
 > **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。
 >
-> **校验 validation 运行时接入（D115，2026-09-05 已实现）**：模板声明 frontmatter `validation` 时，`DataPipeline.shard` 逐行执行并经 `Validator` 回填保留字段 `_valid/_errors/_warnings/_status`（template-schema §3）；不自动 `_skip`；`row.clean.filterInvalid`（跨行开关）在有校验规则时按校验失败过滤。实现见同决策（D115）。
+> **校验 validation 运行时接入（D115，2026-09-05 已实现）**：模板声明 frontmatter `validation` 时，`DataPipeline.shard` 逐行执行并经 `Validator` 回填保留字段 `_valid/_errors/_warnings/_status`（template-schema §3）；不自动 `_skip`（是否跳过由模板决定）。实现见同决策（D115）。
 >
 > **Step 3 能力补齐对齐 EXAMPLES（D118–D121，2026-09-05 设计定稿，实现待排）**：① 校验规则 UI（D118）——向导区块 4「校验规则」卡写 frontmatter `validation`（8 种内置规则），预览经 `applyWizardTransform` 注入校验回填 `_valid/_errors/_status` 标记（运行时复用 D115，无新代码路径）；② 计算/条件/链接（D119）——区块 5「添加设置」增计算（算术直调/stage、条件 `(if (cmp …) A B)`、条件警告附言）与链接（smartLink 附言）组，白名单增 add/subtract/divide；③ 多笔记输出（D120）——新编译段 `note-output`（`push _notes`），映射行 `noteType` 归属笔记，`_template` 内容渲染为阶段二；④ 输出策略（D121）——`output.conflict_strategy`/`incremental_mode`/`match.priority` 写 frontmatter（output 两字段 D112 已消费；`MatchRule` 增 `priority?`，自动匹配按优先级降序）。决策见 decisions/2026-09-05-step3-examples-parity.md。
 
@@ -289,12 +289,13 @@ export interface IValidator {
 
 | 原则 | 内容 |
 | :--- | :--- |
-| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选/删除行编译为写 `_skip` 的条件块，列格式化/列处理/列映射/派生编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录 |
+| **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选编译为写 `_skip` 的条件块，列格式化/列处理/列映射/派生编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录；**唯一例外**：行清洗（合并行/重复表头/空行，跨行结构操作）为引擎开关（core/row-clean.ts，D122） |
 | **配置写回模板** | Step 3 全部配置经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写模板——保存 = 编译进 preprocess 标记段（内存编译不落盘，仅保存时写回）；读取 = 从标记段反编译回填各区块；字段规范见 template-schema.md §2/§9；写入仅限 `paths.templates` 目录 |
 | **[💾 保存到模板] 按钮** | Step 3 区块 3 模板元信息操作行 [📝 编辑模板代码] [➕ 新建模板] [💾 保存到模板]（D94/D95）——点击「保存到模板」即把 Step 3 全部配置编译并写回所选模板 preprocess 块；未选模板时禁用并提示先新建/选择；写入失败抛 `TEMPLATE_005` 内联提示；保存成功仅 Notice 不刷新页面 |
 | **UI 只调用** | 行筛选/删除/列变换等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
-| **区块归类** | Step 3 区块按影响粒度归类：模板级（模板元信息，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 行级（行配置：表头行/行清洗/删除行/筛选）→ 列级（列配置：格式化/处理/映射）→ 字段级（派生）→ 结果（预览）；布局权威见 ui/layout.md §5 |
-| **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；执行顺序在行删除之后、列格式化之前（`行删除 → 行筛选 → …`）；类型 `RowFilterRule` / `RowFilterOp` 见 §7。**D97 行能力收敛**：删除行仅保留结构级模式（`byIndex` 行号 / `duplicateHeader` 重复标题行），`byContent` 内容删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」）；「去除空行」为预置筛选规则（`column: '*'` + `notEmpty`）的快捷开关；`RowFilterRule.column` 支持 `'*'` 任意列 |
+| **区块归类** | Step 3 区块按影响粒度归类：模板级（模板元信息，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 行级（行配置：表头行/行清洗/行筛选）→ 列级（列配置：格式化/处理/映射）→ 字段级（派生）→ 结果（预览）；布局权威见 ui/layout.md §5 |
+| **行清洗（D122，2026-09-05 已实现）** | 跨行引擎开关（不产编译段）：合并行（匹配 exact/contains/regex 的连续行并入前一行）/ 过滤重复表头（值==列名，基于解析后列名）/ 过滤空行（含第一行，trim 判定）；语义权威 core/row-clean.ts，执行顺序在行筛选之前，随 frontmatter `row.clean`/`row.merge_rows` 保存；**原删除行 / 去重 / 过滤无效数据已废弃删除** |
+| **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；执行顺序在行清洗之后、列格式化之前（`行清洗 → 行筛选 → …`）；类型 `RowFilterRule` / `RowFilterOp` 见 §7；`RowFilterRule.column` 支持 `'*'` 任意列；旧 byContent 删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」，D97） |
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
 | **列侧收敛：列映射 + 行内设置链（D105–D107）** | Step 3 区块 7 → 6：区块 5 = 单一列映射表（目标字段/来源/类型/添加设置/操作），删除区块 6 派生（预览顺延区块 6）；列格式化/列处理/派生并入列映射行 `settings` 链，列侧仅产出 `column-mapping` 段（无设置=复制、1 步=直调、**≥2 步=pipe** 写 set）；类型=快捷转换；旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移 |
 | **能力补齐对齐 EXAMPLES（D118–D121，设计定稿待实现）** | 校验规则 → frontmatter `validation`（不产段，D118）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
@@ -547,20 +548,32 @@ interface TemplateFrontmatter {
     conflict_strategy?: OutputConfig['conflictStrategy'];
     incremental_mode?: OutputConfig['incrementalMode'];
   };
-  row?: TemplateRowConfig;        // 行配置（表头行/清洗/删除/筛选）
+  row?: TemplateRowConfig;        // 行配置（表头行/行清洗/筛选）
   columns?: TemplateColumnConfig; // 列配置（格式化/处理）
   mapping?: { source: string; target: string }[];
   validation?: ValidationRule[];
   derived?: { field: string; rule: string; source: string }[];
 }
 
-/** 行配置（D94/D95/D97/D98）：D98 起 row/columns/derived 不再作为执行契约（执行逻辑编译进 preprocess 块，template-schema §9）；此结构仅用于旧模板 frontmatter 兼容迁移与 row.clean 跨行引擎开关 */
+/** 行配置（D94/D95/D97/D98/D122）：D98 起 row/columns/derived 不再作为执行契约（执行逻辑编译进 preprocess 块，template-schema §9）；此结构仅用于旧模板 frontmatter 兼容迁移与行清洗跨行引擎开关 */
 interface TemplateRowConfig {
   header_row?: number;    // 表头物理行（1-based，仅表格类数据源；解析级参数，不入 preprocess）
-  /** D97 收敛：删除行仅结构级模式（byContent 已迁移至 filter） */
-  remove?: { kind: 'byIndex' | 'duplicateHeader'; param: string }[];
-  filter?: RowFilterRule[];   // 行筛选（D96，包含式；D97 column 支持 '*' 任意列）
-  clean?: ('dedupe' | 'filterInvalid')[];  // 跨行操作引擎开关（单行 Handlebars 无法表达，D98 例外；removeEmpty 已改为预置筛选规则）
+  /** 行清洗引擎开关（D122，跨行操作，不产编译段）：filterEmpty 过滤空行（含第一行）/ removeDuplicateHeader 过滤重复表头 / mergeRows 合并行规则 */
+  clean?: {
+    remove_empty?: boolean;
+    remove_duplicate_header?: boolean;
+  };
+  merge_rows?: MergeRowRule[];
+  /** 旧字段（D97/D122）：删除行 / 去重 / 过滤无效数据已废弃，读取时兼容迁移或忽略 */
+  remove?: { kind: 'byIndex' | 'duplicateHeader' | 'byContent'; param: string; mode?: string; column?: string }[];
+  filter?: RowFilterRule[];   // 行筛选（D96，包含式；column 支持 '*' 任意列）
+}
+
+/** 合并行规则（D122）：匹配的连续行合并到前一条不匹配的行 */
+interface MergeRowRule {
+  mode: 'exact' | 'contains' | 'regex';
+  pattern: string;
+  separator: string;
 }
 
 /** 列配置（D94/D95）：写入模板 frontmatter 的 columns 字段 */
@@ -583,7 +596,7 @@ interface TemplateTransformConfig {
 type RowFilterOp = 'eq' | 'neq' | 'contains' | 'notContains' | 'startsWith' | 'endsWith'
   | 'empty' | 'notEmpty' | 'gt' | 'gte' | 'lt' | 'lte' | 'regex';
 
-/** 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行删除之后（删除优先）；D97：column 支持 '*' 任意列；D98：规则经编译层生成 preprocess Handlebars 条件块，不在运行时由 JS 执行 */
+/** 行筛选规则：保留「全部规则均匹配」的行（多规则 AND）；执行顺序在行清洗之后（D122）；D97：column 支持 '*' 任意列；D98：规则经编译层生成 preprocess Handlebars 条件块，不在运行时由 JS 执行 */
 interface RowFilterRule {
   column: string;  // 目标列名；'*' = 任意列（整行任一列值命中即通过）；empty/notEmpty 时忽略列
   op: RowFilterOp;
@@ -789,4 +802,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.25.0 | 最后更新: 2026-09-05_
+_版本: 1.26.0 | 最后更新: 2026-09-05_
