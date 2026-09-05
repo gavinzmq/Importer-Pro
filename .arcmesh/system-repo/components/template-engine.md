@@ -1,7 +1,7 @@
 ---
 title: "TemplateEngine 组件"
 type: "component"
-version: "1.6.0"
+version: "1.7.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -73,6 +73,8 @@ export interface ITemplateEngine {
 
 **内置阶段白名单**（权威；2026-09-05 实现时按编译层使用面定稿为 20 个、D117 增 `toBoolean` 至 21 个，与 builtin `PIPE_STAGE_WHITELIST` 一致；`upper`/`lower` 随 D102–D104 改名 `uppercase`/`lowercase`）：`md5` / `sha256` / `hashShort` / `substring` / `trim` / `uppercase` / `lowercase` / `replace` / `replaceText` / `toNumber` / `toString` / `toDate` / `toBoolean` / `toIDCard` / `merge` / `mapValue` / `regexExtract` / `default` / `genderFromID` / `birthFromID` / `multiply`。编译/反编译规范见 template-schema.md §9，决策与实现见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101，v1.1.0 已实现）与 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117 增 `toBoolean`）。
 
+> **D119 白名单扩展与计算口径（2026-09-05 设计定稿，实现待排）**：区块 5「添加设置 · 计算」组落地时白名单 21 → **24**（增 `add` / `subtract` / `divide`；`multiply` 已在）——算术步骤以直调 / `(stage "op" 参)` 入值管线（第二操作数 = 列名或常数，进入阶段前由子表达式求值，如 `(stage "multiply" (lookup this "数量"))`）；条件计算编译为整链替换式 `(if (gte 值 参) 真值 假值)`（单步直调形态，不入 pipe）；条件警告与 smartLink 为映射行附言（`set` 后追加 `{{#if 条件}}{{set "_warnings" (push _warnings "文本")}}{{/if}}` / `{{set "_link" (smartLink _hash "目标" "回退")}}`）。公开 37 清单与 Helper 签名**不变**（仅 UI 组合使用既有 Helper）。决策见 decisions/2026-09-05-step3-examples-parity.md（D119）。
+
 ## 依赖
 
 - Handlebars 4.x
@@ -90,4 +92,4 @@ const result = await engine.renderPreprocess(
 
 ---
 
-*版本: 1.7.0 | 最后更新: 2026-09-05*
+*版本: 1.8.0 | 最后更新: 2026-09-05*

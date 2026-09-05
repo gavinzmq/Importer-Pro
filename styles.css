@@ -432,6 +432,18 @@
 .ipw-test-status.is-error {
   color: var(--text-error);
 }
+/* D121：匹配优先级 / 校验规则 length·range 参数输入窄化 */
+.ipw-form-row .ipw-input.ipw-prio-input {
+  width: 64px;
+  flex: 0 0 64px;
+}
+.ipw-form-row .ipw-input.ipw-param-input {
+  width: 72px;
+  flex: 0 0 72px;
+}
+.ipw-label-gap {
+  margin-left: 8px;
+}
 
 .ipw-rule-list {
   display: flex;
@@ -456,8 +468,8 @@
 }
 .ipw-map-head,
 .ipw-map-row {
-  /* D113：来源 / 目标 / 类型·规则 / 添加设置(链) / 操作 */
-  grid-template-columns: 16% 20% 18% minmax(0, 1fr) auto;
+  /* D113/D117：来源 / 目标字段 / 类型 / 添加设置(链) / 操作；D120：插入「输出到」列 */
+  grid-template-columns: 15% 18% 12% 13% minmax(0, 1fr) auto;
 }
 .ipw-derive-head,
 .ipw-derive-row {
@@ -576,6 +588,25 @@
   background: var(--background-modifier-hover);
 }
 
+/* D120：多笔记输出 · 笔记类型面板 */
+.ipw-note-types {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+}
+.ipw-note-type {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ipw-note-type-cond {
+  margin-top: 2px;
+}
+
 /* 预览表格 */
 .ipw-preview-grid-wrap {
   max-height: 200px;
@@ -614,6 +645,35 @@
   max-width: 46px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+/* D118：校验状态徽标列（预览行首 ✅ 通过 / ⚠️ 警告 / ❌ 失败） */
+.ipw-cell.ipw-valid-col {
+  min-width: 52px;
+  max-width: 52px;
+  text-align: center;
+}
+.ipw-cell.ipw-valid-badge.is-err {
+  color: var(--text-error);
+  font-weight: 600;
+}
+.ipw-cell.ipw-valid-badge.is-warn {
+  color: var(--text-warning);
+}
+.ipw-cell.ipw-valid-badge.is-ok {
+  color: var(--text-success);
+}
+/* D120：预览多笔记清单 */
+.ipw-preview-notes {
+  font-size: 12px;
+  border-left: 2px solid var(--background-modifier-border);
+  padding-left: 8px;
+  margin: 4px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ipw-preview-notes > span {
+  font-weight: 600;
 }
 .ipw-preview-actions {
   margin-top: 8px;

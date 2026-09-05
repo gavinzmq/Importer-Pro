@@ -1,7 +1,7 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.11.0"
+version: "1.12.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -32,6 +32,10 @@ status: "active"
 | `derived` |  | 派生字段预设 `[{ field, rule, source }]`（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
 | `validation` |  | 校验规则列表 `[{ field, type, message, options? }]` |
 | `notes` |  | 多笔记类型配置 `TemplateNoteSpec[]`（见 architecture.md §7） |
+
+> **输出策略与匹配优先级写回（D121，设计定稿，实现待排）**：向导区块 3 的「冲突策略 / 增量模式 / 匹配优先级」随 [💾 保存到模板] 写入 `output.conflict_strategy` / `output.incremental_mode` / `match.patterns[0].priority`（`MatchRule` 增 `priority?`，默认 0，自动匹配按优先级降序 + 先匹配先得）；output 两字段运行时 D112 已消费。决策见 decisions/2026-09-05-step3-examples-parity.md。
+
+> **校验规则写回（D118，设计定稿，实现待排）**：向导区块 4「校验规则」卡随 [💾 保存到模板] 写 frontmatter `validation`（**不产编译段**——校验契约 = frontmatter，D115 运行时逐行执行并回填 `_valid/_errors/_warnings/_status`）；规则类型 = Validator 内置 8 种（required/id-card/email/phone/date/length/range/unique）。决策见 decisions/2026-09-05-step3-examples-parity.md。
 
 > `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由导入运行时渲染为最终路径。**D112（2026-09-05 已实现）**：`DataPipeline.shard` 对每条记录基于已含 `_hash` 的派生数据求值（`engine.renderExpression`）写 `_folder`/`_fileName`——`importFile`/`importData`（auto-match/API）按模板 output；向导按 UI 实时值（outputOverride）；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。
 
@@ -126,7 +130,7 @@ status: "active"
 {{!-- ipro:end:row-remove --}}
 ```
 
-段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+段名与向导区块对应：`row-remove`（删除行）/ `row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）/ `note-output`（多笔记输出，D120 设计待排，位于 derived 段之后，未定义附加笔记类型不产该段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
 
 **编译映射**（向导状态 → Handlebars，目标代码**仅引用内置 Helper 白名单**）：
 
@@ -196,6 +200,15 @@ status: "active"
 > **D113（2026-09-05 已实现）实现口径注记**：设置链以收敛范围落地——`ColumnMapping.settings` 只承载**列格式化 / 列处理**步骤（`MappingSetting`，组内复用既有 op/参数），列侧仅产 `column-mapping` 段；`类型` 快捷转换（toIDCard/toNumber/toDate）为隐含前置步骤并与同语义首条设置去重；**≥2 步以 pipe 表达**（`PIPE_STAGE_WHITELIST` 增 `strTrim`/`strSplit`/`fillDefault`）。**派生预设仍以 rule 行编译进 `derived` 段**（D108「类型/规则 · 派生字段」下拉承载，不并入 settings chips——与上方 D105 草案差异）。旧 `column-format`/`column-process` 段与旧 frontmatter `columns.format/process` 读取折叠为设置链（按列合并、toIDCard/toNumber/toDate 折为类型快捷）。决策与实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D113）。
 
 > **D117（2026-09-05 已实现）实现口径注记**：「类型」列收敛为 **FrontMatter 类型**（文本/数字/日期/布尔/忽略；数字/日期/布尔隐含 `toNumber`/`toDate`/`toBoolean`，新增 `toBoolean` 阶段，见 template-engine 白名单）；「身份证」不再作类型（`toIDCard` 收进「添加设置·列格式化」设置；旧 column-mapping 段隐含 toIDCard 首步读回折为 format toIDCard 设置、toNumber/toDate/toBoolean 读回为类型）。「添加设置」= 列格式化/列处理/**列派生** 三组下拉；**派生仍编译进 `derived` 段**（入口由 D108「类型/规则·派生字段」下拉改为「添加设置·列派生」，D117 起派生行可携带类型隐含转换与格式化/处理设置——派生产出后经直调/pipe 后续链；无后续时保持既有单步/pipe 形态）。决策与实现见 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117）。
+
+> **D118–D121 编译口径注记（2026-09-05 设计定稿，实现待排）**：
+>
+> - **校验规则（D118）不产编译段**：写 frontmatter `validation`（§2），运行时/预览经 D115 语义回填保留字段。
+> - **计算 / 条件 / 链接（D119）**：计算·算术 = 值管线步骤（直调 / `(stage "op" 参)`，白名单增 add/subtract/divide）；计算·条件 = 整链替换式 `(if (gte 值 参) 真值 假值)`；计算·条件警告与链接·smartLink = **映射行附言**（该行 `set` 之后追加 `{{#if 条件}}{{set "_warnings" (push _warnings "文本")}}{{/if}}` / `{{set "_link" (smartLink _hash "目标" "回退")}}`），反编译按附言还原。
+> - **多笔记输出（D120）**：新段 `note-output`（derived 段之后）——附加笔记类型行 → `{{set "_notes" (push _notes (object "_folder" … "_fileName" … "_template" … 字段…))}}`（生成条件 → `{{#if 条件}}` 包裹；`_notes` 元素结构见 §4）；映射行 `noteType` 决定字段归属笔记；未定义附加类型不产该段（旧模板零破坏）。模板引用 `_template` 的**内容渲染**（shard 按引用模板 content 渲染）为 D120 阶段二。
+> - **输出策略（D121）**：output 两字段与 `match.priority` 写 frontmatter（§2），不产编译段。
+>
+> 决策见 decisions/2026-09-05-step3-examples-parity.md。
 
 **读写规则**：
 

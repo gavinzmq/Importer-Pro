@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.7.0"
+version: "1.7.1"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -81,6 +81,10 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 ### 动态文件夹 (Dynamic Folder)
 
 在预处理模板中通过 `_folder` 字段动态指定的目标文件夹路径。
+
+### 多笔记输出 (Multi-Note Output)
+
+一条数据经预处理产 `_notes` 数组、生成多篇关联笔记的机制（元素结构见 template-schema §4，运行时 `_notes`→`NoteSpec` 链路已就绪）。**D120（设计待排）**：向导区块 5 提供「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），编译为新段 `note-output`（`push _notes`）；`_template` 引用模板的内容渲染为阶段二。
 
 ### 待导入文件 (Pending Import File)
 
@@ -166,6 +170,18 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ---
 
+## J
+
+### 校验规则 (Validation Rule)
+
+模板 Frontmatter `validation` 中声明的逐行校验规则（`{field, type, message, options?}`），运行时由 `DataPipeline.shard` 执行并回填保留字段 `_valid/_errors/_warnings/_status`（D115 已实现）；规则类型 = Validator 内置 8 种（必填/身份证/邮箱/手机号/日期/长度/数值范围/唯一）。**D118（设计待排）**：向导区块 4「✅ 校验规则」卡提供配置 UI，随 [💾 保存到模板] 写 frontmatter，预览区显示 ✅/⚠️/❌ 状态标记。
+
+### 计算列 (Computed Column)
+
+由算术（加减乘除）或条件（`(if (比较) 真值 假值)`）计算得出的目标字段（D119 设计待排）：作为区块 5「添加设置 · 计算」组的行值管线步骤（直调 / `(stage "op" 参)`）或整链替换式编译进 `column-mapping` 段；条件警告与 smartLink 为映射行附言。
+
+---
+
 ## L
 
 ### 类型 (Note Type)
@@ -230,7 +246,7 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 输出配置 (Output Config)
 
-模板 Frontmatter 中定义的文件输出规则，包括文件夹、命名、冲突策略等。
+模板 Frontmatter 中定义的文件输出规则，包括文件夹、命名、冲突策略、增量模式等；`output.folder`/`note_name` 为 Handlebars 表达式、由导入运行时逐条求值（D112 已实现）。**D121（设计待排）**：向导区块 3 提供冲突策略/增量模式下拉，随 [💾 保存到模板] 写回 `output.conflict_strategy`/`incremental_mode`。
 
 ---
 
@@ -278,7 +294,7 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 文件匹配规则 (Match Rule)
 
-定义模板如何根据文件名自动匹配的规则，支持正则表达式、通配符和精确匹配。
+定义模板如何根据文件名自动匹配的规则，支持正则表达式、通配符和精确匹配。**D121（设计待排）**：`MatchRule` 增 `priority`（默认 0），自动匹配按优先级降序 + 先匹配先得。
 
 ---
 
@@ -362,4 +378,4 @@ Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全�
 
 ---
 
-*版本: 1.6.0 | 最后更新: 2026-09-05*
+*版本: 1.7.1 | 最后更新: 2026-09-05*

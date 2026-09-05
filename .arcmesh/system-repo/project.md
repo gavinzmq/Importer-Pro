@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.25.0"
+version: "1.26.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -163,6 +163,13 @@ arcmesh:
 > ④ **轻量清理（D116）**：`warmCache(templateId)` 语义接线；architecture §1 分层图清理 `GraphicConfigModal` 陈旧引用（已被 4 步向导取代）。
 > **D113「添加设置」行内设置链（2026-09-05 已实现，第二轮）**：把 D105 草案的设置链实现进映射行 `settings`——范围 = 列格式化/列处理 chips + `类型` 快捷转换编译（身份证/数字/日期）+ ≥2 步 `pipe` + 移除独立列格式化/列处理卡 + 旧 column-format/column-process 段与旧 frontmatter `columns` 读取折叠为设置链；派生仍走「类型/规则 · 派生字段」下拉（D108 rule 行，不占 chips）。列侧仅产 `column-mapping` 段；`PIPE_STAGE_WHITELIST` 增 strTrim/strSplit/fillDefault。全量 Vitest **130 例全绿**（wizard-data 85 / template-scanner 12 等）、type-check 0 错误。见 decisions/2026-09-05-unimplemented-gap-fill.md（D113）。
 
+> **Step 3 能力补齐对齐 EXAMPLES.md（D118–D121，2026-09-05 设计定稿，实现待排；decisions/2026-09-05-step3-examples-parity.md）**：
+> ① **D118 校验规则 UI**：区块 4 新增「✅ 校验规则」卡（Validator 内置 8 种规则），写 frontmatter `validation`（复用 D115 运行时），预览增 ✅/⚠️/❌ 状态标记；
+> ② **D119 计算/条件/链接**：区块 5「添加设置」扩为五组（+ 计算：加减乘除/条件计算/条件警告；+ 链接：smartLink 目标/回退），白名单 21 → 24（add/subtract/divide），warn/link 为映射行附言；
+> ③ **D120 多笔记输出**：映射行「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），新编译段 `note-output`（`push _notes`）；`_template` 引用模板内容渲染为阶段二；
+> ④ **D121 输出策略**：区块 3 增 冲突策略/增量模式 下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。
+> 蓝图同步：architecture 1.25.0 / ui/layout 1.19.0 / template-schema 1.12.0 / template-engine 1.7.0 / CHANGELOG 1.18.0 / glossary 1.7.1。
+
 ## 5. 里程碑
 
 | 里程碑 | 日期 | 状态 |
@@ -209,4 +216,4 @@ arcmesh:
 
 ---
 
-*版本: 1.25.0 | 最后更新: 2026-09-05*
+*版本: 1.26.0 | 最后更新: 2026-09-05*

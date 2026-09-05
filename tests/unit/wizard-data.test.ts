@@ -44,15 +44,19 @@ import {
   rowFilterRuleLabel,
   rowMatchesFilter,
   rowRemoveRuleLabel,
+  rowValidationBadge,
   segmentsToPreprocess,
   toBooleanCell,
   unmappedColumns,
   upsertSegments,
+  VALIDATION_TYPE_LABELS,
+  validationRuleLabel,
   emptyTransform,
   type ColumnMapping,
   type DataTransformConfig,
   type RowFilterRule
 } from '../../src/ui/wizard-data';
+import type { ValidationRule } from '../../src/types';
 
 /* 本地时区的 YYYY-MM-DD（与实现 formatISODate 一致的推导，保证任意时区一致） */
 function isoLocal(ts: number): string {
@@ -1023,6 +1027,288 @@ describe('展示格式化工具', () => {
     expect(formatTimeAgo(Date.now() - 3 * day)).toBe('3 天前');
     expect(formatTimeAgo(Date.now() - 21 * day)).toBe('3 周前');
     expect(formatTimeAgo(Date.now() - 45 * day)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('D118：校验规则注入与状态回填（applyWizardTransform / 徽标 / 标签）', () => {
+  const engine = new TemplateEngine();
+
+  const rules: ValidationRule[] = [
+    { field: '身份证号', type: 'id-card', message: '身份证号格式不正确' },
+    { field: '姓名', type: 'required', message: '姓名不能为空' }
+  ];
+
+  function cfg(): DataTransformConfig {
+    return { removeRows: [], filters: [], clean: [], mappings: [] };
+  }
+
+  it('规则回填 _valid/_errors/_warnings/_status（合法/非法/空必填）', async () => {
+    const data = [
+      { 姓名: '张三', 身份证号: '110101199001011237' }, // 合法校验位（男）
+      { 姓名: '李四', 身份证号: 'bad' },
+      { 姓名: '', 身份证号: '110101199001011223' }
+    ];
+    const rows = await applyWizardTransform(engine, data, cfg(), { rules });
+    expect(rows[0].row._valid).toBe(true);
+    expect(rows[0].row._status).toBe('valid');
+    expect(rows[0].row._errors).toEqual([]);
+    expect(rows[1].row._valid).toBe(false);
+    expect(rows[1].row._status).toBe('error');
+    expect(rows[1].row._errors).toContain('身份证号格式不正确');
+    expect(rows[2].row._valid).toBe(false);
+    expect(rows[2].row._errors).toContain('姓名不能为空');
+  });
+
+  it('「过滤无效数据」+ 校验规则 → 按校验失败过滤（镜像运行时 D115）', async () => {
+    const data = [
+      { 姓名: '张三', 身份证号: '110101199001011237' },
+      { 姓名: '李四', 身份证号: 'bad' }, // 校验失败 → 过滤
+      { 姓名: '', 身份证号: '110101199001011223' } // 校验失败 → 过滤
+    ];
+    const cfgFilter: DataTransformConfig = { removeRows: [], filters: [], clean: ['filterInvalid'], mappings: [] };
+    const rows = await applyWizardTransform(engine, data, cfgFilter, { rules });
+    expect(rows.map((r) => r.src)).toEqual([1]);
+    expect(rows[0].row.姓名).toBe('张三');
+  });
+
+  it('无规则时「过滤无效数据」回落全空行启发式、且不注入校验字段', async () => {
+    const data = [{ a: '' }, { a: 'x' }];
+    const cfgFilter: DataTransformConfig = { removeRows: [], filters: [], clean: ['filterInvalid'], mappings: [] };
+    const rows = await applyWizardTransform(engine, data, cfgFilter, { rules: [] });
+    expect(rows.map((r) => r.src)).toEqual([2]);
+    expect('_valid' in rows[0].row).toBe(false);
+  });
+
+  it('rowValidationBadge：err/warn/ok/未标记', () => {
+    expect(rowValidationBadge({ _valid: false, _warnings: [], _status: 'error' })).toBe('err');
+    expect(rowValidationBadge({ _valid: true, _warnings: ['注意'], _status: 'warning' })).toBe('warn');
+    expect(rowValidationBadge({ _valid: true, _warnings: [], _status: 'valid' })).toBe('ok');
+    expect(rowValidationBadge({ 姓名: '张三' })).toBeNull();
+  });
+
+  it('VALIDATION_TYPE_LABELS = Validator 内置 8 种；validationRuleLabel 展示', () => {
+    expect(VALIDATION_TYPE_LABELS.map((o) => o.value)).toEqual([
+      'required',
+      'id-card',
+      'email',
+      'phone',
+      'date',
+      'length',
+      'range',
+      'unique'
+    ]);
+    expect(validationRuleLabel({ field: '姓名', type: 'required' })).toBe('姓名 必填');
+    expect(validationRuleLabel({ field: '身份证号', type: 'id-card' })).toBe('身份证号 身份证格式');
+    expect(validationRuleLabel({ field: '薪资', type: 'range', options: { min: 0, max: 10000 } })).toBe(
+      '薪资 数值范围(min,max)(0,10000)'
+    );
+  });
+});
+
+describe('D119：计算 / 条件 / 链接 设置组（编译 · 反编译 · 真实渲染）', () => {
+  const engine = new TemplateEngine();
+
+  function cfgOf(mappings: ColumnMapping[]): DataTransformConfig {
+    return { removeRows: [], filters: [], clean: [], mappings };
+  }
+
+  it('算术：直调（单步）+ ≥2 步 pipe + 数字常数/列名操作数 + 往返', async () => {
+    const cfg = cfgOf([
+      { source: '单价', target: '总价', type: 'text', settings: [{ group: 'compute', op: 'multiply', operand: '数量' }] },
+      { source: '价格', target: '含税', type: 'text', settings: [{ group: 'compute', op: 'add', operand: '2' }] },
+      {
+        source: 'a',
+        target: 'b',
+        type: 'text',
+        settings: [
+          { group: 'compute', op: 'add', operand: '1' },
+          { group: 'compute', op: 'multiply', operand: '2' }
+        ]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(multiply (lookup this "单价") (lookup this "数量"))');
+    expect(hb).toContain('(add (lookup this "价格") 2)');
+    expect(hb).toContain('(pipe (lookup this "a") (stage "add" 1) (stage "multiply" 2))');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const rows = await applyWizardTransform(engine, [{ 单价: '10', 数量: '3', 价格: '5', a: '3' }], cfg);
+    expect(rows[0].row.总价).toBe(30);
+    expect(rows[0].row.含税).toBe(7);
+    expect(rows[0].row.b).toBe(8);
+  });
+
+  it('条件计算：整链替换式 ternary 编译/往返/真实渲染', async () => {
+    const cfg = cfgOf([
+      {
+        source: '进度',
+        target: '状态',
+        type: 'text',
+        settings: [{ group: 'compute', op: 'condition', compare: 'gte', operand: '80', truthy: '正常', falsy: '需关注' }]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(ternary (gte (lookup this "进度") 80) "正常" "需关注")');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const high = await applyWizardTransform(engine, [{ 进度: '85' }], cfg);
+    expect(high[0].row.状态).toBe('正常');
+    const low = await applyWizardTransform(engine, [{ 进度: '70' }], cfg);
+    expect(low[0].row.状态).toBe('需关注');
+  });
+
+  it('条件警告：映射行 set 后追加 {{#if}}{{set "_warnings" (push …)}}；往返/真实渲染', async () => {
+    const cfg = cfgOf([
+      {
+        source: '进度',
+        target: '进度',
+        type: 'text',
+        settings: [{ group: 'compute', op: 'warn', compare: 'lt', operand: '60', text: '进度偏低' }]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('{{#if (lt (lookup this "进度") 60)}}{{set "_warnings" (push _warnings "进度偏低")}}{{/if}}');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const warn = await applyWizardTransform(engine, [{ 进度: '50' }], cfg);
+    expect(warn[0].row._warnings).toEqual(['进度偏低']);
+    const ok = await applyWizardTransform(engine, [{ 进度: '90' }], cfg);
+    expect(ok[0].row._warnings ?? []).toEqual([]);
+  });
+
+  it('智能链接：映射行 set 后追加 smartLink 附言；往返/真实渲染（向导注入 _hash）', async () => {
+    const cfg = cfgOf([
+      {
+        source: '姓名',
+        target: '姓名',
+        type: 'text',
+        settings: [{ group: 'link', op: 'smartLink', target: '人员档案', fallback: '待建档案' }]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(smartLink _hash "人员档案" "待建档案")');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const rows = await applyWizardTransform(engine, [{ 姓名: '张三' }], cfg);
+    expect(rows[0].row._hash).toMatch(/^[0-9a-f]{10}$/); // 向导注入确定性占位哈希
+    expect(String(rows[0].row._link ?? '')).toContain('[[');
+  });
+
+  it('行内设置链：算术与既有格式化并存（pipe 阶段顺序执行）', async () => {
+    const cfg = cfgOf([
+      {
+        source: '金额',
+        target: '金额',
+        type: 'text',
+        settings: [
+          { group: 'format', op: 'trim', param: '' },
+          { group: 'compute', op: 'add', operand: '1' }
+        ]
+      }
+    ]);
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(pipe (lookup this "金额") (stage "strTrim") (stage "add" 1))');
+    expect(handlebarsToConfig(hb).mappings).toEqual(cfg.mappings);
+    const rows = await applyWizardTransform(engine, [{ 金额: ' 10 ' }], cfg);
+    expect(rows[0].row.金额).toBe(11);
+  });
+});
+
+describe('D120：多笔记输出（noteTypes + 输出到 + note-output 段）', () => {
+  const engine = new TemplateEngine();
+
+  const cfgMulti = (): DataTransformConfig => ({
+    removeRows: [],
+    filters: [],
+    clean: [],
+    noteTypes: [
+      { id: 'contact', name: '联系方式', condition: [{ column: '电话', op: 'notEmpty', value: '' }] }
+    ],
+    mappings: [
+      { source: '姓名', target: '姓名', type: 'text' }, // 主笔记字段
+      { source: '电话', target: '电话', type: 'text', noteType: 'contact' } // 输出到「联系方式」
+    ]
+  });
+
+  it('编译：产 note-output 段（主笔记 + 附加类型 push _notes/条件包裹）', () => {
+    const hb = configToHandlebars(cfgMulti());
+    expect(hb).toContain('{{!-- ipro:begin:note-output --}}');
+    expect(hb).toContain('{{set "_notes" (array (object "姓名" (lookup this "姓名")))}}');
+    expect(hb).toContain('{{set "_notes" (push _notes (object "_noteType" "contact"');
+    expect(hb).toContain('{{#if');
+    // 生成条件 → 电话非空才生成
+    expect(hb).toContain('(isNotEmpty');
+  });
+
+  it('往返：noteTypes 与行 noteType（输出到）还原', () => {
+    const cfg = cfgMulti();
+    const back = handlebarsToConfig(configToHandlebars(cfg));
+    expect(back.noteTypes).toEqual(cfg.noteTypes);
+    const phone = back.mappings.find((m) => m.target === '电话');
+    expect(phone?.noteType).toBe('contact');
+    const name = back.mappings.find((m) => m.target === '姓名');
+    expect(name?.noteType).toBeUndefined(); // 主笔记字段不落 noteType
+  });
+
+  it('真实渲染：有电话 → 主 + 联系方式；无电话 → 仅主笔记（条件生效）', async () => {
+    const rows = await applyWizardTransform(
+      engine,
+      [
+        { 姓名: '张三', 电话: '138' },
+        { 姓名: '李四', 电话: '' }
+      ],
+      cfgMulti()
+    );
+    expect(rows).toHaveLength(2);
+    const notes1 = rows[0].row._notes as Array<Record<string, any>>;
+    const notes2 = rows[1].row._notes as Array<Record<string, any>>;
+    expect(notes1).toHaveLength(2); // 主 + 联系方式
+    expect(notes1[1]._noteType).toBe('contact');
+    expect(notes1[1]._noteLabel).toBe('联系方式');
+    expect(notes1[1]['电话']).toBe('138');
+    expect(notes1[0]['电话']).toBeUndefined(); // 电话归属联系方式 → 不入主笔记
+    expect(notes2).toHaveLength(1); // 仅主笔记（条件未命中）
+    expect(notes2[0]._noteType).toBeUndefined();
+    // 主 / 附加笔记文件名唯一（hash 基 + 后缀）
+    expect(String(notes1[1]._fileName)).toContain('_联系方式');
+    // 附加文件名引用注入的 seed _hash
+    expect(String(rows[0].row._hash)).toMatch(/^[0-9a-f]{10}$/);
+  });
+
+  it('零回归：未使用附加类型（全部输出到主笔记）→ 不产 note-output 段', () => {
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [],
+      clean: [],
+      noteTypes: [{ id: 'contact', name: '联系方式' }],
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }] // 未指派任何行到 contact
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).not.toContain('ipro:begin:note-output');
+    const back = handlebarsToConfig(hb);
+    expect(back.noteTypes).toBeUndefined();
+    expect(back.mappings[0].noteType).toBeUndefined();
+  });
+
+  it('多附加类型 + 显式文件夹/模板/文件名后缀：编译与往返', () => {
+    const cfg: DataTransformConfig = {
+      removeRows: [],
+      filters: [],
+      clean: [],
+      noteTypes: [
+        { id: 'contact', name: '联系方式', template: '_templates/联系方式.md', folder: '联系方式', noteName: '_联系' },
+        { id: 'work', name: '工作经历' }
+      ],
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '电话', target: '电话', type: 'text', noteType: 'contact' },
+        { source: '公司', target: '公司', type: 'text', noteType: 'work' }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('_template" "_templates/联系方式.md"');
+    expect(hb).toContain('_folder" "联系方式"');
+    const back = handlebarsToConfig(hb);
+    expect(back.noteTypes).toEqual(cfg.noteTypes);
+    expect(back.mappings.find((m) => m.target === '电话')?.noteType).toBe('contact');
+    expect(back.mappings.find((m) => m.target === '公司')?.noteType).toBe('work');
+    expect(back.mappings.find((m) => m.target === '姓名')?.noteType).toBeUndefined();
   });
 });
 

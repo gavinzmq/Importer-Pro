@@ -77,7 +77,11 @@ export class TemplateScanner implements ITemplateScanner {
       t.config.frontmatter && matchesRules(fileName, (t.config as any).matchRules ?? [])
     );
     if (candidates.length === 0) return null;
-    candidates.sort((a, b) => scoreRule(fileName, a) - scoreRule(fileName, b));
+    // D121：自动匹配按匹配规则「优先级降序 + 先匹配先得」——主键 = 模板规则的 priority（缺省 0，越大越优先），
+    // 同优先级再按精确/通配/正则命中度排序（先匹配先得语义 = 数组原序相对稳定，scoreRule 提供次级命中度）。
+    candidates.sort((a, b) =>
+      compareRuleMatch(fileName, (a.config as any).matchRules as MatchRule[], (b.config as any).matchRules as MatchRule[])
+    );
     return candidates[0].info;
   }
 
@@ -220,9 +224,11 @@ export class TemplateScanner implements ITemplateScanner {
       }
 
       const matchRules: MatchRule[] =
-        frontmatter.match?.patterns?.map((p: { type: string; value: string }) => ({
+        frontmatter.match?.patterns?.map((p: { type: string; value: string; priority?: number }) => ({
           type: p.type,
-          pattern: p.value
+          pattern: p.value,
+          // D121：匹配优先级随 pattern 读取（缺省 0）
+          ...(typeof p.priority === 'number' ? { priority: p.priority } : {})
         })) ?? [];
       const notes: TemplateNoteSpec[] | undefined = frontmatter.notes?.map((n: Record<string, string>) => ({
         noteType: n.noteType,
@@ -256,6 +262,9 @@ export class TemplateScanner implements ITemplateScanner {
         if (typeof outFm.incremental_mode === 'string') o.incrementalMode = outFm.incremental_mode as TemplateOutput['incrementalMode'];
       }
       (config as any)._raw = frontmatter; // 完整 frontmatter（API 读取 output/validation/match）
+      // findTemplate / scoreRule 以 config.matchRules 参与自动匹配与优先级排序（D121 修：此前从未回填，
+      // 自动匹配恒按空规则集返回 null——补充回填使 auto-match 与优先级降序真正生效）
+      (config as any).matchRules = matchRules;
 
       const info: TemplateInfo = { id, name: config.name, path: file.path, matchRules };
 
@@ -289,13 +298,30 @@ function matchesRules(fileName: string, rules: MatchRule[]): boolean {
   });
 }
 
-function scoreRule(fileName: string, parsed: ParsedTemplate): number {
-  const rules = (parsed.config as any).matchRules as MatchRule[];
+/** 单条规则命中度：精确 0 < 通配 1 < 正则 2（无规则 = 99 最低） */
+function ruleMatchScore(fileName: string, rules: MatchRule[]): number {
   if (!rules?.length) return 99;
   if (rules.some((r) => r.type === 'exact' && r.pattern === fileName)) return 0;
   if (rules.some((r) => r.type === 'glob' && new RegExp('^' + r.pattern.split('*').map(escapeRegex).join('.*') + '$').test(fileName)))
     return 1;
   return 2;
+}
+
+/** 规则集的最大优先级（D121；无规则时回落 0） */
+function maxRulePriorityOf(rules: MatchRule[]): number {
+  if (!rules?.length) return 0;
+  return Math.max(0, ...rules.map((r) => r.priority ?? 0));
+}
+
+/**
+ * D121 模板选择比较器（纯函数，可单测）：主键 = 规则优先级降序（值越大越优先），
+ * 次级 = 命中度（精确 < 通配 < 正则）；「先匹配先得」由稳定排序下的数组原序承载。
+ */
+export function compareRuleMatch(fileName: string, a: MatchRule[], b: MatchRule[]): number {
+  const pa = maxRulePriorityOf(a);
+  const pb = maxRulePriorityOf(b);
+  if (pb !== pa) return pb - pa; // 优先级降序
+  return ruleMatchScore(fileName, a) - ruleMatchScore(fileName, b);
 }
 
 function escapeRegex(s: string): string {
@@ -495,22 +521,33 @@ export function parseStep3Snapshot(rawContent: string): Step3TemplateSnapshot | 
 
   const name = String(frontmatter.name ?? '');
   const patterns = Array.isArray(frontmatter.match?.patterns) ? frontmatter.match.patterns : [];
-  const first = patterns[0] as { type?: string; value?: string } | undefined;
+  const first = patterns[0] as { type?: string; value?: string; priority?: number } | undefined;
   const out = (frontmatter.output ?? {}) as Record<string, any>;
   return {
     name,
     matchType: (first?.type as Step3TemplateSnapshot['matchType']) ?? 'glob',
     matchPattern: first?.value ? String(first.value) : '',
+    // D121：匹配优先级随 patterns[0].priority 读回
+    matchPriority: Number((first as any)?.priority) || 0,
     outputFolder: out.folder ? String(out.folder) : '',
     outputNoteName: out.note_name ? String(out.note_name) : '{{_hash}}',
+    // D121：输出策略（冲突/增量）随 frontmatter output 读回（运行时 D112 已消费，此处仅回填 UI）
+    conflictStrategy: (['overwrite', 'append', 'skip', 'rename', 'merge'].includes(out.conflict_strategy)
+      ? out.conflict_strategy
+      : 'overwrite') as Step3TemplateSnapshot['conflictStrategy'],
+    incrementalMode: (['hash', 'timestamp'].includes(out.incremental_mode)
+      ? out.incremental_mode
+      : 'hash') as Step3TemplateSnapshot['incrementalMode'],
     headerRow: Number((row as any)?.header_row) || 0,
+    // D118：frontmatter validation（数组，元素 {field,type,message,options?}）读回（校验契约 = frontmatter，template-schema §2）
+    validation: (Array.isArray(frontmatter.validation) ? frontmatter.validation : []) as Step3TemplateSnapshot['validation'],
     transform
   };
 }
 
 /** preprocess 中已存在的段集合（迁移用：段已编码则不叠加旧 frontmatter） */
 function extractPresentSegments(preprocess: string): { format: boolean; process: boolean; mapping: boolean; derived: boolean } {
-  const names = ['row-remove', 'row-filter', 'column-format', 'column-process', 'column-mapping', 'derived'];
+  const names = ['row-remove', 'row-filter', 'column-format', 'column-process', 'column-mapping', 'derived', 'note-output'];
   const present = new Set(
     names.filter((n) => new RegExp(`\\{\\{!-- ipro:begin:${n} --\\}\\}`).test(preprocess))
   );
@@ -530,14 +567,20 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   if (snap.matchPattern) {
     next.match = {
       enabled: (frontmatter.match as any)?.enabled ?? true,
-      patterns: [{ type: snap.matchType, value: snap.matchPattern }]
+      patterns: [{ type: snap.matchType, value: snap.matchPattern, priority: snap.matchPriority || 0 }]
     };
   }
   const t = snap.transform;
   next.output = {
     folder: snap.outputFolder ?? '',
-    note_name: snap.outputNoteName || '{{_hash}}'
+    note_name: snap.outputNoteName || '{{_hash}}',
+    // D121：输出策略随模板保存（冲突策略/增量模式，运行时 D112 已消费）
+    conflict_strategy: snap.conflictStrategy || 'overwrite',
+    incremental_mode: snap.incrementalMode || 'hash'
   };
+  // D118：校验规则写 frontmatter validation（不产编译段——校验契约 = frontmatter，template-schema §2）
+  if (Array.isArray(snap.validation) && snap.validation.length > 0) next.validation = snap.validation;
+  else delete next.validation;
   const row: Record<string, any> = {};
   if (snap.headerRow > 0) row.header_row = snap.headerRow;
   if (t.clean.length > 0) row.clean = t.clean;

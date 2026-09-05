@@ -205,6 +205,8 @@ export interface TemplateInfo {
 export interface MatchRule {
   pattern: string;
   type: 'regex' | 'glob' | 'exact';
+  /** D121：匹配优先级（默认 0，值越大越优先）；自动匹配/模板选择按优先级降序 + 先匹配先得 */
+  priority?: number;
 }
 
 export interface ValidationRule {
@@ -293,7 +295,22 @@ export interface RowFilterRule {
   op: RowFilterOp;
   value: string; // 比较值（regex 为正则文本；empty/notEmpty 忽略）
 }
-
+/**
+ * 多笔记输出 · 附加笔记类型配置（D120，向导配置模型；与 TemplateNoteSpec 区分——后者为 frontmatter 兼容字段）。
+ * 主笔记（'main'）为保留类型、固定存在；此处登记「主笔记之外的附加笔记类型」（如 联系方式 / 工作经历）。
+ * - id：唯一标识（如 'contact'）；name：展示名（如 联系方式）；
+ * - template：内容模板引用路径（.md，可选；阶段一透传 NoteSpec.templateRef、内容回落主模板）；
+ * - condition：生成条件（复用行筛选 AND 语义，可选；命中才为该行生成该类型笔记）；
+ * - folder：输出文件夹（可选；缺省随主笔记文件夹）；noteName：文件名后缀（可选；缺省 `_<name>`）。
+ */
+export interface NoteTypeConfig {
+  id: string;
+  name: string;
+  template?: string;
+  condition?: RowFilterRule[];
+  folder?: string;
+  noteName?: string;
+}
 /** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */
 export type PipeStageFn = (value: unknown) => unknown;
 

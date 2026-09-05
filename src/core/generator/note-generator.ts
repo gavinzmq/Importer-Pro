@@ -323,7 +323,8 @@ function toSpecs(record: DataRecord): NoteSpec[] {
     return record._notes.map((n: Record<string, any>) => {
       const data: DataRecord = {};
       for (const [k, v] of Object.entries(n)) {
-        if (['_folder', '_fileName', '_template', 'content'].includes(k)) continue;
+        // D120：_noteType/_noteLabel 为内部笔记类型标识（不入 spec data）；folder/fileName/template/content 亦排除
+        if (['_folder', '_fileName', '_template', 'content', '_noteType', '_noteLabel'].includes(k)) continue;
         data[k] = v;
       }
       return {
@@ -331,7 +332,8 @@ function toSpecs(record: DataRecord): NoteSpec[] {
         filename: sanitizeFilename(String(n._fileName ?? record._hash ?? 'note')),
         templateRef: n._template,
         data,
-        noteType: String(n._status ?? record._status ?? 'main'),
+        // D120：noteType 优先取元素 _noteType（附加笔记类型）；否则沿用 _status/record 既有语义
+        noteType: String(n._noteType ?? n._status ?? record._status ?? 'main'),
         content: n.content
       };
     });

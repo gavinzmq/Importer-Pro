@@ -7,12 +7,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  compareRuleMatch,
   composeStep3Snapshot,
   nextAvailableFileName,
   newTemplateId,
   parseStep3Snapshot,
   renderTemplateSkeleton
 } from '../../src/core/scanner/template-scanner';
+import type { MatchRule } from '../../src/types';
 
 describe('newTemplateId（D92）', () => {
   it('tpl_ 前缀 + 时间戳短码，随时间不同', () => {
@@ -135,9 +137,13 @@ row:
       name: '新模板名',
       matchType: 'regex' as const,
       matchPattern: '^员工',
+      matchPriority: 3,
       outputFolder: '输出目录',
       outputNoteName: '{{_hash}}',
+      conflictStrategy: 'rename' as const,
+      incrementalMode: 'timestamp' as const,
       headerRow: 2,
+      validation: [],
       transform: {
         removeRows: [{ kind: 'duplicateHeader' as const, param: '' }],
         filters: [{ column: '*', op: 'notEmpty' as const, value: '' }],
@@ -168,9 +174,13 @@ row:
       name: '模板',
       matchType: 'glob' as const,
       matchPattern: '*.csv',
+      matchPriority: 0,
       outputFolder: '出',
       outputNoteName: '{{_hash}}',
+      conflictStrategy: 'overwrite' as const,
+      incrementalMode: 'hash' as const,
       headerRow: 0,
+      validation: [],
       transform: {
         removeRows: [{ kind: 'byIndex' as const, param: '3' }],
         filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
@@ -196,5 +206,136 @@ row:
 
   it('无 template_id 的文本不可解析（防御）', () => {
     expect(parseStep3Snapshot('---\nname: x\n---\n```handlebars\n```')).toBeNull();
+  });
+});
+
+describe('D121：输出策略 + 匹配优先级（frontmatter 写读往返）', () => {
+  const LEGACY = `---
+name: '员工档案模板'
+template_id: tpl_x
+match:
+  patterns:
+    - type: glob
+      value: '*.csv'
+output:
+  folder: '人员档案'
+  note_name: '{{_hash}}'
+---
+
+\`\`\`handlebars
+\`\`\`
+`;
+
+  it('写入：matchPriority / conflict_strategy / incremental_mode 写 frontmatter', () => {
+    const snap = {
+      name: '员工档案模板',
+      matchType: 'glob' as const,
+      matchPattern: '*.csv',
+      matchPriority: 5,
+      outputFolder: '人员档案',
+      outputNoteName: '{{_hash}}',
+      conflictStrategy: 'rename' as const,
+      incrementalMode: 'timestamp' as const,
+      headerRow: 0,
+      validation: [],
+      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+    };
+    const next = composeStep3Snapshot(LEGACY, snap);
+    expect(next).toContain('priority: 5');
+    expect(next).toContain('conflict_strategy: rename');
+    expect(next).toContain('incremental_mode: timestamp');
+    // 读回
+    const back = parseStep3Snapshot(next);
+    expect(back).not.toBeNull();
+    if (!back) return;
+    expect(back.matchPriority).toBe(5);
+    expect(back.conflictStrategy).toBe('rename');
+    expect(back.incrementalMode).toBe('timestamp');
+  });
+
+  it('compareRuleMatch：优先级降序为主键，同优先级按命中度（精确<通配<正则）', () => {
+    const exact = [{ type: 'exact' as const, pattern: '员工.csv' }];
+    const globHigh = [{ type: 'glob' as const, pattern: '*.csv', priority: 10 }];
+    const exactHigh = [{ type: 'exact' as const, pattern: '员工.csv', priority: 10 }];
+    // 优先级更高的 glob 胜过低优先级的精确
+    expect(compareRuleMatch('员工.csv', globHigh, exact)).toBeLessThan(0);
+    // 同优先级下精确 < 通配
+    expect(compareRuleMatch('员工.csv', exactHigh, globHigh)).toBeLessThan(0);
+    // 对称性
+    expect(compareRuleMatch('员工.csv', exactHigh, globHigh)).toBe(-compareRuleMatch('员工.csv', globHigh, exactHigh));
+    // 无规则（空集）视为最低优先级
+    expect(compareRuleMatch('员工.csv', exact, [])).toBeLessThan(0);
+  });
+
+  it('parseTemplateFile 规则含 priority 时不丢失（info.matchRules 携带）', () => {
+    // compareRuleMatch 直接消费 MatchRule[].priority，验证字段类型可携带
+    const rules: MatchRule[] = [{ type: 'regex', pattern: '^员工.*\\.csv$', priority: 8 }];
+    expect(rules[0].priority).toBe(8);
+    expect(compareRuleMatch('员工.csv', rules, [{ type: 'glob', pattern: '*.csv' }])).toBeLessThan(0);
+  });
+});
+
+describe('D118：校验规则 frontmatter 写读往返（validation 契约）', () => {
+  const LEGACY = `---
+name: '员工档案模板'
+template_id: tpl_x
+match:
+  patterns:
+    - type: glob
+      value: '*.csv'
+---
+
+\`\`\`handlebars
+\`\`\`
+`;
+
+  it('写入：validation 写 frontmatter（不产编译段）；读回还原', () => {
+    const snap = {
+      name: '员工档案模板',
+      matchType: 'glob' as const,
+      matchPattern: '*.csv',
+      matchPriority: 0,
+      outputFolder: '',
+      outputNoteName: '{{_hash}}',
+      conflictStrategy: 'overwrite' as const,
+      incrementalMode: 'hash' as const,
+      headerRow: 0,
+      validation: [
+        { field: '身份证号', type: 'id-card', message: '身份证格式不正确' },
+        { field: '薪资', type: 'range', message: '', options: { min: 0, max: 100000 } }
+      ],
+      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+    };
+    const next = composeStep3Snapshot(LEGACY, snap);
+    expect(next).toContain('validation:');
+    expect(next).toContain('type: id-card');
+    // 校验不进 preprocess 编译段
+    expect(next.match(/ipro:begin:/g) ?? []).toHaveLength(0);
+    const back = parseStep3Snapshot(next);
+    expect(back).not.toBeNull();
+    if (!back) return;
+    expect(back.validation).toEqual(snap.validation);
+  });
+
+  it('无校验规则：不写 validation 字段（旧模板零破坏）', () => {
+    const snap = {
+      name: '员工档案模板',
+      matchType: 'glob' as const,
+      matchPattern: '*.csv',
+      matchPriority: 0,
+      outputFolder: '',
+      outputNoteName: '{{_hash}}',
+      conflictStrategy: 'overwrite' as const,
+      incrementalMode: 'hash' as const,
+      headerRow: 0,
+      validation: [],
+      transform: { removeRows: [] as never[], filters: [], clean: [], mappings: [] }
+    };
+    const next = composeStep3Snapshot(LEGACY, snap);
+    expect(next).not.toContain('validation:');
+    const back = parseStep3Snapshot(next);
+    expect(back).not.toBeNull();
+    if (!back) return;
+    expect(back.validation).toEqual([]);
   });
 });

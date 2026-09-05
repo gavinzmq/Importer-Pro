@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.24.0"
+version: "1.25.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -250,6 +250,8 @@ export interface IValidator {
 > **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。
 >
 > **校验 validation 运行时接入（D115，2026-09-05 已实现）**：模板声明 frontmatter `validation` 时，`DataPipeline.shard` 逐行执行并经 `Validator` 回填保留字段 `_valid/_errors/_warnings/_status`（template-schema §3）；不自动 `_skip`；`row.clean.filterInvalid`（跨行开关）在有校验规则时按校验失败过滤。实现见同决策（D115）。
+>
+> **Step 3 能力补齐对齐 EXAMPLES（D118–D121，2026-09-05 设计定稿，实现待排）**：① 校验规则 UI（D118）——向导区块 4「校验规则」卡写 frontmatter `validation`（8 种内置规则），预览经 `applyWizardTransform` 注入校验回填 `_valid/_errors/_status` 标记（运行时复用 D115，无新代码路径）；② 计算/条件/链接（D119）——区块 5「添加设置」增计算（算术直调/stage、条件 `(if (cmp …) A B)`、条件警告附言）与链接（smartLink 附言）组，白名单增 add/subtract/divide；③ 多笔记输出（D120）——新编译段 `note-output`（`push _notes`），映射行 `noteType` 归属笔记，`_template` 内容渲染为阶段二；④ 输出策略（D121）——`output.conflict_strategy`/`incremental_mode`/`match.priority` 写 frontmatter（output 两字段 D112 已消费；`MatchRule` 增 `priority?`，自动匹配按优先级降序）。决策见 decisions/2026-09-05-step3-examples-parity.md。
 
 ### 2.8 文件引用策略（路径引用）
 
@@ -295,6 +297,7 @@ export interface IValidator {
 | **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；执行顺序在行删除之后、列格式化之前（`行删除 → 行筛选 → …`）；类型 `RowFilterRule` / `RowFilterOp` 见 §7。**D97 行能力收敛**：删除行仅保留结构级模式（`byIndex` 行号 / `duplicateHeader` 重复标题行），`byContent` 内容删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」）；「去除空行」为预置筛选规则（`column: '*'` + `notEmpty`）的快捷开关；`RowFilterRule.column` 支持 `'*'` 任意列 |
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
 | **列侧收敛：列映射 + 行内设置链（D105–D107）** | Step 3 区块 7 → 6：区块 5 = 单一列映射表（目标字段/来源/类型/添加设置/操作），删除区块 6 派生（预览顺延区块 6）；列格式化/列处理/派生并入列映射行 `settings` 链，列侧仅产出 `column-mapping` 段（无设置=复制、1 步=直调、**≥2 步=pipe** 写 set）；类型=快捷转换；旧 column-format/process/derived 段与旧 frontmatter 读取折叠迁移 |
+| **能力补齐对齐 EXAMPLES（D118–D121，设计定稿待实现）** | 校验规则 → frontmatter `validation`（不产段，D118）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
@@ -786,4 +789,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.24.0 | 最后更新: 2026-09-05_
+_版本: 1.25.0 | 最后更新: 2026-09-05_

@@ -15,7 +15,18 @@ import {
 import { ImportService } from '../core/import-service';
 import { TemplateScanner } from '../core/scanner/template-scanner';
 import { ParserRegistry } from '../core/parser/registry';
-import type { DataRecord, FileInfo, ImportHistoryEntry, ImportResult, ParseOptions, PluginSettings } from '../types';
+import type {
+  ConflictStrategy,
+  DataRecord,
+  FileInfo,
+  ImportHistoryEntry,
+  ImportResult,
+  IncrementalMode,
+  NoteTypeConfig,
+  ParseOptions,
+  PluginSettings,
+  ValidationRule
+} from '../types';
 import { ImporterProError } from '../utils/errors';
 import { extOf } from '../utils/path';
 import { PauseController } from '../core/pause-controller';
@@ -26,6 +37,9 @@ import {
   ANY_COLUMN,
   applyWizardTransform,
   ColumnMapping,
+  COMPUTE_ARITH_LABELS,
+  COMPUTE_COMPARE_LABELS,
+  COMPUTE_COND_LABELS,
   DerivedRuleId,
   MappingSetting,
   MappingType,
@@ -38,7 +52,9 @@ import {
   formatFileSize,
   formatTimeAgo,
   FORMAT_OP_LABELS,
+  isPostscriptSetting,
   isPresetEmptyFilter,
+  LINK_OP_LABELS,
   mappingSettingLabel,
   MAPPING_TYPE_LABELS,
   parseRowNumbers,
@@ -50,10 +66,14 @@ import {
   ROW_FILTER_OP_LABELS,
   RowFilterRule,
   rowRemoveRuleLabel,
+  rowValidationBadge,
   settingParamSpec,
   unmappedColumns,
-  upsertSegments
+  upsertSegments,
+  VALIDATION_TYPE_LABELS,
+  validationRuleLabel
 } from './wizard-data';
+import type { ComputeCompareOp } from './wizard-data';
 import { dryRunStats, type DryRunSummary } from './wizard-data';
 import { TemplateEngine } from '../core/template/engine';
 
@@ -145,15 +165,28 @@ export class ImportModal extends Modal {
   private parseError: string | null = null;
   private parsedInfo: FileInfo | null = null;
   private transform: DataTransformConfig = emptyTransform();
+  /** D118：校验规则（区块 4「✅ 校验规则」卡；随 [💾 保存到模板] 写 frontmatter validation，预览/导入走真实校验语义） */
+  private validation: ValidationRule[] = [];
   /** D94：输出位置及命名规则（区块 3，随模板保存；缺省取自设置/默认 `{{_hash}}`） */
   private outputFolder = '';
   private outputNoteName = '{{_hash}}';
+  /** D121：输出策略（冲突/增量）与匹配优先级（区块 3，随 [💾 保存到模板] 写 frontmatter output/match） */
+  private conflictStrategy: ConflictStrategy = 'overwrite';
+  private incrementalMode: IncrementalMode = 'hash';
+  private matchPriority = 0;
   /** D95：已回填配置的「模板+文件」键（Step3↔4 往返不重复回填，保留未保存编辑） */
   private s3ConfigKey: string | null = null;
   /** D117：展开「设置」面板的映射行下标集合（操作列 ⏵/⏷ 显隐；增删行后近似按新下标复位） */
   private mappingPanelsOpen = new Set<number>();
-  /** D117：待确认参数的「添加设置」草稿（下拉选中需参数步骤后显示；确认/取消即清空） */
-  private pendingSettingDraft: { index: number; group: 'format' | 'process'; op: string } | null = null;
+  /** D117/D119：待确认参数的「添加设置」草稿（下拉选中需参数步骤后显示；确认/取消即清空）。
+   *  compute（算术/条件计算/条件警告）与 link（智能链接）各走专用草稿表单。 */
+  private pendingSettingDraft:
+    | { index: number; group: 'format' | 'process'; op: string }
+    | { index: number; group: 'compute'; op: 'add' | 'subtract' | 'multiply' | 'divide' }
+    | { index: number; group: 'compute'; op: 'condition' }
+    | { index: number; group: 'compute'; op: 'warn' }
+    | { index: number; group: 'link'; op: 'smartLink' }
+    | null = null;
 
   // D91：Step 3 区块局部刷新——.ipw-body 容器持久，各区块仅重建自身内容（含滚动保持）
   // D94/D108 归类：template（模板元信息）/ rows（行配置）/ columns（列配置：格式化/处理/列映射·派生合并单表）
@@ -539,13 +572,23 @@ export class ImportModal extends Modal {
     if (!this.templateId) {
       this.outputFolder = this.deps.settings().paths.outputFolder ?? '';
       this.outputNoteName = '{{_hash}}';
+      this.conflictStrategy = this.deps.settings().conflictStrategy;
+      this.incrementalMode = this.deps.settings().incrementalMode;
+      this.matchPriority = 0;
+      this.validation = [];
       return false;
     }
     const snap = await this.deps.scanner.readTemplateConfig(this.templateId);
     if (!snap) return false;
     this.outputFolder = snap.outputFolder ?? '';
     this.outputNoteName = snap.outputNoteName || '{{_hash}}';
+    // D121：输出策略/匹配优先级回填（读模板 frontmatter）
+    this.conflictStrategy = snap.conflictStrategy || this.deps.settings().conflictStrategy || 'overwrite';
+    this.incrementalMode = snap.incrementalMode || this.deps.settings().incrementalMode || 'hash';
+    this.matchPriority = snap.matchPriority || 0;
     this.headerRow = snap.headerRow || 0;
+    // D118：校验规则回填（模板 frontmatter validation）
+    this.validation = Array.isArray(snap.validation) ? snap.validation : [];
     this.transform = snap.transform;
     return true;
   }
@@ -898,6 +941,17 @@ export class ImportModal extends Modal {
       status.addClass(ok ? 'is-ok' : 'is-error');
     });
 
+    // D121：匹配优先级（数字，越大越优先；自动匹配/模板选择按优先级降序 + 先匹配先得）
+    const row2b = wrap.createDiv({ cls: 'ipw-form-row' });
+    row2b.createSpan({ cls: 'ipw-label', text: '优先级:' });
+    const prioInput = row2b.createEl('input', { cls: 'ipw-input ipw-prio-input', type: 'number', value: `${this.matchPriority}` });
+    prioInput.addEventListener('change', () => {
+      const n = Math.max(0, Math.trunc(Number(prioInput.value)) || 0);
+      this.matchPriority = n;
+      prioInput.value = `${n}`;
+    });
+    row2b.createSpan({ cls: 'ipw-muted', text: '越大越优先（同命中率时先匹配先得）' });
+
     wrap.createDiv({ cls: 'ipw-sub ipw-sec-label', text: '📂 输出位置及命名规则（随模板保存）' });
 
     // 输出文件夹（Handlebars 表达式）
@@ -923,6 +977,37 @@ export class ImportModal extends Modal {
       this.outputNoteName = nameExpr.value;
       this.renderOutputExample(outExample);
     });
+
+    // D121：输出策略（冲突策略 / 增量模式，写 frontmatter output.conflict_strategy / incremental_mode）
+    const row5 = wrap.createDiv({ cls: 'ipw-form-row' });
+    row5.createSpan({ cls: 'ipw-label', text: '冲突策略:' });
+    const conflictSel = row5.createEl('select', { cls: 'ipw-select' });
+    for (const [v, l] of [
+      ['overwrite', '覆盖'],
+      ['append', '追加'],
+      ['skip', '跳过'],
+      ['rename', '重命名'],
+      ['merge', '合并']
+    ] as const) {
+      conflictSel.createEl('option', { value: v, text: l });
+    }
+    conflictSel.value = this.conflictStrategy;
+    conflictSel.addEventListener('change', () => {
+      this.conflictStrategy = conflictSel.value as ConflictStrategy;
+    });
+    row5.createSpan({ cls: 'ipw-label ipw-label-gap', text: '增量模式:' });
+    const incrSel = row5.createEl('select', { cls: 'ipw-select' });
+    for (const [v, l] of [
+      ['hash', '哈希'],
+      ['timestamp', '时间戳']
+    ] as const) {
+      incrSel.createEl('option', { value: v, text: l });
+    }
+    incrSel.value = this.incrementalMode;
+    incrSel.addEventListener('change', () => {
+      this.incrementalMode = incrSel.value as IncrementalMode;
+    });
+
     const outExample = wrap.createDiv({ cls: 'ipw-output-example ipw-muted' });
 
     // 模板操作行（D92 迁移，D94）：编辑模板代码 / 新建模板 / 保存到模板
@@ -1007,9 +1092,15 @@ export class ImportModal extends Modal {
       name: this.templateName,
       matchType: this.matchType,
       matchPattern: this.matchPattern,
+      // D121：输出策略/匹配优先级随快照保存（写 frontmatter output/match）
+      matchPriority: this.matchPriority || 0,
       outputFolder: this.outputFolder,
       outputNoteName: this.outputNoteName,
+      conflictStrategy: this.conflictStrategy,
+      incrementalMode: this.incrementalMode,
       headerRow: this.headerRow,
+      // D118：校验规则随快照保存（写 frontmatter validation）
+      validation: this.validation,
       transform: this.transform
     };
   }
@@ -1135,6 +1226,8 @@ export class ImportModal extends Modal {
       if (filterListBox) this.renderFilterList(filterListBox);
       this.refreshPreviewOnly(); // D91 L1
     });
+    // D118/D115：与校验规则联动提示（勾选「过滤无效数据」且已配置校验规则时 = 按校验失败过滤）
+    cleanCard.createDiv({ cls: 'ipw-muted ipw-note', text: 'ⓘ 已配置校验规则时，「过滤无效数据」= 按校验失败过滤（无规则回落全空行启发式）' });
 
     // ── 删除行（D97 收敛：按行号 byIndex / 删除重复标题行 duplicateHeader；预览「#」列对号删除） ──
     const delCard = wrap.createDiv({ cls: 'ipw-card' });
@@ -1202,6 +1295,82 @@ export class ImportModal extends Modal {
     });
     filterListBox = filterCard.createDiv({ cls: 'ipw-filter-list-box' });
     this.renderFilterList(filterListBox);
+
+    // ── 校验规则（D118：字段 + 类型(Validator 内置 8 种) + 消息 + length/range 参数；写 frontmatter validation） ──
+    const validCard = wrap.createDiv({ cls: 'ipw-card' });
+    validCard.createDiv({ cls: 'ipw-card-title', text: '✅ 校验规则（随模板保存，预览行首显示状态徽标）' });
+    const vRow = validCard.createDiv({ cls: 'ipw-form-row' });
+    const vField = vRow.createEl('select', { cls: 'ipw-select' });
+    vField.createEl('option', { value: '', text: '(选择字段)' });
+    for (const c of cols) vField.createEl('option', { value: c, text: c });
+    const vType = vRow.createEl('select', { cls: 'ipw-select' });
+    for (const o of VALIDATION_TYPE_LABELS) vType.createEl('option', { value: o.value, text: o.label });
+    const vMsg = vRow.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '消息（可空，默认按类型）' });
+    const vMin = vRow.createEl('input', { cls: 'ipw-input ipw-param-input', type: 'number', value: '', attr: { placeholder: 'min' } });
+    const vMax = vRow.createEl('input', { cls: 'ipw-input ipw-param-input', type: 'number', value: '', attr: { placeholder: 'max' } });
+    const syncParamVis = (): void => {
+      const need = vType.value === 'length' || vType.value === 'range';
+      vMin.style.display = need ? '' : 'none';
+      vMax.style.display = need ? '' : 'none';
+    };
+    syncParamVis();
+    vType.addEventListener('change', syncParamVis);
+    const vAdd = vRow.createEl('button', { cls: 'ipw-mini ipw-primary', text: '➕ 添加' });
+    vAdd.addEventListener('click', () => {
+      const field = vField.value;
+      const type = vType.value;
+      if (!field || !type) {
+        new Notice('请选择校验字段与规则类型');
+        return;
+      }
+      const rule: ValidationRule = { field, type, message: vMsg.value.trim(), options: undefined };
+      if (type === 'length' || type === 'range') {
+        const min = vMin.value.trim();
+        const max = vMax.value.trim();
+        if (min === '' && max === '') {
+          new Notice('length/range 需填写 min 或 max');
+          return;
+        }
+        rule.options = {};
+        if (min !== '') rule.options.min = Number(min);
+        if (max !== '') rule.options.max = Number(max);
+      }
+      this.validation = [...this.validation, rule];
+      vField.value = '';
+      vMsg.value = '';
+      vMin.value = '';
+      vMax.value = '';
+      if (validationListBox) this.renderValidationList(validationListBox);
+      this.refreshPreviewOnly(); // D91 L1（预览行首徽标即时更新）
+    });
+    if (cols.length === 0) vField.value = '';
+    const validationListBox = validCard.createDiv({ cls: 'ipw-validation-list-box' });
+    this.renderValidationList(validationListBox);
+  }
+
+  /** D118：仅重建「校验规则已配置」列表（不整块重建、不重置顶部控件） */
+  private renderValidationList(container: HTMLElement): void {
+    container.empty();
+    const rules = this.validation;
+    if (rules.length > 0) {
+      container.createDiv({ cls: 'ipw-muted', text: '已配置:' });
+      const list = container.createDiv({ cls: 'ipw-rule-list' });
+      rules.forEach((r, i) => {
+        const row = list.createDiv({ cls: 'ipw-rule-row' });
+        row.createSpan({ cls: 'ipw-rule-text', text: `• ${validationRuleLabel(r)}` });
+        if (r.type === 'unique') row.createSpan({ cls: 'ipw-rule-tag', text: '批次级唯一' });
+        const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
+        del.addEventListener('click', () => {
+          const next = [...this.validation];
+          next.splice(i, 1);
+          this.validation = next;
+          this.renderValidationList(container);
+          this.refreshPreviewOnly();
+        });
+      });
+    } else {
+      container.createDiv({ cls: 'ipw-muted ipw-note', text: '已配置: (无)——规则类型: 必填 / 身份证 / 邮箱 / 手机号 / 日期 / 长度 / 数值范围 / 唯一(批次级)' });
+    }
   }
 
   /** D91/D96：仅重建「行筛选已配置」列表 + 统计行（不整块重建、不重置顶部控件） */
@@ -1241,15 +1410,18 @@ export class ImportModal extends Modal {
   private renderColumnsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.columns = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
-    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 类型 + 添加设置链）' });
+    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 类型 + 输出到 + 添加设置链 + 多笔记）' });
     const cols = this.columns();
 
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
     mapCard.createDiv({
       cls: 'ipw-card-title',
-      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「添加设置」下拉加入 列格式化 / 列处理 / 列派生 步骤）'
+      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记，D120；「添加设置」= 格式化/处理/派生/计算/链接）'
     });
     this.renderMappingCard(mapCard, cols);
+
+    // D120：区块 5 底部「📑 笔记类型」面板（多笔记输出配置）
+    this.renderNoteTypesPanel(wrap);
   }
 
   /** D91/D93：仅重建「删除行已配置」列表（不整块重建、不重置顶部控件），供 L1 级增删即时回显 */
@@ -1340,6 +1512,7 @@ export class ImportModal extends Modal {
     head.createSpan({ text: '来源' });
     head.createSpan({ text: '目标字段' });
     head.createSpan({ text: '类型' });
+    head.createSpan({ text: '输出到' });
     head.createSpan({ text: '添加设置' });
     head.createSpan({ text: '操作' });
 
@@ -1347,7 +1520,7 @@ export class ImportModal extends Modal {
       host.createDiv({
         cls: 'ipw-muted ipw-note',
         text:
-          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 步骤——选「列派生」即成为派生计算行）'
+          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 / 计算 / 链接 步骤——选「列派生」即成为派生计算行）'
       });
     }
 
@@ -1401,6 +1574,20 @@ export class ImportModal extends Modal {
         const mp = this.transform.mappings[i];
         mp.type = typeSel.value as MappingType;
         this.refreshStep3Blocks(['columns']); // D91：L2 + 预览刷新（忽略=不产出）
+      });
+
+      // ── 输出到（D120：字段归属笔记类型下拉；主笔记 + 已定义附加类型） ──
+      const noteSel = row.createEl('select', { cls: 'ipw-select' });
+      noteSel.createEl('option', { value: '', text: '主笔记' });
+      for (const t of this.transform.noteTypes ?? []) {
+        noteSel.createEl('option', { value: t.id, text: t.name || t.id });
+      }
+      noteSel.value = m.noteType && m.noteType !== 'main' ? m.noteType : '';
+      noteSel.addEventListener('change', () => {
+        const mp = this.transform.mappings[i];
+        const v = noteSel.value;
+        mp.noteType = v === '' || v === 'main' ? undefined : v;
+        this.refreshStep3Blocks(['columns']); // D91：L2（字段归属变化影响 note-output）+ 预览刷新
       });
 
       // ── 添加设置（D117 下拉：列格式化 / 列处理 / 列派生，选择即加入该行设置链） ──
@@ -1483,12 +1670,162 @@ export class ImportModal extends Modal {
       text:
         `💡 可用源列: ${freeCols.join(' / ') || '(无未映射列)'}。` +
         `「类型」为目标字段的 FrontMatter 类型（数字/日期/布尔自动转换，忽略=不产出）；` +
-        `「添加设置」下拉加入 列格式化/列处理/列派生 步骤（选「列派生」即按预设计算该字段）；` +
+        `「添加设置」下拉加入 列格式化/列处理/列派生/计算/链接 步骤（选「列派生」即按预设计算该字段；` +
+        `计算=加减乘除/条件计算/条件警告，链接=智能链接，条件与链接仅适用于普通映射行）；` +
         `标记「自动」的行由 🧹自动映射 生成，「🗑 删除所有自动映射」仅删除此类行。`
     });
   }
 
-  /** D117：渲染行「添加设置」下拉（列格式化 / 列处理 / 列派生三组）；参数类步骤进入面板草稿 */
+  /* ── D120 多笔记输出：区块 5「📑 笔记类型」面板 ── */
+
+  /** 模板引用下拉选项（模板目录 .md 的完整路径；D120） */
+  private templateRefOptions(): Array<{ value: string; label: string }> {
+    const opts: Array<{ value: string; label: string }> = [];
+    for (const t of this.templates) {
+      const p = this.deps.scanner.getParsed(t.id);
+      if (p) opts.push({ value: p.info.path, label: t.name || basenameOf(p.info.path) });
+    }
+    return opts;
+  }
+
+  /** 下一个可用的附加笔记类型 id（`type1`/`type2`… 不与其他类型冲突） */
+  private nextNoteTypeId(notes: NoteTypeConfig[]): string {
+    let i = 1;
+    while (notes.some((t) => t.id === `type${i}`)) i++;
+    return `type${i}`;
+  }
+
+  /** 区块 5 底部「📑 笔记类型」面板（空态折叠提示；附加类型列表可增删/编辑字段/生成条件） */
+  private renderNoteTypesPanel(host: HTMLElement): void {
+    const wrap = host.createDiv({ cls: 'ipw-card' });
+    wrap.createDiv({ cls: 'ipw-card-title', text: '📑 笔记类型（多笔记输出）' });
+    wrap.createDiv({
+      cls: 'ipw-muted ipw-note',
+      text: '主笔记（固定，一条数据始终生成）：含全部「输出到 = 主笔记」的字段。附加类型经下方添加；在「输出到」列把字段指派给对应类型笔记。'
+    });
+    const notes = this.transform.noteTypes ?? [];
+    const listHost = wrap.createDiv({ cls: 'ipw-note-types' });
+    if (notes.length === 0) {
+      listHost.createDiv({ cls: 'ipw-muted ipw-note', text: '（未定义附加类型，每条数据仅生成主笔记）' });
+    } else {
+      notes.forEach((t, idx) => this.renderNoteTypeRow(listHost, idx, t));
+    }
+    const addBtn = wrap.createEl('button', { cls: 'ipw-mini ipw-primary', text: '➕ 添加笔记类型' });
+    addBtn.addEventListener('click', () => {
+      const arr = this.transform.noteTypes ?? [];
+      const id = this.nextNoteTypeId(arr);
+      arr.push({ id, name: `笔记类型${arr.length + 1}` });
+      this.transform.noteTypes = arr;
+      this.refreshStep3Blocks(['columns']); // L2：重建区块（输出到列/面板同步）
+    });
+  }
+
+  /** 渲染单个附加笔记类型行（名称/模板/文件夹/文件名后缀/生成条件） */
+  private renderNoteTypeRow(host: HTMLElement, idx: number, t: NoteTypeConfig): void {
+    const box = host.createDiv({ cls: 'ipw-note-type' });
+    const row1 = box.createDiv({ cls: 'ipw-form-row' });
+    const nameInput = row1.createEl('input', { cls: 'ipw-input', type: 'text', value: t.name, attr: { placeholder: '类型名称，如 联系方式' } });
+    nameInput.addEventListener('input', () => {
+      const cur = (this.transform.noteTypes ?? [])[idx];
+      if (cur) cur.name = nameInput.value;
+    });
+    nameInput.addEventListener('change', () => this.refreshStep3Blocks(['columns'])); // 失焦同步到「输出到」列文本
+    const tplSel = row1.createEl('select', { cls: 'ipw-select' });
+    tplSel.createEl('option', { value: '', text: '模板: (不引用)' });
+    for (const o of this.templateRefOptions()) tplSel.createEl('option', { value: o.value, text: o.label });
+    tplSel.value = t.template ?? '';
+    tplSel.addEventListener('change', () => {
+      const cur = (this.transform.noteTypes ?? [])[idx];
+      if (cur) {
+        const v = tplSel.value;
+        cur.template = v === '' ? undefined : v;
+      }
+      this.refreshStep3Blocks(['columns']);
+    });
+    const del = row1.createEl('button', { cls: 'ipw-mini ipw-danger', text: '🗑 删除类型' });
+    del.addEventListener('click', () => {
+      const arr = this.transform.noteTypes ?? [];
+      const removed = arr[idx];
+      arr.splice(idx, 1);
+      this.transform.noteTypes = arr;
+      // 删除后：引用该类型的映射行回落主笔记（避免字段归属悬空丢失）
+      if (removed) {
+        for (const m of this.transform.mappings) {
+          if (m.noteType === removed.id) m.noteType = undefined;
+        }
+      }
+      this.refreshStep3Blocks(['columns']);
+    });
+
+    const row2 = box.createDiv({ cls: 'ipw-form-row' });
+    row2.createSpan({ cls: 'ipw-label', text: '输出文件夹:' });
+    const folderInput = row2.createEl('input', { cls: 'ipw-input', type: 'text', value: t.folder ?? '', attr: { placeholder: '空 = 随主笔记文件夹' } });
+    folderInput.addEventListener('input', () => {
+      const cur = (this.transform.noteTypes ?? [])[idx];
+      if (cur) cur.folder = folderInput.value.trim();
+    });
+    row2.createSpan({ cls: 'ipw-label ipw-label-gap', text: '文件名后缀:' });
+    const nameSuffix = row2.createEl('input', { cls: 'ipw-input', type: 'text', value: t.noteName ?? '', attr: { placeholder: '如 _联系方式（缺省 _类型名）' } });
+    nameSuffix.addEventListener('input', () => {
+      const cur = (this.transform.noteTypes ?? [])[idx];
+      if (cur) cur.noteName = nameSuffix.value.trim();
+    });
+
+    // 生成条件（复用行筛选 AND 语义；可选）
+    const row3 = box.createDiv({ cls: 'ipw-form-row' });
+    row3.createSpan({ cls: 'ipw-label', text: '生成条件:' });
+    const cCol = row3.createEl('select', { cls: 'ipw-select' });
+    cCol.createEl('option', { value: ANY_COLUMN, text: '任意列' });
+    for (const c of this.columns()) cCol.createEl('option', { value: c, text: c });
+    const cOp = row3.createEl('select', { cls: 'ipw-select' });
+    for (const o of ROW_FILTER_OP_LABELS) cOp.createEl('option', { value: o.value, text: o.label });
+    const cVal = row3.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '值（为空/非空无需）' });
+    const cAdd = row3.createEl('button', { cls: 'ipw-mini', text: '➕ 条件' });
+    cAdd.addEventListener('click', () => {
+      const cur = (this.transform.noteTypes ?? [])[idx];
+      if (!cur) return;
+      if (cOp.value !== 'empty' && cOp.value !== 'notEmpty' && cVal.value.trim() === '') {
+        new Notice('请填写比较值');
+        return;
+      }
+      cur.condition = cur.condition ?? [];
+      cur.condition.push({ column: cCol.value, op: cOp.value as RowFilterRule['op'], value: cVal.value.trim() });
+      cVal.value = '';
+      this.renderNoteTypeCondList(condBox, idx);
+      this.refreshPreviewOnly();
+    });
+    const condBox = box.createDiv({ cls: 'ipw-note-type-cond' });
+    this.renderNoteTypeCondList(condBox, idx);
+  }
+
+  /** 重建单个附加笔记类型的「生成条件」列表（不整块重建） */
+  private renderNoteTypeCondList(container: HTMLElement, idx: number): void {
+    container.empty();
+    const t = (this.transform.noteTypes ?? [])[idx];
+    const rules = t?.condition ?? [];
+    if (rules.length === 0) {
+      container.createDiv({ cls: 'ipw-muted ipw-note', text: '条件: (无——满足字段非空即生成？留空 = 每行均生成)' });
+      return;
+    }
+    container.createDiv({ cls: 'ipw-muted', text: '条件:' });
+    const list = container.createDiv({ cls: 'ipw-rule-list' });
+    rules.forEach((r, j) => {
+      const row = list.createDiv({ cls: 'ipw-rule-row' });
+      row.createSpan({ cls: 'ipw-rule-text', text: `• ${rowFilterRuleLabel(r)}` });
+      const del = row.createEl('button', { cls: 'ipw-icon-btn', text: '✕' });
+      del.addEventListener('click', () => {
+        const cur = (this.transform.noteTypes ?? [])[idx];
+        if (!cur) return;
+        const arr = [...(cur.condition ?? [])];
+        arr.splice(j, 1);
+        cur.condition = arr;
+        this.renderNoteTypeCondList(container, idx);
+        this.refreshPreviewOnly();
+      });
+    });
+  }
+
+  /** D117/D119：渲染行「添加设置」下拉（五组：列格式化 / 列处理 / 列派生 / 计算 / 链接）；参数类步骤进入面板草稿 */
   private renderMappingAddSelect(cell: HTMLElement, index: number): void {
     const sel = cell.createEl('select', { cls: 'ipw-select ipw-add-setting-sel' });
     sel.createEl('option', { value: '', text: '＋ 添加设置…' });
@@ -1498,6 +1835,11 @@ export class ImportModal extends Modal {
     for (const o of PROCESS_OP_LABELS) gPrc.createEl('option', { value: o.value, text: o.label });
     const gDer = sel.createEl('optgroup', { attr: { label: '列派生' } });
     for (const p of DERIVED_PRESETS) gDer.createEl('option', { value: p.id, text: p.label });
+    const gCmp = sel.createEl('optgroup', { attr: { label: '计算' } });
+    for (const o of COMPUTE_ARITH_LABELS) gCmp.createEl('option', { value: o.value, text: o.label });
+    for (const o of COMPUTE_COND_LABELS) gCmp.createEl('option', { value: o.value, text: o.label });
+    const gLnk = sel.createEl('optgroup', { attr: { label: '链接' } });
+    for (const o of LINK_OP_LABELS) gLnk.createEl('option', { value: o.value, text: o.label });
 
     sel.addEventListener('change', () => {
       const val = sel.value;
@@ -1505,6 +1847,32 @@ export class ImportModal extends Modal {
       if (!val) return;
       if (DERIVED_PRESETS.some((p) => p.id === val)) {
         this.applyDerivePreset(index, val as DerivedRuleId);
+        return;
+      }
+      const mp = this.transform.mappings[index];
+      const isDerived = !!mp.rule;
+      // D119 计算·算术
+      const arith = COMPUTE_ARITH_LABELS.find((o) => o.value === val);
+      if (arith) {
+        this.pendingSettingDraft = { index, group: 'compute', op: arith.value };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      // D119 条件计算 / 条件警告 / 智能链接（仅普通映射行——值管线 / 附言均以行源列值为比较对象）
+      if (val === 'condition' || val === 'warn' || val === 'smartLink') {
+        if (isDerived) {
+          new Notice('条件计算 / 条件警告 / 智能链接仅适用于普通映射行（请选一条有来源的映射行）');
+          return;
+        }
+        this.pendingSettingDraft =
+          val === 'condition'
+            ? { index, group: 'compute', op: 'condition' }
+            : val === 'warn'
+              ? { index, group: 'compute', op: 'warn' }
+              : { index, group: 'link', op: 'smartLink' };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
         return;
       }
       const fmt = FORMAT_OP_LABELS.some((o) => o.value === val);
@@ -1522,7 +1890,6 @@ export class ImportModal extends Modal {
         return;
       }
       // 无参数：直接加入该行设置链
-      const mp = this.transform.mappings[index];
       mp.settings = mp.settings ?? [];
       const setting: MappingSetting =
         group === 'format'
@@ -1560,7 +1927,7 @@ export class ImportModal extends Modal {
 
     const draft = this.pendingSettingDraft;
     if (draft && draft.index === index) {
-      this.renderSettingDraftForm(panel, index, draft.group, draft.op);
+      this.renderPendingSettingDraft(panel, index, draft);
     }
 
     const list = panel.createDiv({ cls: 'ipw-map-settings-list' });
@@ -1595,8 +1962,164 @@ export class ImportModal extends Modal {
       });
     });
     if (!m.rule && (m.settings?.length ?? 0) === 0 && !(draft && draft.index === index)) {
-      list.createDiv({ cls: 'ipw-muted ipw-note', text: '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生）' });
+      list.createDiv({
+        cls: 'ipw-muted ipw-note',
+        text: '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生 / 计算 / 链接）'
+      });
     }
+  }
+
+  /** D117/D119：按草稿类型分发参数确认表单（format/process 通用单参；compute 算术/条件/警告与 link 专用） */
+  private renderPendingSettingDraft(
+    panel: HTMLElement,
+    index: number,
+    draft: NonNullable<ImportModal['pendingSettingDraft']>
+  ): void {
+    if (draft.group === 'format' || draft.group === 'process') {
+      this.renderSettingDraftForm(panel, index, draft.group, draft.op);
+      return;
+    }
+    if (draft.group === 'compute' && (draft.op === 'add' || draft.op === 'subtract' || draft.op === 'multiply' || draft.op === 'divide')) {
+      this.renderComputeArithDraft(panel, index, draft.op);
+      return;
+    }
+    if (draft.group === 'compute' && draft.op === 'condition') {
+      this.renderConditionDraft(panel, index);
+      return;
+    }
+    if (draft.group === 'compute' && draft.op === 'warn') {
+      this.renderWarnDraft(panel, index);
+      return;
+    }
+    if (draft.group === 'link' && draft.op === 'smartLink') {
+      this.renderLinkDraft(panel, index);
+      return;
+    }
+  }
+
+  /** 复用：草稿区创建「比较符/操作数」行（条件计算 / 条件警告共用） */
+  private draftCompareRow(
+    host: HTMLElement
+  ): { compareSel: HTMLSelectElement; operand: HTMLInputElement } {
+    host.createSpan({ cls: 'ipw-muted', text: '比较:' });
+    const compareSel = host.createEl('select', { cls: 'ipw-select' });
+    for (const o of COMPUTE_COMPARE_LABELS) compareSel.createEl('option', { value: o.value, text: o.label });
+    const operand = host.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      value: '',
+      attr: { placeholder: '第二操作数（数字常数或列名）' }
+    });
+    return { compareSel, operand };
+  }
+
+  /** D119：计算·算术草稿（第二操作数 = 数字常数或列名） */
+  private renderComputeArithDraft(panel: HTMLElement, index: number, op: 'add' | 'subtract' | 'multiply' | 'divide'): void {
+    const label = COMPUTE_ARITH_LABELS.find((o) => o.value === op)?.label ?? op;
+    const row = panel.createDiv({ cls: 'ipw-settings-editor' });
+    row.createSpan({ cls: 'ipw-muted', text: `添加 计算·` });
+    row.createSpan({ text: label });
+    const operand = row.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      value: '',
+      attr: { placeholder: '第二操作数：数字常数或列名' }
+    });
+    this.draftButtons(row, index, () => {
+      const t = operand.value.trim();
+      if (t === '') {
+        new Notice('请填写第二操作数（数字常数或列名）');
+        return null;
+      }
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      mp.settings.push({ group: 'compute', op, operand: t });
+      return true;
+    });
+  }
+
+  /** D119：计算·条件计算草稿（比较当前行值 → 真/假值；整链替换式，清空其余值步骤） */
+  private renderConditionDraft(panel: HTMLElement, index: number): void {
+    const row = panel.createDiv({ cls: 'ipw-settings-editor' });
+    row.createSpan({ cls: 'ipw-muted', text: '添加 计算·条件计算 ' });
+    const { compareSel, operand } = this.draftCompareRow(row);
+    const truthy = row.createEl('input', { cls: 'ipw-input', type: 'text', value: '', attr: { placeholder: '条件成立值' } });
+    const falsy = row.createEl('input', { cls: 'ipw-input', type: 'text', value: '', attr: { placeholder: '条件不成立值' } });
+    this.draftButtons(row, index, () => {
+      const t = operand.value.trim();
+      if (t === '') {
+        new Notice('请填写第二操作数');
+        return null;
+      }
+      const mp = this.transform.mappings[index];
+      // 整链替换式：清空其余值管线步骤（保留附言 warn/link）
+      mp.settings = (mp.settings ?? []).filter((s) => isPostscriptSetting(s));
+      mp.settings.push({
+        group: 'compute',
+        op: 'condition',
+        compare: compareSel.value as ComputeCompareOp,
+        operand: t,
+        truthy: truthy.value,
+        falsy: falsy.value
+      });
+      return true;
+    });
+  }
+
+  /** D119：计算·条件警告草稿（比较命中 → 追加 _warnings 附言） */
+  private renderWarnDraft(panel: HTMLElement, index: number): void {
+    const row = panel.createDiv({ cls: 'ipw-settings-editor' });
+    row.createSpan({ cls: 'ipw-muted', text: '添加 计算·条件警告 ' });
+    const { compareSel, operand } = this.draftCompareRow(row);
+    const text = row.createEl('input', { cls: 'ipw-input', type: 'text', value: '', attr: { placeholder: '警告文本（命中时写入 _warnings）' } });
+    this.draftButtons(row, index, () => {
+      const t = operand.value.trim();
+      if (t === '') {
+        new Notice('请填写第二操作数');
+        return null;
+      }
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      mp.settings.push({
+        group: 'compute',
+        op: 'warn',
+        compare: compareSel.value as ComputeCompareOp,
+        operand: t,
+        text: text.value
+      });
+      return true;
+    });
+  }
+
+  /** D119：链接·智能链接草稿（目标文件夹 / 回退文件夹 → 行 set 后写 _link） */
+  private renderLinkDraft(panel: HTMLElement, index: number): void {
+    const row = panel.createDiv({ cls: 'ipw-settings-editor' });
+    row.createSpan({ cls: 'ipw-muted', text: '添加 链接·智能链接 ' });
+    const target = row.createEl('input', { cls: 'ipw-input', type: 'text', value: '人员档案', attr: { placeholder: '目标文件夹' } });
+    const fallback = row.createEl('input', { cls: 'ipw-input', type: 'text', value: '待建档案', attr: { placeholder: '回退文件夹（未匹配时）' } });
+    this.draftButtons(row, index, () => {
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      mp.settings.push({ group: 'link', op: 'smartLink', target: target.value.trim(), fallback: fallback.value.trim() });
+      return true;
+    });
+  }
+
+  /** 草稿区「添加/取消」按钮（提交回调返回 null = 校验失败不关闭；true = 写入后关闭刷新） */
+  private draftButtons(host: HTMLElement, index: number, submit: () => boolean | null): void {
+    const ok = host.createEl('button', { cls: 'ipw-mini ipw-primary', text: '添加' });
+    ok.addEventListener('click', () => {
+      const done = submit();
+      if (done === null) return;
+      this.pendingSettingDraft = null;
+      this.mappingPanelsOpen.add(index);
+      this.refreshStep3Blocks(['columns']);
+    });
+    const cancel = host.createEl('button', { cls: 'ipw-mini', text: '取消' });
+    cancel.addEventListener('click', () => {
+      this.pendingSettingDraft = null;
+      this.refreshStep3Blocks(['columns']);
+    });
   }
 
   /** D117：设置面板内渲染「添加设置」参数草稿（下拉选中需参数步骤后出现） */
@@ -1638,8 +2161,10 @@ export class ImportModal extends Modal {
     });
   }
 
-  /** D117：设置面板内编辑某设置参数（就地展开输入；保存后刷新） */
+  /** D117/D119：设置面板内编辑某设置参数（就地展开输入；保存后刷新）。仅 format/process 走通用单参编辑，
+   *  compute/link 参数较多（compare/operand/truthy/falsy 等），采用「删除后重加」维护。 */
   private renderSettingEditForm(item: HTMLElement, index: number, j: number, s: MappingSetting): void {
+    if (s.group === 'compute' || s.group === 'link') return;
     const editor = item.createDiv({ cls: 'ipw-map-edit' });
     const spec = settingParamSpec(s);
     const param = editor.createEl('input', {
@@ -1654,6 +2179,7 @@ export class ImportModal extends Modal {
       const list = mp.settings ?? [];
       const cur = list[j];
       if (!cur) return;
+      if (cur.group !== 'format' && cur.group !== 'process') return;
       const p = param.value.trim();
       if (spec.needParam && p === '') {
         new Notice('请填写参数');
@@ -1693,7 +2219,13 @@ export class ImportModal extends Modal {
     head.setText(hasSel ? `筛选后 ${formatCount(kept)} / ${formatCount(total)} 行` : `共 ${formatCount(total)} 行`);
 
     // D88：预览首列「#」为解析后原始行号（1-based，删除/筛选后不重排）
-    const rows = await applyWizardTransform(this.deps.engine, this.parsed.slice(0, 20), this.transform);
+    // D118：向导实时校验规则传入（真实校验语义回填 _valid/_errors/_warnings/_status → 行首徽标）
+    const rows = await applyWizardTransform(
+      this.deps.engine,
+      this.parsed.slice(0, 20),
+      this.transform,
+      { rules: this.validation }
+    );
     if (!container.isConnected) return; // 异步渲染期间向导已关闭/区块已重建
     const preview = rows.slice(0, 3);
     if (preview.length === 0) {
@@ -1701,18 +2233,55 @@ export class ImportModal extends Modal {
       note.addClass('ipw-preview-grid-wrap');
       return;
     }
-    const cols = Object.keys(preview[0].row).filter((k) => k !== '_index');
+    // 隐藏内部回填保留字段（行号/校验标记/哈希/链接等不展示为数据列）
+    const IGNORED = new Set(['_index', '_valid', '_errors', '_warnings', '_status', '_hash', '_link', '_notes']);
+    const cols = Object.keys(preview[0].row).filter((k) => !IGNORED.has(k));
+    const hasValid = this.validation.length > 0;
     const grid = container.createDiv({ cls: 'ipw-preview-grid-wrap' });
     const gridEl = grid.createDiv({ cls: 'ipw-preview-grid' });
     gridEl.createDiv({ cls: 'ipw-cell is-head ipw-row-num', text: '#' });
+    if (hasValid) gridEl.createDiv({ cls: 'ipw-cell is-head ipw-valid-col', text: '状态' });
     for (const c of cols) gridEl.createDiv({ cls: 'ipw-cell is-head', text: c, attr: { title: c } });
     for (const p of preview) {
       gridEl.createDiv({ cls: 'ipw-cell ipw-row-num', text: `${p.src}` });
+      if (hasValid) {
+        const badge = rowValidationBadge(p.row);
+        const cell = gridEl.createDiv({ cls: 'ipw-cell ipw-valid-badge' });
+        if (badge === 'err') cell.setText('❌ 失败');
+        else if (badge === 'warn') cell.setText('⚠️ 警告');
+        else if (badge === 'ok') cell.setText('✅ 通过');
+        else cell.setText('—');
+        cell.addClass(badge === 'err' ? 'is-err' : badge === 'warn' ? 'is-warn' : 'is-ok');
+      }
       for (const c of cols) {
         const v = p.row[c];
         gridEl.createDiv({
           cls: 'ipw-cell',
           text: v === undefined || v === null ? '' : Array.isArray(v) ? v.join('、') : String(v)
+        });
+      }
+    }
+
+    // D120：多笔记展开——每源行下方折叠展开该行多笔记清单（主笔记 + N 个附加笔记条目）
+    const hasNotes = preview.some((r) => Array.isArray(r.row._notes) && (r.row._notes as unknown[]).length > 0);
+    if (hasNotes) {
+      const notesHead = grid.createDiv({ cls: 'ipw-muted ipw-note', text: '📎 多笔记输出（每源行将生成以下笔记）' });
+      void notesHead;
+      for (const p of preview) {
+        const notes = Array.isArray(p.row._notes) ? (p.row._notes as Record<string, any>[]) : [];
+        if (notes.length === 0) continue;
+        const box = grid.createDiv({ cls: 'ipw-preview-notes' });
+        box.createSpan({ cls: 'ipw-muted', text: `#${p.src}:` });
+        notes.forEach((n, k) => {
+          const rec = n ?? {};
+          const label = rec._noteLabel ? String(rec._noteLabel) : '主笔记';
+          const folder = rec._folder ? String(rec._folder) : '';
+          const fname = rec._fileName
+            ? String(rec._fileName)
+            : String(p.row._hash ?? `${p.src}-${k}`);
+          const tpl = rec._template ? `   模板: ${String(rec._template)}` : '';
+          const noteLine = box.createDiv({ cls: 'ipw-muted ipw-note' });
+          noteLine.setText(` · ${label} → ${folder ? folder + '/' : ''}${fname}.md${tpl}`);
         });
       }
     }
@@ -1770,7 +2339,8 @@ export class ImportModal extends Modal {
         sourceLabel: this.sourceLabelFor(target),
         dryRun: true,
         preprocessOverride: this.importPreprocessOverride(),
-        outputOverride: this.liveOutputOverride()
+        outputOverride: this.liveOutputOverride(),
+        validation: this.validation
       });
       if (!this.contentEl.isConnected) return; // 向导已关闭，放弃后续渲染
       this.lastDryResult = dry;
@@ -1830,7 +2400,10 @@ export class ImportModal extends Modal {
    */
   private async currentRecords(): Promise<DataRecord[]> {
     if (this.runRecords.length === 0) {
-      const rows = await applyWizardTransform(this.deps.engine, this.parsed, this.transform);
+      // D118：与预览同规则（真实校验回填 _valid/_errors/_status + filterInvalid 联动），保证「预览 == 导入」
+      const rows = await applyWizardTransform(this.deps.engine, this.parsed, this.transform, {
+        rules: this.validation
+      });
       this.runRecords = rows.map((t) => t.row);
     }
     return this.runRecords;
@@ -1928,6 +2501,7 @@ export class ImportModal extends Modal {
       startAt,
       preprocessOverride: this.importPreprocessOverride(),
       outputOverride: this.liveOutputOverride(),
+      validation: this.validation,
       onProgress: (p) => {
         if (p.phase === 'parse') {
           status.setText(`正在解析 ${p.done}/${p.total}…`);
@@ -2010,6 +2584,7 @@ export class ImportModal extends Modal {
     this.step3 = { vaultPath: file.path, label: file.name, isHistory: true, history: h };
     this.templateId = h.templateId;
     this.transform = emptyTransform(); // 直接导入不复用旧的 Step 3 配置
+    this.validation = []; // D118：直接导入不携带 Step 3 实时校验（走模板自身 frontmatter validation）
     this.sheetNames = [];
     this.sheetName = '';
     this.importAllSheets = false;

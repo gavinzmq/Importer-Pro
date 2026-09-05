@@ -35,6 +35,10 @@ export const PIPE_STAGE_WHITELIST = [
   'genderFromID',
   'birthFromID',
   'multiply',
+  // D119：计算·算术（加/减/除；乘已在上），作值管线 pipe 阶段随链执行
+  'add',
+  'subtract',
+  'divide',
   // D113：列映射「添加设置」链的编译专用 Helper（单元格安全语义，作 pipe 阶段随链执行）
   'strTrim',
   'strSplit',
@@ -121,6 +125,8 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
     }
     return eq; // API 直接调用时返回 boolean
   });
+  // D119：行内三目（条件计算整链替换式 `(ternary cond 真 假)`）；运行时辅助 Helper，不入公开 API 清单
+  hb.registerHelper('ternary', (cond: unknown, a: unknown, b: unknown) => (cond ? a : b));
 
   // ── 校验（6）──
   hb.registerHelper('isEmail', (v: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '')));

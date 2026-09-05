@@ -10,9 +10,14 @@
  * - 列格式化 / 列处理 / 列映射 / 派生字段等纯函数（JS 语义层）保留：供配置编译参数换算、迁移与单测；
  *   正式执行（预览/导入）一律经 Handlebars 编译段。
  */
-import type { DataRecord } from '../types';
+import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, ValidationRule } from '../types';
 import type { RowFilterOp, RowFilterRule } from '../types';
 import { md5Hash } from '../utils/crypto';
+import { Validator } from '../core/validator/validator';
+export type { NoteTypeConfig };
+
+/** D118：向导/预览校验语义与运行时同源（复用 core Validator，无 Obsidian 依赖；保证「预览 == 导入」） */
+const validationEngine = new Validator();
 
 export type { RowFilterOp, RowFilterRule };
 
@@ -68,16 +73,64 @@ export type MappingType = 'text' | 'number' | 'date' | 'boolean' | 'ignore';
 /** 行来源标记：仅「🧹 自动映射」生成行为 'auto'（供「🗑 删除所有自动映射」精确删除；UI 局部状态，不随模板持久化） */
 export type MappingOrigin = 'auto' | 'manual';
 
-/** 行内「添加设置」链的分组（D113：列格式化 / 列处理；派生仍走 rule 下拉，见 D108） */
-export type MappingSettingGroup = 'format' | 'process';
+/** 主笔记类型（保留）：区块 5「输出到」列缺省值；附加笔记类型见 NoteTypeConfig（D120） */
+export const MAIN_NOTE_TYPE = 'main';
+
+/** 判断附加笔记类型是否被任何行使用（D120：note-output 段仅在至少一个附加类型有行时产出） */
+export function hasUsedNoteTypes(mappings: ColumnMapping[]): boolean {
+  return (mappings ?? []).some((m) => m.noteType && m.noteType !== MAIN_NOTE_TYPE && m.type !== 'ignore');
+}
+
+/** 行内「添加设置」链的分组（D113：列格式化 / 列处理；D119：计算 / 链接；列派生为行级 rule 预设，走独立下拉组） */
+export type MappingSettingGroup = 'format' | 'process' | 'compute' | 'link';
+
+/** 条件比较运算符（D119 条件计算 / 条件警告） */
+export type ComputeCompareOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte';
+export const COMPUTE_COMPARE_LABELS: ReadonlyArray<{ value: ComputeCompareOp; label: string }> = [
+  { value: 'eq', label: '=' },
+  { value: 'neq', label: '≠' },
+  { value: 'gt', label: '>' },
+  { value: 'gte', label: '≥' },
+  { value: 'lt', label: '<' },
+  { value: 'lte', label: '≤' }
+];
 
 /**
- * 列映射行「添加设置」链中的一步（D105/D113）。组内 op/参数复用既有列格式化/列处理操作；
- * 顺序 = 执行顺序（类型快捷转换视作隐含前置步骤，与首个设置同语义去重）。
+ * 列映射行「添加设置」链中的一步（D105/D113/D119）。组内 op/参数语义随组而定；顺序 = 执行顺序
+ * （类型快捷转换视作隐含前置步骤，与首个设置同语义去重）：
+ * - format / process：既有格式化 / 处理操作；
+ * - compute · 算术（add/subtract/multiply/divide）：operand = 第二操作数（数字常数或列名），值管线链步骤；
+ * - compute · condition（条件计算）：整链替换式——单步直调 ternary（比较当前行值 → 真/假值），
+ *   作为值管线唯一步骤（UI 添加时清空其余值步骤）；
+ * - compute · warn（条件警告）/ link · smartLink：**附言**（映射行 set 之后追加条件写 _warnings / 写 _link），
+ *   非值管线步骤。
  */
 export type MappingSetting =
   | { group: 'format'; op: ColumnFormatOp; param: string }
-  | { group: 'process'; op: ColumnProcessOp; param: string; param2: string };
+  | { group: 'process'; op: ColumnProcessOp; param: string; param2: string }
+  | { group: 'compute'; op: 'add' | 'subtract' | 'multiply' | 'divide'; operand: string }
+  | { group: 'compute'; op: 'condition'; compare: ComputeCompareOp; operand: string; truthy: string; falsy: string }
+  | { group: 'compute'; op: 'warn'; compare: ComputeCompareOp; operand: string; text: string }
+  | { group: 'link'; op: 'smartLink'; target: string; fallback: string };
+
+/** 是否为「附言」类设置（warn / link：映射行 set 之后追加，非值管线步骤） */
+export function isPostscriptSetting(
+  s: MappingSetting
+): s is Extract<MappingSetting, { group: 'compute'; op: 'warn' } | { group: 'link' }> {
+  return (s.group === 'compute' && s.op === 'warn') || s.group === 'link';
+}
+
+/** 是否为「条件计算」设置（整链替换式，值管线唯一步骤） */
+export function isConditionSetting(
+  s: MappingSetting
+): s is Extract<MappingSetting, { group: 'compute'; op: 'condition' }> {
+  return s.group === 'compute' && s.op === 'condition';
+}
+
+/** 是否为值管线步骤（format / process / 算术 / 条件计算；附言除外） */
+export function isValueChainSetting(s: MappingSetting): boolean {
+  return !isPostscriptSetting(s);
+}
 
 /**
  * 列映射 / 派生统一行（区块 5 合并：映射与派生同一张表；D113 增 settings 行内设置链；D117 统一管线）。
@@ -98,6 +151,8 @@ export interface ColumnMapping {
   settings?: MappingSetting[];
   /** 行来源标记：自动映射生成 = 'auto'；手动添加/回填缺省 = 'manual' */
   origin?: MappingOrigin;
+  /** D120：字段归属笔记类型（「输出到」列；缺省 'main' 主笔记；值为附加类型 id 时该字段进对应笔记对象） */
+  noteType?: string;
 }
 
 /** 判断行是否为纯复制（无派生 rule、无类型快捷转换、无设置链） */
@@ -117,44 +172,88 @@ export function typeQuickConversionEquals(type: MappingType, setting: MappingSet
   return false;
 }
 
-/** 设置步骤 → 参数是否必需 / 参数占位说明（D113，UI 编辑器用） */
+/* ── D119 计算 / 链接下拉选项 ───────────────────────────── */
+
+export const COMPUTE_ARITH_LABELS: ReadonlyArray<{ value: 'add' | 'subtract' | 'multiply' | 'divide'; label: string }> = [
+  { value: 'add', label: '加（第二操作数）' },
+  { value: 'subtract', label: '减（第二操作数）' },
+  { value: 'multiply', label: '乘（第二操作数）' },
+  { value: 'divide', label: '除（第二操作数）' }
+];
+
+export const COMPUTE_COND_LABELS: ReadonlyArray<{ value: 'condition' | 'warn'; label: string }> = [
+  { value: 'condition', label: '条件计算（比较 → 真/假值）' },
+  { value: 'warn', label: '条件警告（命中追加 _warnings）' }
+];
+
+export const LINK_OP_LABELS: ReadonlyArray<{ value: 'smartLink'; label: string }> = [
+  { value: 'smartLink', label: '智能链接（目标/回退文件夹）' }
+];
+
+/** 设置步骤 → 参数是否必需 / 参数占位说明（D113，UI 编辑器用；仅 format/process 走通用单参编辑） */
 export function settingParamSpec(setting: MappingSetting): { needParam: boolean; placeholder: string } {
   if (setting.group === 'format') {
     if (setting.op === 'replaceText') return { needParam: true, placeholder: '查找/替换，如 旧/新' };
     if (setting.op === 'substring') return { needParam: true, placeholder: '起始[,长度]，如 1,3' };
     return { needParam: false, placeholder: '' };
   }
-  switch (setting.op) {
-    case 'split':
-      return { needParam: true, placeholder: '分隔符（缺省 ,）' };
-    case 'merge':
-      return { needParam: true, placeholder: '要合并的另一列名' };
-    case 'map':
-      return { needParam: true, placeholder: '映射，如 男=M 女=F' };
-    case 'regexExtract':
-      return { needParam: true, placeholder: '正则（取组1）' };
-    case 'fillDefault':
-      return { needParam: true, placeholder: '空值填充内容' };
-    default:
-      return { needParam: false, placeholder: '' };
+  if (setting.group === 'process') {
+    switch (setting.op) {
+      case 'split':
+        return { needParam: true, placeholder: '分隔符（缺省 ,）' };
+      case 'merge':
+        return { needParam: true, placeholder: '要合并的另一列名' };
+      case 'map':
+        return { needParam: true, placeholder: '映射，如 男=M 女=F' };
+      case 'regexExtract':
+        return { needParam: true, placeholder: '正则（取组1）' };
+      case 'fillDefault':
+        return { needParam: true, placeholder: '空值填充内容' };
+      default:
+        return { needParam: false, placeholder: '' };
+    }
   }
+  // compute / link：参数随专用草稿表单编辑，不走通用单参编辑器
+  return { needParam: false, placeholder: '' };
 }
 
-/** 设置步骤 → chips 展示标签（D113，如 `格式化·去除首尾空格` / `处理·拆分[,]`） */
+/** 算术操作显示名 */
+function computeArithLabel(op: string): string {
+  return COMPUTE_ARITH_LABELS.find((o) => o.value === op)?.label ?? op;
+}
+
+/** 设置步骤 → chips 展示标签（D113，如 `格式化·去除首尾空格`；D119 计算/链接） */
 export function mappingSettingLabel(s: MappingSetting): string {
   if (s.group === 'format') {
     const base = FORMAT_OP_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
     const p = s.param && (s.op === 'replaceText' || s.op === 'substring') ? ` [${s.param}]` : '';
     return `格式化·${base}${p}`;
   }
-  const base = PROCESS_OP_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
-  const p =
-    s.op === 'split' && s.param && s.param !== ','
-      ? ` [${s.param}]`
-      : (s.op === 'merge' || s.op === 'map' || s.op === 'regexExtract' || s.op === 'fillDefault') && s.param
+  if (s.group === 'process') {
+    const base = PROCESS_OP_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
+    const p =
+      s.op === 'split' && s.param && s.param !== ','
         ? ` [${s.param}]`
-        : '';
-  return `处理·${base}${p}`;
+        : (s.op === 'merge' || s.op === 'map' || s.op === 'regexExtract' || s.op === 'fillDefault') && s.param
+          ? ` [${s.param}]`
+          : '';
+    return `处理·${base}${p}`;
+  }
+  if (s.group === 'compute') {
+    if (s.op === 'condition') {
+      return `计算·条件 ${compareOpSymbol(s.compare)}${s.operand} → ${s.truthy} / ${s.falsy}`;
+    }
+    if (s.op === 'warn') {
+      return `计算·警告 ${compareOpSymbol(s.compare)}${s.operand}「${s.text || ''}」`;
+    }
+    return `计算·${computeArithLabel(s.op).replace('（第二操作数）', '')}(${s.operand || '?'})`;
+  }
+  return `链接·智能链接(→${s.target || '?'}${s.fallback ? ` 回退 ${s.fallback}` : ''})`;
+}
+
+/** 比较符符号化（D119 标签） */
+export function compareOpSymbol(op: ComputeCompareOp): string {
+  return COMPUTE_COMPARE_LABELS.find((o) => o.value === op)?.label ?? op;
 }
 
 /** Step 3 数据变换总配置（编译层输入；D96 增 filters，D97 收敛 clean/removeRows；D113 列侧收敛进 mappings.settings） */
@@ -169,6 +268,8 @@ export interface DataTransformConfig {
    * D113 起为列侧唯一执行字段；formats/processes 旧字段已折叠入 mappings.settings。
    */
   mappings: ColumnMapping[];
+  /** D120：多笔记输出 · 附加笔记类型配置（空 = 单主笔记，note-output 段不产出，零回归） */
+  noteTypes?: NoteTypeConfig[];
   /** ⚠️ 遗留兼容字段（D113 起不再由 UI/编译/解码写入或消费；仅旧版测试/结构沿用） */
   formats?: ColumnFormatRule[];
   processes?: ColumnProcessRule[];
@@ -183,12 +284,20 @@ export interface Step3TemplateSnapshot {
   name: string;
   matchType: 'regex' | 'glob' | 'exact';
   matchPattern: string;
+  /** 匹配优先级（D121：默认 0，值越大越优先；随 [💾 保存到模板] 写 frontmatter match.patterns[0].priority） */
+  matchPriority: number;
   /** 输出文件夹表达式（缺省空 = Vault 根） */
   outputFolder: string;
   /** 文件名表达式（缺省 `{{_hash}}`） */
   outputNoteName: string;
+  /** 冲突策略（D121：overwrite/append/skip/rename/merge；写 frontmatter output.conflict_strategy，运行时 D112 已消费） */
+  conflictStrategy: ConflictStrategy;
+  /** 增量模式（D121：hash/timestamp；写 frontmatter output.incremental_mode，运行时 D112 已消费） */
+  incrementalMode: IncrementalMode;
   /** 表头物理行（0-based；0 = 默认首行；仅表格类数据源，解析级参数不入编译段） */
   headerRow: number;
+  /** 校验规则（D118：区块 4「✅ 校验规则」卡；写 frontmatter validation，不产编译段——校验契约 = frontmatter，template-schema §2） */
+  validation: ValidationRule[];
   transform: DataTransformConfig;
 }
 
@@ -197,9 +306,13 @@ export function emptyStep3Snapshot(): Step3TemplateSnapshot {
     name: '',
     matchType: 'glob',
     matchPattern: '*',
+    matchPriority: 0,
     outputFolder: '',
     outputNoteName: '{{_hash}}',
+    conflictStrategy: 'overwrite',
+    incrementalMode: 'hash',
     headerRow: 0,
+    validation: [],
     transform: emptyTransform()
   };
 }
@@ -333,6 +446,19 @@ export function rowFilterRuleLabel(rule: RowFilterRule): string {
   return showValue ? `${col} ${op} ${rule.value}` : `${col} ${op}`;
 }
 
+/**
+ * 校验状态徽标判定（D118，供预览区行首 ✅/⚠️/❌ 展示）：行携带 `_valid` 回填标记时返回
+ * 'err'（_valid=false）/ 'warn'（有 _warnings）/ 'ok'；未配置校验规则（无标记）返回 null（不显示徽标）。
+ */
+export function rowValidationBadge(row: DataRecord): 'ok' | 'warn' | 'err' | null {
+  if (row && typeof row === 'object' && '_valid' in row) {
+    if (row._valid === false) return 'err';
+    if (Array.isArray(row._warnings) && row._warnings.length > 0) return 'warn';
+    return 'ok';
+  }
+  return null;
+}
+
 /* ── D97 迁移与预置 ──────────────────────────────────────── */
 
 /** 「去除空行」预置筛选规则：任意列至少一列非空（至少保留任意非空列的行） */
@@ -387,6 +513,39 @@ export const ROW_CLEAN_LABELS: ReadonlyArray<{ value: RowCleanFlag; label: strin
   { value: 'dedupe', label: '去重' },
   { value: 'filterInvalid', label: '过滤无效数据' }
 ];
+
+/* ── 校验规则（D118：区块 4「✅ 校验规则」卡；类型 = Validator 内置 8 种，契约 = frontmatter validation） ── */
+
+/** 校验规则类型选项（needParam：length/range 需 min/max 参数） */
+export const VALIDATION_TYPE_LABELS: ReadonlyArray<{ value: string; label: string; needParam: boolean }> = [
+  { value: 'required', label: '必填', needParam: false },
+  { value: 'id-card', label: '身份证格式', needParam: false },
+  { value: 'email', label: '邮箱格式', needParam: false },
+  { value: 'phone', label: '手机号格式', needParam: false },
+  { value: 'date', label: '日期格式', needParam: false },
+  { value: 'length', label: '长度(min,max)', needParam: true },
+  { value: 'range', label: '数值范围(min,max)', needParam: true },
+  { value: 'unique', label: '唯一（批次级）', needParam: false }
+];
+
+/** 校验规则类型 → 展示标签 */
+export function validationTypeLabel(type: string): string {
+  return VALIDATION_TYPE_LABELS.find((o) => o.value === type)?.label ?? type;
+}
+
+/** 校验规则展示标签（供「已配置」列表）：`姓名 必填` / `身份证号 身份证格式` / `薪资 数值范围(0,10000)` */
+export function validationRuleLabel(rule: { field: string; type: string; options?: Record<string, any> }): string {
+  const field = rule.field || '（缺字段）';
+  const type = validationTypeLabel(rule.type);
+  const opts = rule.options ?? {};
+  if (rule.type === 'length' || rule.type === 'range') {
+    const min = opts.min ?? '';
+    const max = opts.max ?? '';
+    const p = min !== '' || max !== '' ? `(${min},${max})` : '';
+    return `${field} ${type}${p}`;
+  }
+  return `${field} ${type}`;
+}
 
 /* ── 派生字段预设（区块 5「类型/规则」下拉的派生分组，D108 起不再单列区块/预设弹窗） ── */
 
@@ -652,28 +811,73 @@ export function applyMappingChainValue(value: unknown, type: MappingType, settin
   const applySetting = (x: unknown, s: MappingSetting): unknown => {
     if (s.group === 'format') return formatCellValue(x, s.op, s.param);
     const cell = (y: unknown): string => (y === undefined || y === null ? '' : String(y));
-    const str = cell(x);
-    switch (s.op) {
-      case 'split':
-        return str.split(s.param || ',').map((p) => p.trim());
-      case 'map': {
-        const map: Record<string, string> = {};
-        for (const pair of (s.param || '').split(/[;,，；]/)) {
-          const idx = pair.indexOf('=');
-          if (idx > 0) map[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+    if (s.group === 'process') {
+      const str = cell(x);
+      switch (s.op) {
+        case 'split':
+          return str.split(s.param || ',').map((p) => p.trim());
+        case 'map': {
+          const map: Record<string, string> = {};
+          for (const pair of (s.param || '').split(/[;,，；]/)) {
+            const idx = pair.indexOf('=');
+            if (idx > 0) map[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+          }
+          return str in map ? map[str] : x;
         }
-        return str in map ? map[str] : x;
-      }
-      case 'regexExtract': {
-        try {
-          const m = new RegExp(s.param).exec(str);
-          return m ? (m[1] ?? m[0]) : '';
-        } catch {
+        case 'regexExtract': {
+          try {
+            const m = new RegExp(s.param).exec(str);
+            return m ? (m[1] ?? m[0]) : '';
+          } catch {
+            return x;
+          }
+        }
+        case 'fillDefault':
+          return str === '' ? s.param : x;
+        default:
           return x;
-        }
       }
-      case 'fillDefault':
-        return str === '' ? s.param : x;
+    }
+    // D119 计算/链接（JS 语义层仅供单测/兼容对拍；正式执行走 D98 编译段）。列操作数（非数字常数）在
+    // 单值语义下无法解析 → 原样返回；数字常数按数值运算/比较处理。
+    if (s.group === 'link') return x; // 附言非值变换
+    if (s.op === 'warn') return x; // 附言非值变换
+    const opNum = Number(s.operand);
+    const num = (y: unknown): number | null => {
+      const n = Number(y);
+      return Number.isNaN(n) ? null : n;
+    };
+    if (s.op === 'condition') {
+      const n = num(x);
+      const o = num(s.operand);
+      let hit: boolean;
+      if (n !== null && o !== null) {
+        hit =
+          s.compare === 'eq' ? n === o
+          : s.compare === 'neq' ? n !== o
+          : s.compare === 'gt' ? n > o
+          : s.compare === 'gte' ? n >= o
+          : s.compare === 'lt' ? n < o
+          : n <= o;
+      } else {
+        const str = cell(x);
+        hit = s.compare === 'eq' ? str === s.operand : s.compare === 'neq' ? str !== s.operand : false;
+      }
+      return hit ? s.truthy : s.falsy;
+    }
+    if (Number.isNaN(opNum)) return x; // 列操作数在单值语义下不可解析
+    const n = num(x);
+    if (n === null) return x;
+    const b = opNum;
+    switch (s.op) {
+      case 'add':
+        return n + b;
+      case 'subtract':
+        return n - b;
+      case 'multiply':
+        return n * b;
+      case 'divide':
+        return b === 0 ? x : n / b;
       default:
         return x;
     }
@@ -855,14 +1059,23 @@ export function countRowsAfterSelection(records: DataRecord[], cfg: DataTransfor
 /* ── D98 编译层：配置 ↔ Handlebars 标记段 ────────────────── */
 
 /** preprocess 编译段名（对应向导区块；无配置的区块省略整段） */
-export type IproSegment = 'row-remove' | 'row-filter' | 'column-format' | 'column-process' | 'column-mapping' | 'derived';
+export type IproSegment =
+  | 'row-remove'
+  | 'row-filter'
+  | 'column-format'
+  | 'column-process'
+  | 'column-mapping'
+  | 'derived'
+  | 'note-output';
 export const IPRO_SEGMENT_ORDER: IproSegment[] = [
   'row-remove',
   'row-filter',
   'column-format',
   'column-process',
   'column-mapping',
-  'derived'
+  'derived',
+  // D120：多笔记输出段（位于 derived 之后；未定义附加类型时不产出）
+  'note-output'
 ];
 
 export function iproBegin(name: IproSegment): string {
@@ -989,7 +1202,7 @@ function typeQuickStep(type: MappingType): StepSpec | null {
   return null;
 }
 
-/** 单个「添加设置」步骤 → Helper 形态（编译专用名保留单元格安全语义，D102–D104） */
+/** 单个「添加设置」步骤 → Helper 形态（编译专用名保留单元格安全语义，D102–D104；D119 计算/链接扩展） */
 function settingStep(s: MappingSetting): StepSpec | null {
   if (s.group === 'format') {
     switch (s.op) {
@@ -1020,20 +1233,56 @@ function settingStep(s: MappingSetting): StepSpec | null {
         return null;
     }
   }
-  switch (s.op) {
-    case 'split':
-      return { helper: 'strSplit', args: [hbQuote(s.param || ',')] };
-    case 'merge':
-      // merge 的第二操作数 = 另一列（运行时查 this），作固定阶段参数传入（Handlebars 先求值）
-      return { helper: 'merge', args: [`(lookup this ${hbQuote(s.param)})`, hbQuote(s.param2 || ' ')] };
-    case 'map':
-      return { helper: 'mapValue', args: [hbQuote(s.param)] };
-    case 'regexExtract':
-      return { helper: 'regexExtract', args: [hbQuote(s.param)] };
-    case 'fillDefault':
-      return { helper: 'fillDefault', args: [hbQuote(s.param)] };
+  if (s.group === 'process') {
+    switch (s.op) {
+      case 'split':
+        return { helper: 'strSplit', args: [hbQuote(s.param || ',')] };
+      case 'merge':
+        // merge 的第二操作数 = 另一列（运行时查 this），作固定阶段参数传入（Handlebars 先求值）
+        return { helper: 'merge', args: [`(lookup this ${hbQuote(s.param)})`, hbQuote(s.param2 || ' ')] };
+      case 'map':
+        return { helper: 'mapValue', args: [hbQuote(s.param)] };
+      case 'regexExtract':
+        return { helper: 'regexExtract', args: [hbQuote(s.param)] };
+      case 'fillDefault':
+        return { helper: 'fillDefault', args: [hbQuote(s.param)] };
+      default:
+        return null;
+    }
+  }
+  // D119 计算·算术（值管线链步骤）：第二操作数 = 数字常数 → 字面量；否则 = 列引用（运行时查 this）
+  if (s.group === 'compute' && s.op !== 'condition' && s.op !== 'warn') {
+    return { helper: s.op, args: [operandArg(s.operand)] };
+  }
+  // condition / warn / link 不走值管线链步骤（condition = 整链替换式、warn/link = 附言，见 mappingRowExpr / mappingBody）
+  return null;
+}
+
+/** 操作数表达式（D119）：数字常数 → 数值字面量；否则视为列名（运行时查 this，与 merge 第二操作数一致） */
+function operandArg(operand: string): string {
+  const t = String(operand ?? '').trim();
+  if (/^[-+]?\d+(\.\d+)?$/.test(t)) return t;
+  return `(lookup this ${hbQuote(t)})`;
+}
+
+/** 比较子表达式（D119：比较 VALUE 与 operand；neq 直用 `neq` helper 便于反编译还原） */
+function compareValueExpr(op: ComputeCompareOp, valueExpr: string, operand: string): string {
+  const right = operandArg(operand);
+  switch (op) {
+    case 'eq':
+      return `(eq ${valueExpr} ${right})`;
+    case 'neq':
+      return `(neq ${valueExpr} ${right})`;
+    case 'gt':
+      return `(gt ${valueExpr} ${right})`;
+    case 'gte':
+      return `(gte ${valueExpr} ${right})`;
+    case 'lt':
+      return `(lt ${valueExpr} ${right})`;
+    case 'lte':
+      return `(lte ${valueExpr} ${right})`;
     default:
-      return null;
+      return '(eq 1 0)';
   }
 }
 
@@ -1050,7 +1299,8 @@ function stepStage(spec: StepSpec): string {
 /**
  * 映射行值管线 → `{ target(引号), expr }`；返回 null = 该行不产出（ignore / 派生 rule / 缺源或缺目标）。
  * D105/D113：0 步=复制 `(lookup this src)`、1 步=直调、≥2 步=`(pipe src (stage …)…)`；
- * 类型快捷转换视作隐含前置步骤，与「添加设置」同语义项去重（type 优先保留）。
+ * D119：条件计算（compute.condition）= 整链替换式 `(ternary (cmp VALUE operand) 真 假)`（单步直调形态）；
+ * 类型快捷转换视作隐含前置步骤，与「添加设置」同语义项去重（type 优先保留）；附言（warn/link）不进值管线。
  */
 function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | null {
   if (m.type === 'ignore' || m.rule) return null;
@@ -1058,10 +1308,17 @@ function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | nu
   if (!m.source || !target) return null;
   const srcExpr = `(lookup this ${hbQuote(m.source)})`;
   const settings = (m.settings ?? []).filter((s) => !typeQuickConversionEquals(m.type, s));
+  // 条件计算：整链替换式（单步直调 ternary；值管线唯一步骤，其余值步骤在 UI 添加时被清理）
+  const cond = settings.find(isConditionSetting);
+  if (cond) {
+    const cmp = compareValueExpr(cond.compare, srcExpr, cond.operand);
+    return { target: hbQuote(target), expr: `(ternary ${cmp} ${hbQuote(cond.truthy)} ${hbQuote(cond.falsy)})` };
+  }
   const steps: StepSpec[] = [];
   const quick = typeQuickStep(m.type);
   if (quick) steps.push(quick);
   for (const s of settings) {
+    if (isPostscriptSetting(s) || isConditionSetting(s)) continue;
     const spec = settingStep(s);
     if (spec) steps.push(spec);
   }
@@ -1072,7 +1329,27 @@ function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | nu
   return { target: hbQuote(target), expr };
 }
 
-/** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set` */
+/** D119 附言（warn/link）：映射行 set 之后追加的行级逻辑（warn 条件写 _warnings；link 写 _link） */
+function mappingPostLines(m: ColumnMapping): string[] {
+  const out: string[] = [];
+  const srcExpr = `(lookup this ${hbQuote(m.source)})`;
+  for (const s of m.settings ?? []) {
+    if (s.group === 'compute' && s.op === 'warn') {
+      const cmp = compareValueExpr(s.compare, srcExpr, s.operand);
+      out.push(
+        `{{#if ${cmp}}}{{set "_warnings" (push _warnings ${hbQuote(s.text)})}}{{/if}}`
+      );
+    } else if (s.group === 'link' && s.op === 'smartLink') {
+      // 依赖派生 _hash（向导变换在渲染前注入占位哈希；guard 防 _hash 缺失时产生空链接）
+      out.push(
+        `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(s.target)} ${hbQuote(s.fallback)})}}{{/if}}`
+      );
+    }
+  }
+  return out;
+}
+
+/** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set`；D119 附言紧跟其行 */
 function mappingBody(mappings: ColumnMapping[]): string {
   const lines: string[] = [];
   for (const m of mappings) {
@@ -1080,18 +1357,20 @@ function mappingBody(mappings: ColumnMapping[]): string {
     if (!built) continue;
     // 源列存在才 set（复制/链均要求源列存在）
     lines.push(`{{#if (has this ${hbQuote(m.source)})}}{{set ${built.target} ${built.expr}}}{{/if}}`);
+    for (const p of mappingPostLines(m)) lines.push(p);
   }
   return lines.join('\n');
 }
 
-/** 派生行派生产出后的后续管线（D117：类型隐含转换 + settings 格式化/处理，按序经直调/pipe 包装；
- *  无后续步骤时返回 base 原样，保证既有派生编译形态不变） */
+/** 派生行派生产出后的后续管线（D117：类型隐含转换 + settings 格式化/处理/算术，按序经直调/pipe 包装；
+ *  无后续步骤时返回 base 原样，保证既有派生编译形态不变；附言/条件计算不适用于派生行） */
 function derivePostExpr(base: string, type: MappingType, settings?: MappingSetting[]): string {
   const steps: StepSpec[] = [];
   const quick = typeQuickStep(type);
   if (quick) steps.push(quick);
   for (const s of settings ?? []) {
     if (typeQuickConversionEquals(type, s)) continue;
+    if (isPostscriptSetting(s) || isConditionSetting(s)) continue;
     const spec = settingStep(s);
     if (spec) steps.push(spec);
   }
@@ -1143,6 +1422,58 @@ function derivedBody(rows: ColumnMapping[]): string {
   return lines.filter(Boolean).join('\n');
 }
 
+/* ── D120 多笔记输出段（note-output）编译 ──────────────── */
+
+/** 生成条件（RowFilterRule AND，复用行筛选条件表达式） */
+function noteConditionExpr(rules: RowFilterRule[]): string {
+  const conds = rules.map(filterCondition);
+  return conds.length === 1 ? conds[0] : `(and ${conds.join(' ')})`;
+}
+
+/** object 参数序列（k v k v…）：主笔记不带 _folder/_fileName（normalizeSpec 回落 data）；附加类型带元信息 */
+function noteObjectArgs(rows: ColumnMapping[], type?: NoteTypeConfig): string {
+  const parts: string[] = [];
+  if (type) {
+    parts.push('"_noteType"', hbQuote(type.id), '"_noteLabel"', hbQuote(type.name || type.id));
+    if (type.template && type.template.trim() !== '') parts.push('"_template"', hbQuote(type.template.trim()));
+    if (type.folder && type.folder.trim() !== '') parts.push('"_folder"', hbQuote(type.folder.trim()));
+    // 文件名：主 `_hash` 基 + 后缀（type.noteName 或 `_<name>`），保证与主笔记不冲突
+    const suffix = type.noteName && type.noteName.trim() !== '' ? type.noteName.trim() : `_${type.name || type.id}`;
+    parts.push('"_fileName"', `(concat _hash ${hbQuote(suffix)})`);
+  }
+  for (const m of rows) {
+    const key = m.target || m.source;
+    if (!key) continue;
+    parts.push(hbQuote(key), `(lookup this ${hbQuote(key)})`);
+  }
+  return parts.join(' ');
+}
+
+/** D120：note-output 段体（主 + 附加类型均显式建为 _notes object）；仅在至少一个附加类型被行使用时产出 */
+function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[]): string {
+  const types = (noteTypes ?? []).filter((t) => t && t.id && t.id !== MAIN_NOTE_TYPE);
+  if (types.length === 0) return '';
+  const byNote = new Map<string, ColumnMapping[]>();
+  for (const m of mappings) {
+    if (m.type === 'ignore') continue;
+    const nt = m.noteType && m.noteType !== MAIN_NOTE_TYPE ? m.noteType : MAIN_NOTE_TYPE;
+    const arr = byNote.get(nt) ?? [];
+    arr.push(m);
+    byNote.set(nt, arr);
+  }
+  const used = types.filter((t) => (byNote.get(t.id) ?? []).length > 0);
+  if (used.length === 0) return '';
+  const lines: string[] = [];
+  const mainRows = byNote.get(MAIN_NOTE_TYPE) ?? [];
+  lines.push(`{{set "_notes" (array (object ${noteObjectArgs(mainRows)}))}}`);
+  for (const t of used) {
+    const rows = byNote.get(t.id) ?? [];
+    const inner = `{{set "_notes" (push _notes (object ${noteObjectArgs(rows, t)}))}}`;
+    lines.push(t.condition && t.condition.length > 0 ? `{{#if ${noteConditionExpr(t.condition)}}}${inner}{{/if}}` : inner);
+  }
+  return lines.join('\n');
+}
+
 /** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
@@ -1154,6 +1485,9 @@ export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproS
   if (mapping !== '') seg['column-mapping'] = mapping;
   const derived = derivedBody(cfg.mappings);
   if (derived !== '') seg.derived = derived;
+  // D120：多笔记输出段（无附加类型被使用 → 空段省略，零回归）
+  const noteOut = noteOutputBody(cfg.mappings, cfg.noteTypes);
+  if (noteOut !== '') seg['note-output'] = noteOut;
   return seg;
 }
 
@@ -1382,13 +1716,35 @@ export function foldLegacyColumnOps(
   return Array.from(map.values());
 }
 
-/** 反编译单条 column-mapping 行（D113 值管线：copy / 单步直调 / pipe）→ 统一映射行 */
+/** 反编译单条 column-mapping 行（D113 值管线：copy / 单步直调 / pipe；D119 条件计算 ternary）→ 统一映射行 */
 function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
   const call = parseParenCall(expr);
   if (!call) return null;
   if (call.name === 'lookup') {
     // 纯复制
     return { source: stripQuotes(call.args[1] ?? ''), target, type: 'text' };
+  }
+  // D119 条件计算：`(ternary (cmp VALUE operand) 真 假)` 整链替换式
+  if (call.name === 'ternary') {
+    const cmp = parseParenCall(call.args[0] ?? '');
+    if (!cmp || !isCompareHelper(cmp.name)) return null;
+    const source = colOf(cmp.args[0] ?? '');
+    if (!source) return null;
+    return {
+      source,
+      target,
+      type: 'text',
+      settings: [
+        {
+          group: 'compute',
+          op: 'condition',
+          compare: cmp.name as ComputeCompareOp,
+          operand: decodeOperand(cmp.args[1] ?? ''),
+          truthy: stripQuotes(call.args[1] ?? ''),
+          falsy: stripQuotes(call.args[2] ?? '')
+        }
+      ]
+    };
   }
   let source: string | null = null;
   const steps: StepSpec[] = [];
@@ -1428,6 +1784,18 @@ function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
   return row;
 }
 
+/** 是否为 D119 比较 helper 名（eq/neq/gt/gte/lt/lte） */
+function isCompareHelper(name: string): boolean {
+  return name === 'eq' || name === 'neq' || name === 'gt' || name === 'gte' || name === 'lt' || name === 'lte';
+}
+
+/** 反编译操作数（D119）：列引用 → 列名；数值/字面量 → 原文本 */
+function decodeOperand(arg: string): string {
+  const col = colOf(arg);
+  if (col) return col;
+  return stripQuotes(arg);
+}
+
 /** helper 名 → 设置步骤还原（D113：编译专用名 strTrim/strSplit 还原为 trim/split） */
 function stepSpecToSetting(spec: StepSpec): MappingSetting | null {
   const arg = (i: number): string => stripQuotes(spec.args[i] ?? '');
@@ -1458,25 +1826,70 @@ function stepSpecToSetting(spec: StepSpec): MappingSetting | null {
       return { group: 'process', op: 'regexExtract', param: arg(0), param2: '' };
     case 'fillDefault':
       return { group: 'process', op: 'fillDefault', param: arg(0), param2: '' };
+    // D119 计算·算术（直调/pipe 阶段）→ compute 设置（操作数 = 列引用或数字常数）
+    case 'add':
+    case 'subtract':
+    case 'multiply':
+    case 'divide':
+      return {
+        group: 'compute',
+        op: spec.helper as 'add' | 'subtract' | 'multiply' | 'divide',
+        operand: decodeOperand(spec.args[0] ?? '')
+      };
     default:
       return null;
   }
 }
 
+/** 附言（D119 warn/link）行还原 + 映射行反编译；附言行紧跟所属行之后（挂在最近一行 settings） */
 function decodeMappingBody(body: string): ColumnMapping[] {
   const out: ColumnMapping[] = [];
+  let last: ColumnMapping | null = null;
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t) continue;
-    const set = parseSetLine(t);
-    if (!set) continue;
-    const row = decodeMappingExpr(set.expr, set.key);
-    if (row) out.push(row);
+    // warn：`{{#if (cmp VALUE operand)}}{{set "_warnings" (push _warnings "文本")}}{{/if}}`
+    const warn = /^\{\{#if ([\s\S]*?)\}\}\{\{set "_warnings" \(push _warnings "([^"]*)"\)\}\}\{\{\/if\}\}$/.exec(t);
+    if (warn) {
+      if (!last) continue;
+      const cond = parseParenCall(warn[1].trim());
+      if (!cond || !isCompareHelper(cond.name)) continue;
+      last.settings = last.settings ?? [];
+      last.settings.push({
+        group: 'compute',
+        op: 'warn',
+        compare: cond.name as ComputeCompareOp,
+        operand: decodeOperand(cond.args[1] ?? ''),
+        text: warn[2]
+      });
+      continue;
+    }
+    const set0 = parseSetLine(t);
+    if (!set0) continue;
+    // link：`{{set "_link" (smartLink _hash "目标" "回退")}}`（可含 `{{#if (isNotEmpty _hash)}}` 守卫）
+    if (set0.key === '_link' && set0.expr.startsWith('(smartLink')) {
+      if (!last) continue;
+      const sc = parseParenCall(set0.expr);
+      if (!sc || sc.name !== 'smartLink') continue;
+      last.settings = last.settings ?? [];
+      last.settings.push({
+        group: 'link',
+        op: 'smartLink',
+        target: stripQuotes(sc.args[1] ?? ''),
+        fallback: stripQuotes(sc.args[2] ?? '')
+      });
+      continue;
+    }
+    const row = decodeMappingExpr(set0.expr, set0.key);
+    if (row) {
+      out.push(row);
+      last = row;
+    }
   }
   return out;
 }
 
-/** 派生变换操作白名单（decode 扁平化用；含 derive 生产者/格式化/处理/类型隐含转换） */
+/** 派生变换操作白名单（decode 扁平化用；含 derive 生产者/格式化/处理/算术/类型隐含转换，D119 增算术） */
 const DERIVED_TRANSFORM_OPS = new Set([
   'genderFromID',
   'birthFromID',
@@ -1493,7 +1906,11 @@ const DERIVED_TRANSFORM_OPS = new Set([
   'merge',
   'mapValue',
   'regexExtract',
-  'fillDefault'
+  'fillDefault',
+  'add',
+  'subtract',
+  'multiply',
+  'divide'
 ]);
 
 /** 派生段表达式 → 扁平链（D117：支持派生 base + 后续类型/设置直调或 pipe；兼容 D99 旧嵌套括号形态） */
@@ -1613,7 +2030,74 @@ function decodeLegacyColumnBody(
   return out;
 }
 
-/** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠） */
+/** D120：反编译 note-output 段体 → 附加笔记类型 + 「目标字段 → 笔记类型」归属 */
+function decodeNoteOutput(body: string): { noteTypes: NoteTypeConfig[]; targetNote: Map<string, string> } {
+  const noteTypes: NoteTypeConfig[] = [];
+  const targetNote = new Map<string, string>();
+  const isTypeObj = (id?: string): boolean => !!id && id !== MAIN_NOTE_TYPE;
+
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    // 外层 {{#if COND}}…{{/if}} 守卫（生成条件）
+    const ifRe = /^\{\{#if ([\s\S]*?)\}\}([\s\S]*?)\{\{\/if\}\}$/.exec(t);
+    const condText = ifRe ? ifRe[1].trim() : null;
+    const inner = ifRe ? ifRe[2].trim() : t;
+    const setRe = /^\{\{\s*set\s+"_notes"\s+([\s\S]*?)\s*\}\}$/.exec(inner);
+    if (!setRe) continue;
+    const expr = setRe[1].trim();
+    const outer = parseParenCall(expr); // (array …) / (push …)
+    if (!outer) continue;
+    const objTok = outer.name === 'array' ? outer.args[0] : outer.name === 'push' ? outer.args[1] : undefined;
+    if (!objTok) continue;
+    const obj = parseParenCall(objTok);
+    if (!obj || obj.name !== 'object') continue;
+    const parts = obj.args;
+    let noteId = '';
+    let label = '';
+    let template = '';
+    let folder = '';
+    let suffix = '';
+    const targets: string[] = [];
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const k = stripQuotes(parts[i]);
+      const v = parts[i + 1];
+      if (k === '_noteType') noteId = stripQuotes(v);
+      else if (k === '_noteLabel') label = stripQuotes(v);
+      else if (k === '_template') template = stripQuotes(v);
+      else if (k === '_folder') folder = stripQuotes(v);
+      else if (k === '_fileName') {
+        const cc = parseParenCall(v);
+        if (cc && cc.name === 'concat') suffix = stripQuotes(cc.args[cc.args.length - 1] ?? '');
+      } else if (k.startsWith('_')) {
+        // 其余保留键（_status 等）忽略
+      } else {
+        targets.push(k);
+      }
+    }
+    if (isTypeObj(noteId)) {
+      const cfg: NoteTypeConfig = { id: noteId, name: label || noteId };
+      if (template !== '') cfg.template = template;
+      if (folder !== '') cfg.folder = folder;
+      if (suffix !== '' && suffix !== `_${label || noteId}`) cfg.noteName = suffix;
+      if (condText) {
+        const cond = parseParenCall(condText);
+        const rules: RowFilterRule[] = [];
+        const conds = cond && cond.name === 'and' ? cond.args : condText ? [condText] : [];
+        for (const c of conds) {
+          const rule = filterCondToRule(c);
+          if (rule) rules.push(rule);
+        }
+        if (rules.length > 0) cfg.condition = rules;
+      }
+      noteTypes.push(cfg);
+      for (const target of targets) targetNote.set(target, noteId);
+    }
+  }
+  return { noteTypes, targetNote };
+}
+
+/** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠；D120 note-output） */
 export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   const seg = extractSegments(preprocess);
   const cfg = emptyTransform();
@@ -1628,6 +2112,17 @@ export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   if (folded.length > 0) cfg.mappings = [...folded, ...cfg.mappings];
   // 派生段反编译为带 rule 的统一映射行，接在纯映射行之后
   if (seg.derived) cfg.mappings = [...cfg.mappings, ...decodeDerivedBody(seg.derived)];
+  // D120：note-output 段还原 noteTypes 与映射行 noteType（按目标字段归属）
+  if (seg['note-output']) {
+    const dec = decodeNoteOutput(seg['note-output']);
+    cfg.noteTypes = dec.noteTypes;
+    if (dec.targetNote.size > 0) {
+      for (const m of cfg.mappings) {
+        const key = m.target || m.source;
+        if (key && dec.targetNote.has(key)) m.noteType = dec.targetNote.get(key);
+      }
+    }
+  }
   return cfg;
 }
 
@@ -1642,21 +2137,25 @@ export interface PreprocessRenderer {
  * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
  * 中间嵌入跨行引擎开关（duplicateHeader 前置 / dedupe · filterInvalid 于格式化后）。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
+ * D118：opts.rules（向导实时校验规则）——「过滤无效数据」勾选且有规则时按校验失败过滤
+ * （镜像运行时 D115），阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`（供预览徽标与 `{{_status}}`）。
  */
 export async function applyWizardTransform(
   engine: PreprocessRenderer,
   records: DataRecord[],
-  cfg: DataTransformConfig
+  cfg: DataTransformConfig,
+  opts: { rules?: ValidationRule[] } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
-  // D113：列侧收敛为单一 column-mapping 段（含行内设置链），行清洗为渲染前跨行开关
+  // D113：列侧收敛为单一 column-mapping 段（含行内设置链），行清洗为渲染前跨行开关；D120：note-output 随阶段 B 执行
   const phaseA = segmentsToPreprocess({
     'row-remove': seg['row-remove'],
     'row-filter': seg['row-filter']
   });
   const phaseB = segmentsToPreprocess({
     'column-mapping': seg['column-mapping'],
-    derived: seg.derived
+    derived: seg.derived,
+    'note-output': seg['note-output']
   });
 
   // 附加原始行号（引擎保留字段 _index，template-schema §3）
@@ -1688,7 +2187,33 @@ export async function applyWizardTransform(
     });
   }
   if (cfg.clean.includes('filterInvalid')) {
-    rows = rows.filter((t) => Object.values(t.row).some((v) => v !== undefined && v !== null && v !== ''));
+    // D118/D115：配置校验规则时按「校验失败」过滤无效行（回归「过滤无效数据」本义，镜像运行时引擎开关）；
+    // 无规则回落「全空行」启发式（忽略 _ 前缀保留字段——_index 等不被误判为非空，与 isEmptyRow 口径一致）
+    const rules = opts.rules ?? [];
+    if (rules.length > 0) {
+      rows = rows.filter((t) => validationEngine.validate(t.row, rules).valid);
+    } else {
+      rows = rows.filter((t) =>
+        Object.keys(t.row)
+          .filter((k) => !k.startsWith('_'))
+          .some((k) => {
+            const v = t.row[k];
+            return v !== undefined && v !== null && v !== '';
+          })
+      );
+    }
+  }
+
+  // D119/D120：链接附言与多笔记默认命名依赖派生 `_hash`（运行时 derive 在 preprocess 之后），
+  // 向导变换在渲染前为每行注入确定性占位哈希（非保留字段 JSON 的 md5 前 10 位，预览与 Step 4 同路径）
+  const hasLink = (cfg.mappings ?? []).some((m) => (m.settings ?? []).some((s) => s.group === 'link'));
+  const hasNoteOutput = !!seg['note-output'];
+  if (hasLink || hasNoteOutput) {
+    rows = rows.map((t) => {
+      const row = t.row;
+      if (row._hash === undefined) row._hash = seedRowHash(row);
+      return t;
+    });
   }
 
   // 阶段 B：列映射（含行内设置链）→ 派生（逐行 Handlebars）
@@ -1701,7 +2226,28 @@ export async function applyWizardTransform(
     rows = done;
   }
 
+  // D118：向导实时校验规则逐行回填保留字段（预览徽标 / {{_status}} 命名；校验不自动 _skip）
+  if (opts.rules && opts.rules.length > 0) {
+    rows = rows.map((t) => {
+      const r = validationEngine.validate(t.row, opts.rules!);
+      t.row._valid = r.valid;
+      t.row._errors = r.errors;
+      t.row._warnings = r.warnings;
+      t.row._status = r.data._status;
+      return t;
+    });
+  }
+
   return rows;
+}
+
+/** D119：向导 `_hash` 占位（非保留字段 JSON 的 md5 前 10 位；与运行时 derive 近似，供链接/命名确定性使用） */
+function seedRowHash(row: DataRecord): string {
+  const copy: Record<string, unknown> = {};
+  for (const k of Object.keys(row)) {
+    if (!k.startsWith('_')) copy[k] = row[k];
+  }
+  return md5Hash(JSON.stringify(copy)).slice(0, 10);
 }
 
 /* ── Dry Run 统计（R10：Step 4 确认页「将新建/更新/跳过/失败」） ── */

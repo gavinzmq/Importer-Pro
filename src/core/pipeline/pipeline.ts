@@ -23,6 +23,11 @@ export interface ShardContext {
   useTemplateOutput?: boolean;
   /** D112：向导实时输出命名覆盖（未保存 UI 值），优先级高于模板 output；folder/noteName 为 Handlebars 表达式 */
   outputOverride?: { folder?: string; noteName?: string };
+  /**
+   * D118：向导实时校验规则覆盖（未保存 UI 值），优先级高于模板 frontmatter validation——
+   * 保证「预览 == 导入」（向导预览标记与 Step 4 逐行校验同一套规则）。
+   */
+  validation?: ValidationRule[];
 }
 
 export class DataPipeline implements IDataPipeline {
@@ -93,12 +98,13 @@ export class DataPipeline implements IDataPipeline {
     // D112：导入运行时按模板 output.folder/note_name 求值（仅 ctx.useTemplateOutput 开启；未显式指定时兜底）
     this.applyTemplateOutput(data, template, ctx);
 
-    // D115：模板 frontmatter validation 逐行执行，回填保留字段 _valid/_errors/_warnings/_status（不自动 _skip，语义由模板/开关决定）
-    this.applyValidation(data, template);
+    // D115/D118：校验规则逐行执行，回填保留字段 _valid/_errors/_warnings/_status（不自动 _skip，语义由模板/开关决定）；
+    // 规则来源 = 向导实时 ctx.validation（优先）→ 模板 frontmatter validation
+    this.applyValidation(data, template, ctx);
 
     let specs: NoteSpec[] = [];
     if (Array.isArray(data._notes) && data._notes.length > 0) {
-      specs = data._notes.map((n: Record<string, any>) => this.normalizeSpec(n, data));
+      specs = data._notes.map((n: Record<string, any>) => this.normalizeSpec(n, data, ctx?.defaultFolder));
     } else {
       specs = [this.defaultSpec(data, template, ctx)];
     }
@@ -133,13 +139,14 @@ export class DataPipeline implements IDataPipeline {
   }
 
   /**
-   * D115：模板 frontmatter `validation` 校验规则逐行执行，回填保留字段
-   * `_valid` / `_errors` / `_warnings` / `_status`（template-schema §3；validator.ts）。
-   * 仅在模板声明 validation 时执行；不自动写 `_skip`（是否跳过由模板/`filterInvalid` 开关决定），
+   * D115：校验规则逐行执行，回填保留字段 `_valid` / `_errors` / `_warnings` / `_status`
+   * （template-schema §3；validator.ts）。规则来源 = 向导实时 ctx.validation（D118，未保存 UI 值）
+   * → 模板 frontmatter `validation`；两者均空时不执行。不自动写 `_skip`（是否跳过由模板/`filterInvalid` 开关决定），
    * 也不覆盖派生前的 `_hash`（校验在 derive 之后、字段仅影响消费方语义）。
    */
-  private applyValidation(data: DataRecord, template: TemplateConfig): void {
-    const rules = ((template as unknown as { _raw?: Record<string, any> })._raw?.validation ?? []) as ValidationRule[];
+  private applyValidation(data: DataRecord, template: TemplateConfig, ctx?: ShardContext): void {
+    const fm = ((template as unknown as { _raw?: Record<string, any> })._raw?.validation ?? []) as ValidationRule[];
+    const rules = (ctx?.validation && ctx.validation.length > 0 ? ctx.validation : fm);
     if (!Array.isArray(rules) || rules.length === 0) return;
     const result = this.validator.validate(data, rules);
     data._valid = result.valid;
@@ -148,18 +155,23 @@ export class DataPipeline implements IDataPipeline {
     data._status = result.data._status;
   }
 
-  private normalizeSpec(n: Record<string, any>, data: DataRecord): NoteSpec {
+  /**
+   * D120：_notes 元素 → NoteSpec。元素可携带 `_noteType`/`_noteLabel`（附加笔记类型标识，不入 spec data）；
+   * noteType 优先取元素 `_noteType`（主笔记元素缺省 → 沿用 data._status 兼容既有语义）。
+   * folder/fileName 兜底：元素显式值 → data._folder/_fileName/_hash → 设置默认目录/散列。
+   */
+  private normalizeSpec(n: Record<string, any>, data: DataRecord, defaultFolder?: string): NoteSpec {
     const specData: DataRecord = {};
     for (const [k, v] of Object.entries(n)) {
-      if (k.startsWith('_') && ['_folder', '_fileName', '_template'].includes(k)) continue;
+      if (k.startsWith('_') && ['_folder', '_fileName', '_template', '_noteType', '_noteLabel'].includes(k)) continue;
       specData[k] = v;
     }
     return {
-      folder: normalizeVaultPath(String(n._folder ?? data._folder ?? '')),
-      filename: sanitizeFilename(String(n._fileName ?? data._hash ?? md5Hash(JSON.stringify(specData)).slice(0, 10))),
+      folder: normalizeVaultPath(String(n._folder ?? data._folder ?? defaultFolder ?? '')),
+      filename: sanitizeFilename(String(n._fileName ?? data._fileName ?? data._hash ?? md5Hash(JSON.stringify(specData)).slice(0, 10))),
       templateRef: n._template,
       data: specData,
-      noteType: String(data._status ?? 'main')
+      noteType: String(n._noteType ?? data._status ?? 'main')
     };
   }
 

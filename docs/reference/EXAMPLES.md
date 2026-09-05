@@ -57,7 +57,7 @@ created_at: "2026-09-02T14:30:00Z"
       {{set "性别" (genderFromID record.身份证号)}}
       {{set "生日" (birthFromID record.身份证号 "chinese")}}
       {{set "_hash" (hashShort (md5 record.身份证号) 10)}}
-      {{set "_folder" "人员档案"}}
+      {{set "_folder ""人员档案"}}
       {{set "_status" "valid"}}
       {{set "_link" (smartLink _hash "人员档案" "待建档案")}}
     {{else}}
