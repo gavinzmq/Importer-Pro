@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.27.0"
+version: "1.28.0"
 last_updated: "2026-09-05"
 status: "active"
 owner: "core-team"
@@ -168,9 +168,9 @@ arcmesh:
 > ② **D119 计算/条件/链接**：区块 5「添加设置」扩为五组（+ 计算：加减乘除/条件计算/条件警告；+ 链接：smartLink 目标/回退），白名单 21 → 24（add/subtract/divide），warn/link 为映射行附言；
 > ③ **D120 多笔记输出**：映射行「输出到」列 + 「📑 笔记类型」面板（名称/模板引用/生成条件/命名覆盖），新编译段 `note-output`（`push _notes`）；`_template` 引用模板内容渲染为阶段二；
 > ④ **D121 输出策略**：区块 3 增 冲突策略/增量模式 下拉与匹配优先级，写 `output.conflict_strategy`/`incremental_mode`/`match.priority`（output 两字段 D112 已消费；`MatchRule` 增 `priority?`）。
-> 蓝图同步：architecture 1.26.0 / ui/layout 1.20.0 / template-schema 1.13.0 / template-engine 1.7.0 / CHANGELOG 1.20.0 / glossary 1.8.0。
-
-> **行清洗重构（D122，2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：用户反馈「删除行没用 / 去重、过滤无效数据没用 / 去除空行对首行与全空格行失效」——① **删除「删除行」功能与代码**（byIndex/duplicateHeader、`row-remove` 段、`RowRemoveRule` 等全量移除）；② **删除「去重 / 过滤无效数据」两开关**；③ **行清洗重做为三项跨行引擎开关**（合并行 exact/contains/regex、过滤重复表头、过滤空行含第一行——`isEmptyRow`/`isEmptyCell` trim 判定修复失效根因），语义统一 `src/core/row-clean.ts`（向导与 API 路径同源），随 frontmatter `row.clean`/`row.merge_rows` 保存、不产编译段，执行顺序 = 合并行 → 重复表头 → 空行 → 行筛选；④ 表头行（解析级）与行清洗「过滤重复表头」（数据级）不重复、均保留；⑤ 旧配置迁移（removeEmpty/duplicateHeader→新开关、byContent→筛选、dedupe/filterInvalid/byIndex 忽略）。全量 Vitest **167 例全绿**、type-check 通过。
+> **行能力再收敛（D123，2026-09-06 已实现；decisions/2026-09-06-header-from-cleaned-rows.md）**：用户反馈「合并行没用」与「表头应该是清洗、筛选后剩余第一行，原表头行控件没用」——① **删除「合并行」**功能与代码（类型 MergeRowRule/`row.merge_rows` 读写、UI 编辑器、core 合并逻辑全量移除）；② **删除「表头行（headerRow，从第 N 行开始读取）」解析级控件**——表格类解析改 **rawRows 原始行模式**（全部物理行含空行、占位列名 `列1..N`），**表头 = 行清洗 + 行筛选后剩余第一行**（`promoteHeaderRow` 提升为列名、该行移除）；行清洗收敛为 过滤空行（含第一行，trim 判定）+ 过滤重复表头（向导首行基准 `applyRowCleaningForHeader` / API 值==列名）；执行链 = 清洗 → 行筛选 → 表头提升 → 列映射；行清洗/筛选配置致表头变化时自动补充映射（`onRowConfigChanged`）；统计口径 `countRowsAfterHeader`。旧配置（header_row/merge_rows/dedupe 等）读取忽略、保存不再写出。全量 Vitest **170 例全绿**、type-check 通过。
+>
+> 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
 ## 5. 里程碑
 
@@ -218,4 +218,4 @@ arcmesh:
 
 ---
 
-*版本: 1.27.0 | 最后更新: 2026-09-05*
+*版本: 1.28.0 | 最后更新: 2026-09-06*

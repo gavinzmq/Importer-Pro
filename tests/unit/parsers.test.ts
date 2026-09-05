@@ -1,8 +1,8 @@
 /**
  * 解析器层单元测试（Vitest，供 CI `ci:test` 消费；本地不跑门禁）
  *
- * 覆盖 D86/D87：ExcelParser 指定不存在 sheetName → PARSE_002；Excel/CSV 的
- * ParseOptions.headerRow（表头所在物理行，跳过前 N 行后以该行为表头）。
+ * 覆盖 D86/D123：ExcelParser 指定不存在 sheetName → PARSE_002；Excel/CSV 的
+ * ParseOptions.rawRows（原始行模式：全部物理行作为数据记录，占位列名 列1..列N）。
  * 构造方式：以 xlsx 生成真实 .xlsx buffer → FileInfo.blob 句柄 → ParserContext 按需读取，
  * 不依赖 Vault / Obsidian（与外部文件端到端读取路径一致）。
  */
@@ -34,7 +34,7 @@ function xlsxBlob(sheets: Record<string, Array<Array<string | number>>>): Blob {
   return new Blob([buf as unknown as BlobPart]);
 }
 
-describe('ExcelParser（D86/D87）', () => {
+describe('ExcelParser（D86/D123）', () => {
   it('指定不存在的工作表 → 抛 PARSE_002（不再静默返回空数组）', async () => {
     const parser = new ExcelParser(makeCtx());
     const info = infoOf('xlsx', xlsxBlob({ S1: [['a', 'b'], ['1', '2']] }));
@@ -44,56 +44,70 @@ describe('ExcelParser（D86/D87）', () => {
     expect((err as ImporterProError).message).toContain('工作表不存在');
   });
 
-  it('缺省 sheetName 取第一个表单，正常解析', async () => {
+  it('缺省 sheetName 取第一个表单，正常解析（第一行为表头）', async () => {
     const parser = new ExcelParser(makeCtx());
     const info = infoOf('xlsx', xlsxBlob({ S1: [['a', 'b'], ['1', '2']] }));
     expect(await parser.doParse(info)).toEqual([{ a: '1', b: '2' }]);
   });
 
-  it('headerRow 跳过前部占位行并以指定物理行为表头', async () => {
+  it('rawRows 原始行模式：全部物理行作为数据记录，占位列名（列1..列N）', async () => {
     const parser = new ExcelParser(makeCtx());
     const info = infoOf(
       'xlsx',
       xlsxBlob({ S1: [['报表', '2026', ''], ['姓名', '年龄', '部门'], ['张三', 18, '研发']] })
     );
-    // 默认以 !ref 首行（占位行）为表头 → 列名退化，不含真实列名
+    const raw = await parser.doParse(info, { rawRows: true });
+    expect(raw).toEqual([
+      { 列1: '报表', 列2: '2026', 列3: '' },
+      { 列1: '姓名', 列2: '年龄', 列3: '部门' },
+      { 列1: '张三', 列2: 18, 列3: '研发' }
+    ]);
+    // 默认路径（无 rawRows）以 !ref 首行为表头，不包含占位列名
     const def = await parser.doParse(info);
-    expect(def.length).toBe(2);
-    expect(Object.keys(def[0])).not.toContain('姓名');
-
-    const withHeader = await parser.doParse(info, { headerRow: 1 });
-    expect(withHeader).toEqual([{ 姓名: '张三', 年龄: 18, 部门: '研发' }]);
+    expect(Object.keys(def[0])).not.toContain('列1');
   });
 
-  it('headerRow 超出数据范围 → 空结果（无抛错）', async () => {
+  it('rawRows 保留全空行（供行清洗过滤）', async () => {
     const parser = new ExcelParser(makeCtx());
-    const info = infoOf('xlsx', xlsxBlob({ S1: [['姓名', '年龄'], ['张三', '18']] }));
-    expect(await parser.doParse(info, { headerRow: 9 })).toEqual([]);
+    const info = infoOf('xlsx', xlsxBlob({ S1: [['', ''], ['姓名', '年龄'], ['张三', '18']] }));
+    const raw = await parser.doParse(info, { rawRows: true });
+    expect(raw).toEqual([
+      { 列1: '', 列2: '' },
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ]);
   });
 });
 
-describe('CSVParser（D87 headerRow）', () => {
-  it('跳过前部非空占位行并以第 N 行为表头', async () => {
+describe('CSVParser（D123 rawRows）', () => {
+  it('rawRows：全部物理行保留（含第一行），占位列名（列1..列N），短行补空', async () => {
     const parser = new CSVParser(makeCtx());
     const info = infoOf('csv', new Blob(['报表\n姓名,年龄,部门\n张三,18,研发\n']));
-    const rows = await parser.doParse(info, { headerRow: 1 });
-    expect(rows).toEqual([{ 姓名: '张三', 年龄: '18', 部门: '研发' }]);
+    const rows = await parser.doParse(info, { rawRows: true });
+    expect(rows).toEqual([
+      { 列1: '报表', 列2: '', 列3: '' },
+      { 列1: '姓名', 列2: '年龄', 列3: '部门' },
+      { 列1: '张三', 列2: '18', 列3: '研发' }
+    ]);
   });
 
-  it('前部空行按物理行计数；默认（无 headerRow）路径自动跳过空行', async () => {
+  it('rawRows 保留前部空行；默认路径自动跳过空行并以首个非空行为表头', async () => {
     const parser = new CSVParser(makeCtx());
     const info = infoOf('csv', new Blob(['\n\n姓名,年龄\n张三,18\n']));
-    // headerRow=2：物理行 0/1 为空，行 2 为表头
-    expect(await parser.doParse(info, { headerRow: 2 })).toEqual([{ 姓名: '张三', 年龄: '18' }]);
-    // 默认路径（skipEmptyLines）同样正确
+    const raw = await parser.doParse(info, { rawRows: true });
+    expect(raw[0]).toEqual({ 列1: '', 列2: '' }); // 首行空行保留（行清洗过滤）
+    expect(raw[2]).toEqual({ 列1: '姓名', 列2: '年龄' });
+    // 默认路径（skipEmptyLines）跳过空行
     expect(await parser.doParse(info)).toEqual([{ 姓名: '张三', 年龄: '18' }]);
   });
 
-  it('重复表头列名追加 _N（与默认 header:true 命名一致）', async () => {
+  it('rawRows 尾部幻影空行剔除', async () => {
     const parser = new CSVParser(makeCtx());
-    // 首行为占位行，表头在物理行 1 且含重复列名 a,a
-    const info = infoOf('csv', new Blob(['报表\na,a,b\n1,2,3\n']));
-    const withHeader = await parser.doParse(info, { headerRow: 1 });
-    expect(withHeader).toEqual([{ a: '1', a_1: '2', b: '3' }]);
+    const info = infoOf('csv', new Blob(['姓名,年龄\n张三,18\n\n\n']));
+    const raw = await parser.doParse(info, { rawRows: true });
+    expect(raw).toEqual([
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ]);
   });
 });

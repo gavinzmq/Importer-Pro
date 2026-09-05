@@ -1,8 +1,8 @@
----
-title: "开发规范与标准"
+﻿---
+title: "寮€鍙戣鑼冧笌鏍囧噯"
 type: "standard"
-version: "1.12.0"
-last_updated: "2026-09-05"
+version: "1.13.0"
+last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
 tags: ["standards", "code-style", "testing", "documentation"]
@@ -12,23 +12,23 @@ arcmesh:
   relates_to: ["project.md", "architecture.md"]
 ---
 
-# Importer Pro 开发规范与标准
+# Importer Pro 寮€鍙戣鑼冧笌鏍囧噯
 
-## 1. 代码风格
+## 1. 浠ｇ爜椋庢牸
 
-### 1.1 TypeScript 规范
+### 1.1 TypeScript 瑙勮寖
 
-| 规范项 | 标准 |
+| 瑙勮寖椤?| 鏍囧噯 |
 | :--- | :--- |
-| **格式化** | Prettier + ESLint |
-| **缩进** | 2 空格 |
-| **引号** | 单引号 |
-| **分号** | 始终使用 |
-| **尾随逗号** | ES5 风格 |
-| **行宽** | 100 字符 |
+| **鏍煎紡鍖?* | Prettier + ESLint |
+| **缂╄繘** | 2 绌烘牸 |
+| **寮曞彿** | 鍗曞紩鍙?|
+| **鍒嗗彿** | 濮嬬粓浣跨敤 |
+| **灏鹃殢閫楀彿** | ES5 椋庢牸 |
+| **琛屽** | 100 瀛楃 |
 
 ```typescript
-// ✅ 正确示例
+// 鉁?姝ｇ‘绀轰緥
 import { Plugin } from 'obsidian';
 
 export class ImporterProPlugin extends Plugin {
@@ -40,137 +40,125 @@ export class ImporterProPlugin extends Plugin {
   }
 }
 
-// ❌ 错误示例
+// 鉂?閿欒绀轰緥
 import {Plugin} from 'obsidian';
 export class ImporterProPlugin extends Plugin{
   private settings:PluginSettings;
   async onload(){await this.loadSettings();}
 }
 ```
-### 1.2 命名规范
+### 1.2 鍛藉悕瑙勮寖
 
-|类型|规范|示例|
+|绫诲瀷|瑙勮寖|绀轰緥|
 |---|---|---|
-|**文件**|kebab-case|`template-engine.ts`|
-|**类**|PascalCase|`TemplateEngine`|
-|**接口**|PascalCase (带 I 前缀)|`ICacheProvider`|
-|**类型**|PascalCase|`TemplateConfig`|
-|**函数**|camelCase|`getTemplateFolders()`|
-|**常量**|UPPER_SNAKE_CASE|`DEFAULT_SETTINGS`|
-|**私有属性**|camelCase (带 `_` 前缀)|`_cacheProvider`|
-|**枚举**|PascalCase|`LogLevel`|
-|**枚举值**|UPPER_SNAKE_CASE|`LogLevel.DEBUG`|
+|**鏂囦欢**|kebab-case|`template-engine.ts`|
+|**绫?*|PascalCase|`TemplateEngine`|
+|**鎺ュ彛**|PascalCase (甯?I 鍓嶇紑)|`ICacheProvider`|
+|**绫诲瀷**|PascalCase|`TemplateConfig`|
+|**鍑芥暟**|camelCase|`getTemplateFolders()`|
+|**甯搁噺**|UPPER_SNAKE_CASE|`DEFAULT_SETTINGS`|
+|**绉佹湁灞炴€?*|camelCase (甯?`_` 鍓嶇紑)|`_cacheProvider`|
+|**鏋氫妇**|PascalCase|`LogLevel`|
+|**鏋氫妇鍊?*|UPPER_SNAKE_CASE|`LogLevel.DEBUG`|
 
 
 ```text
 
 src/
-├── api/                   # 外部 API 暴露
-│   ├── index.ts
-│   └── types.ts
-├── core/                  # 核心引擎
-│   ├── cache/             # 缓存系统
-│   ├── log/               # 日志系统
-│   ├── merge/             # 合并引擎
-│   ├── parser/            # 数据解析
-│   ├── template/          # 模板引擎
-│   └── validator/         # 校验引擎
-├── ui/                    # UI 组件
-│   ├── components/
-│   └── modals/
-├── helpers/               # Handlebars Helper
-├── extensions/            # 可扩展模块
-├── types/                 # 类型定义
-├── utils/                 # 工具函数
-├── main.ts                # 插件入口
-└── settings.ts            # 设置定义
+鈹溾攢鈹€ api/                   # 澶栭儴 API 鏆撮湶
+鈹?  鈹溾攢鈹€ index.ts
+鈹?  鈹斺攢鈹€ types.ts
+鈹溾攢鈹€ core/                  # 鏍稿績寮曟搸
+鈹?  鈹溾攢鈹€ cache/             # 缂撳瓨绯荤粺
+鈹?  鈹溾攢鈹€ log/               # 鏃ュ織绯荤粺
+鈹?  鈹溾攢鈹€ merge/             # 鍚堝苟寮曟搸
+鈹?  鈹溾攢鈹€ parser/            # 鏁版嵁瑙ｆ瀽
+鈹?  鈹溾攢鈹€ template/          # 妯℃澘寮曟搸
+鈹?  鈹斺攢鈹€ validator/         # 鏍￠獙寮曟搸
+鈹溾攢鈹€ ui/                    # UI 缁勪欢
+鈹?  鈹溾攢鈹€ components/
+鈹?  鈹斺攢鈹€ modals/
+鈹溾攢鈹€ helpers/               # Handlebars Helper
+鈹溾攢鈹€ extensions/            # 鍙墿灞曟ā鍧?鈹溾攢鈹€ types/                 # 绫诲瀷瀹氫箟
+鈹溾攢鈹€ utils/                 # 宸ュ叿鍑芥暟
+鈹溾攢鈹€ main.ts                # 鎻掍欢鍏ュ彛
+鈹斺攢鈹€ settings.ts            # 璁剧疆瀹氫箟
 ```
 
-### 1.2.1 UI 平台能力抽象（接口 + 反射工厂）
-
-| 规范项 | 标准 |
+### 1.2.1 UI 骞冲彴鑳藉姏鎶借薄锛堟帴鍙?+ 鍙嶅皠宸ュ巶锛?
+| 瑙勮寖椤?| 鏍囧噯 |
 | :--- | :--- |
-| **接口优先** | 平台差异能力（文件选择器等）一律定义 `I` 前缀接口（如 `IFilePicker`），UI 组件仅依赖接口 |
-| **反射工厂** | 通过反射工厂（注册表 `Map<platform, ctor>` + 模块加载时反射注册）获取实现实例（`DesktopXxx` / `MobileXxx`） |
-| **平台判定唯一入口** | 平台判定只在工厂内部（`Platform.isDesktop` / `Platform.isMobile`），**禁止 UI 组件内散落 `Platform.isMobile` 条件分支** |
+| **鎺ュ彛浼樺厛** | 骞冲彴宸紓鑳藉姏锛堟枃浠堕€夋嫨鍣ㄧ瓑锛変竴寰嬪畾涔?`I` 鍓嶇紑鎺ュ彛锛堝 `IFilePicker`锛夛紝UI 缁勪欢浠呬緷璧栨帴鍙?|
+| **鍙嶅皠宸ュ巶** | 閫氳繃鍙嶅皠宸ュ巶锛堟敞鍐岃〃 `Map<platform, ctor>` + 妯″潡鍔犺浇鏃跺弽灏勬敞鍐岋級鑾峰彇瀹炵幇瀹炰緥锛坄DesktopXxx` / `MobileXxx`锛?|
+| **骞冲彴鍒ゅ畾鍞竴鍏ュ彛** | 骞冲彴鍒ゅ畾鍙湪宸ュ巶鍐呴儴锛坄Platform.isDesktop` / `Platform.isMobile`锛夛紝**绂佹 UI 缁勪欢鍐呮暎钀?`Platform.isMobile` 鏉′欢鍒嗘敮** |
 
-> 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）；文件路径引用见 `architecture.md` §2.8。
-
-### 1.2.2 向导渲染策略（无刷新感 / 不跳顶，D91）
-
-| 规范项 | 标准 |
+> 鏉冨▉璁捐瑙?`architecture.md` 搂5锛堟墿灞曠偣锛変笌 `ui/layout.md` 搂4锛圫tep 2 閫夋嫨鏂囦欢浜や簰锛夛紱鏂囦欢璺緞寮曠敤瑙?`architecture.md` 搂2.8銆?
+### 1.2.2 鍚戝娓叉煋绛栫暐锛堟棤鍒锋柊鎰?/ 涓嶈烦椤讹紝D91锛?
+| 瑙勮寖椤?| 鏍囧噯 |
 | :--- | :--- |
-| **容器持久** | 向导各步骤内（尤其 Step 3）body 滚动容器保持 DOM 身份不变；**控件变更禁止重建整个 `contentEl` / header / footer** |
-| **分级局部刷新** | 按影响范围刷新：L1 仅预览 / L2 区块内重建 / L3 数据源级（重解析后按依赖链刷新 映射→派生→预览）；禁止以全量渲染代替局部刷新 |
-| **滚动与焦点保持** | 刷新前记录并恢复 `scrollTop`；输入控件状态即数据源、渲染仅回填值，避免焦点丢失 |
-| **步骤切换例外** | Step 间跳转属页面结构切换，可全量渲染 |
+| **瀹瑰櫒鎸佷箙** | 鍚戝鍚勬楠ゅ唴锛堝挨鍏?Step 3锛塨ody 婊氬姩瀹瑰櫒淇濇寔 DOM 韬唤涓嶅彉锛?*鎺т欢鍙樻洿绂佹閲嶅缓鏁翠釜 `contentEl` / header / footer** |
+| **鍒嗙骇灞€閮ㄥ埛鏂?* | 鎸夊奖鍝嶈寖鍥村埛鏂帮細L1 浠呴瑙?/ L2 鍖哄潡鍐呴噸寤?/ L3 鏁版嵁婧愮骇锛堥噸瑙ｆ瀽鍚庢寜渚濊禆閾惧埛鏂?鏄犲皠鈫掓淳鐢熲啋棰勮锛夛紱绂佹浠ュ叏閲忔覆鏌撲唬鏇垮眬閮ㄥ埛鏂?|
+| **婊氬姩涓庣劍鐐逛繚鎸?* | 鍒锋柊鍓嶈褰曞苟鎭㈠ `scrollTop`锛涜緭鍏ユ帶浠剁姸鎬佸嵆鏁版嵁婧愩€佹覆鏌撲粎鍥炲～鍊硷紝閬垮厤鐒︾偣涓㈠け |
+| **姝ラ鍒囨崲渚嬪** | Step 闂磋烦杞睘椤甸潰缁撴瀯鍒囨崲锛屽彲鍏ㄩ噺娓叉煋 |
 
-> 权威设计见 `architecture.md` §2.9 与 `ui/layout.md` §5.1；决策见 decisions/2026-09-03-ui-ux-polish.md（D91）。
-
-### 1.2.3 向导逻辑抽离（UI 层只调用，D94–D96）
-
-| 规范项 | 标准 |
+> 鏉冨▉璁捐瑙?`architecture.md` 搂2.9 涓?`ui/layout.md` 搂5.1锛涘喅绛栬 decisions/2026-09-03-ui-ux-polish.md锛圖91锛夈€?
+### 1.2.3 鍚戝閫昏緫鎶界锛圲I 灞傚彧璋冪敤锛孌94鈥揇96锛?
+| 瑙勮寖椤?| 鏍囧噯 |
 | :--- | :--- |
-| **Handlebars 唯一逻辑载体（D98/D122）** | UI Step 3 的一切功能都是**为模板生成 Handlebars 逻辑**，不是调用 JS 函数——导入与预览统一走 `TemplateEngine.renderPreprocess`；禁止在导入流程中调用运行时变换函数（原 `applyTransform` 类废弃）；唯一例外：行清洗（合并行/过滤重复表头/过滤空行，跨行结构操作，core/row-clean.ts 引擎开关）与解析级参数（表头行/表单选择） |
-| **UI 只调用** | 导入向导（`import-modal.ts`）仅负责渲染控件、绑定事件与调用；**不内联业务逻辑**（编译/反编译/匹配判断一律不放组件内），**不直接读写文件或 preprocess 代码** |
-| **逻辑归属编译层** | 行删除/行筛选/列格式化/列处理/列映射/派生的「配置 ↔ Handlebars」编译与反编译（ipro 标记段）收敛到 `wizard-data.ts` 纯函数层（往返可单测）；模板配置读写归 `TemplateScanner` 核心服务 |
-| **能抽离的尽量抽离** | 可复用/可独立测试的算法（规则 → Handlebars 编译、标记段解析、规则标签、命名示例渲染）一律抽离为独立导出纯函数，禁止以私有方法形式埋在组件类里 |
-| **配置唯一事实源** | Step 3 配置保存 = 编译为 preprocess 标记段写回模板（`readTemplateConfig` / `saveTemplateConfig`）；UI 状态只是模板 Handlebars 的镜像，不作为独立持久化源 |
-| **能力统一原则（D97）** | 互补语义共用同一匹配引擎——排除式删除与包含式筛选不得维护两套等价实现（`byContent` 删除并入行筛选、`removeEmpty` 改为预置筛选规则 `{ column:'*', op:'notEmpty' }`）；快捷开关内部生成为预置规则，与筛选列表联动 |
-| **多步值型 set 统一 pipe（D99–D101）** | 一个 `set` 的目标值含 **≥2 个变换阶段**时，编译产物必须用内置 `pipe`/`stage` 表达（`(pipe 源 (stage "阶段名" 固定参数…) …)`，左→右求值，禁止深嵌套括号硬拼）；单阶段保持 `(helper 源)` 直调；阶段仅限内置白名单（外部 Helper 不得入 `PipeStages` 注册表，防注入）；`pipe` 为纯值链、不含空值守卫，守卫放外层 `#if`；反编译器须同时接受 pipe 与旧嵌套两种形态 |
-| **列侧唯一段 column-mapping（D105–D107）** | 列侧 UI 只产出 `column-mapping` 段：列格式化/列处理/派生全部并入列映射行的 `settings` 链（不再产出 column-format / column-process / derived 段）；每行一条 set——无设置=复制、1 步=直调、**≥2 步=pipe**（D99）；类型=快捷转换（隐含转换去重）；旧段/旧 frontmatter 读取折叠迁移 |
+| **Handlebars 鍞竴閫昏緫杞戒綋锛圖98/D122锛?* | UI Step 3 鐨勪竴鍒囧姛鑳介兘鏄?*涓烘ā鏉跨敓鎴?Handlebars 閫昏緫**锛屼笉鏄皟鐢?JS 鍑芥暟鈥斺€斿鍏ヤ笌棰勮缁熶竴璧?`TemplateEngine.renderPreprocess`锛涚姝㈠湪瀵煎叆娴佺▼涓皟鐢ㄨ繍琛屾椂鍙樻崲鍑芥暟锛堝師 `applyTransform` 绫诲簾寮冿級锛涘敮涓€渚嬪锛氳娓呮礂锛堝悎骞惰/杩囨护閲嶅琛ㄥご/杩囨护绌鸿锛岃法琛岀粨鏋勬搷浣滐紝core/row-clean.ts 寮曟搸寮€鍏筹級涓庤В鏋愮骇鍙傛暟锛堣〃澶磋/琛ㄥ崟閫夋嫨锛?|
+| **UI 鍙皟鐢?* | 瀵煎叆鍚戝锛坄import-modal.ts`锛変粎璐熻矗娓叉煋鎺т欢銆佺粦瀹氫簨浠朵笌璋冪敤锛?*涓嶅唴鑱斾笟鍔￠€昏緫**锛堢紪璇?鍙嶇紪璇?鍖归厤鍒ゆ柇涓€寰嬩笉鏀剧粍浠跺唴锛夛紝**涓嶇洿鎺ヨ鍐欐枃浠舵垨 preprocess 浠ｇ爜** |
+| **閫昏緫褰掑睘缂栬瘧灞?* | 琛屽垹闄?琛岀瓫閫?鍒楁牸寮忓寲/鍒楀鐞?鍒楁槧灏?娲剧敓鐨勩€岄厤缃?鈫?Handlebars銆嶇紪璇戜笌鍙嶇紪璇戯紙ipro 鏍囪娈碉級鏀舵暃鍒?`wizard-data.ts` 绾嚱鏁板眰锛堝線杩斿彲鍗曟祴锛夛紱妯℃澘閰嶇疆璇诲啓褰?`TemplateScanner` 鏍稿績鏈嶅姟 |
+| **鑳芥娊绂荤殑灏介噺鎶界** | 鍙鐢?鍙嫭绔嬫祴璇曠殑绠楁硶锛堣鍒?鈫?Handlebars 缂栬瘧銆佹爣璁版瑙ｆ瀽銆佽鍒欐爣绛俱€佸懡鍚嶇ず渚嬫覆鏌擄級涓€寰嬫娊绂讳负鐙珛瀵煎嚭绾嚱鏁帮紝绂佹浠ョ鏈夋柟娉曞舰寮忓煁鍦ㄧ粍浠剁被閲?|
+| **閰嶇疆鍞竴浜嬪疄婧?* | Step 3 閰嶇疆淇濆瓨 = 缂栬瘧涓?preprocess 鏍囪娈靛啓鍥炴ā鏉匡紙`readTemplateConfig` / `saveTemplateConfig`锛夛紱UI 鐘舵€佸彧鏄ā鏉?Handlebars 鐨勯暅鍍忥紝涓嶄綔涓虹嫭绔嬫寔涔呭寲婧?|
+| **鑳藉姏缁熶竴鍘熷垯锛圖97锛?* | 浜掕ˉ璇箟鍏辩敤鍚屼竴鍖归厤寮曟搸鈥斺€旀帓闄ゅ紡鍒犻櫎涓庡寘鍚紡绛涢€変笉寰楃淮鎶や袱濂楃瓑浠峰疄鐜帮紙`byContent` 鍒犻櫎骞跺叆琛岀瓫閫夈€乣removeEmpty` 鏀逛负棰勭疆绛涢€夎鍒?`{ column:'*', op:'notEmpty' }`锛夛紱蹇嵎寮€鍏冲唴閮ㄧ敓鎴愪负棰勭疆瑙勫垯锛屼笌绛涢€夊垪琛ㄨ仈鍔?|
+| **澶氭鍊煎瀷 set 缁熶竴 pipe锛圖99鈥揇101锛?* | 涓€涓?`set` 鐨勭洰鏍囧€煎惈 **鈮? 涓彉鎹㈤樁娈?*鏃讹紝缂栬瘧浜х墿蹇呴』鐢ㄥ唴缃?`pipe`/`stage` 琛ㄨ揪锛坄(pipe 婧?(stage "闃舵鍚? 鍥哄畾鍙傛暟鈥? 鈥?`锛屽乏鈫掑彸姹傚€硷紝绂佹娣卞祵濂楁嫭鍙风‖鎷硷級锛涘崟闃舵淇濇寔 `(helper 婧?` 鐩磋皟锛涢樁娈典粎闄愬唴缃櫧鍚嶅崟锛堝閮?Helper 涓嶅緱鍏?`PipeStages` 娉ㄥ唽琛紝闃叉敞鍏ワ級锛沗pipe` 涓虹函鍊奸摼銆佷笉鍚┖鍊煎畧鍗紝瀹堝崼鏀惧灞?`#if`锛涘弽缂栬瘧鍣ㄩ』鍚屾椂鎺ュ彈 pipe 涓庢棫宓屽涓ょ褰㈡€?|
+| **鍒椾晶鍞竴娈?column-mapping锛圖105鈥揇107锛?* | 鍒椾晶 UI 鍙骇鍑?`column-mapping` 娈碉細鍒楁牸寮忓寲/鍒楀鐞?娲剧敓鍏ㄩ儴骞跺叆鍒楁槧灏勮鐨?`settings` 閾撅紙涓嶅啀浜у嚭 column-format / column-process / derived 娈碉級锛涙瘡琛屼竴鏉?set鈥斺€旀棤璁剧疆=澶嶅埗銆? 姝?鐩磋皟銆?*鈮? 姝?pipe**锛圖99锛夛紱绫诲瀷=蹇嵎杞崲锛堥殣鍚浆鎹㈠幓閲嶏級锛涙棫娈?鏃?frontmatter 璇诲彇鎶樺彔杩佺Щ |
 
-> 权威设计见 `architecture.md` §2.10 与 `ui/layout.md` §5.4–§5.6；决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D96）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
->
-> **D108 + D113（2026-09-05 已实现）收敛注记**：列侧以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设 rule 行；编译按 rule 拆 column-mapping/derived 段、反编译合并，旧模板/旧 frontmatter 可读回迁移）。**D113** 实现 D105 草案「添加设置」行内设置链：范围 = 列格式化/列处理 chips（`settings`，≥2 步 pipe）+ 类型快捷转换编译，列侧仅产 `column-mapping` 段、旧 column-format/column-process 段与旧 frontmatter columns 折叠为设置链，移除独立格式化/处理卡；派生不占 chips（走「类型/规则」下拉，rule 行），与 D105 草案差异见 decisions/2026-09-05-unimplemented-gap-fill.md D113。
+> 鏉冨▉璁捐瑙?`architecture.md` 搂2.10 涓?`ui/layout.md` 搂5.4鈥撀?.6锛涘喅绛栬 decisions/2026-09-04-step3-template-config-restructure.md锛圖94鈥揇96锛夛紱鍊煎瀷 set 绠￠亾瑙?decisions/2026-09-05-pipe-pipeline-set-config.md锛圖99鈥揇101锛夛紱鍒椾晶鏀舵暃瑙?decisions/2026-09-05-step3-column-mapping-settings-chain.md锛圖105鈥揇107锛夈€?>
+> **D108 + D113锛?026-09-05 宸插疄鐜帮級鏀舵暃娉ㄨ**锛氬垪渚т互銆屾槧灏勪笌娲剧敓鍚堝苟鍗曡〃銆嶈惤鍦帮紙鍖哄潡 5/6 鍚堝苟銆佽鍐呫€岀被鍨?瑙勫垯銆嶇洿鎺ラ€夋淳鐢熼璁?rule 琛岋紱缂栬瘧鎸?rule 鎷?column-mapping/derived 娈点€佸弽缂栬瘧鍚堝苟锛屾棫妯℃澘/鏃?frontmatter 鍙鍥炶縼绉伙級銆?*D113** 瀹炵幇 D105 鑽夋銆屾坊鍔犺缃€嶈鍐呰缃摼锛氳寖鍥?= 鍒楁牸寮忓寲/鍒楀鐞?chips锛坄settings`锛屸墺2 姝?pipe锛? 绫诲瀷蹇嵎杞崲缂栬瘧锛屽垪渚т粎浜?`column-mapping` 娈点€佹棫 column-format/column-process 娈典笌鏃?frontmatter columns 鎶樺彔涓鸿缃摼锛岀Щ闄ょ嫭绔嬫牸寮忓寲/澶勭悊鍗★紱娲剧敓涓嶅崰 chips锛堣蛋銆岀被鍨?瑙勫垯銆嶄笅鎷夛紝rule 琛岋級锛屼笌 D105 鑽夋宸紓瑙?decisions/2026-09-05-unimplemented-gap-fill.md D113銆?
+### 1.2.4 Helper 瀹炵幇濮旀墭鍘熷垯锛圖102鈥揇104 瀹氬彛寰勶紱D109鈥揇111 瀹炵幇婧愯縼 fumanchu锛?026-09-05 宸插疄鐜帮級
 
-### 1.2.4 Helper 实现委托原则（D102–D104 定口径；D109–D111 实现源迁 fumanchu，2026-09-05 已实现）
-
-| 规范项 | 标准 |
+| 瑙勮寖椤?| 鏍囧噯 |
 | :--- | :--- |
-| **复用优先（不重复自研）** | 通用 Helper 若实现源（D109 起 = `@jaredwray/fumanchu`，替代 handlebars-helpers）已有，一律采用其实现，禁止另写一份（采纳 array/collection/comparison/math/number/string 六类重叠件共 26 项，见 handlebars-helpers.ts） |
-| **库有即用库注册名（v1.2.0）** | 凡实现源有实现者，**以其注册名注册**（`upper`→`uppercase`、`lower`→`lowercase`），不保留我方名；edge 语义随库。改名属模板级破坏性（v1.0 未发布可接受，文档/示例已随实现迁移） |
-| **特化件自研** | 仅实现源**没有**者保留我方名与实现：身份证/哈希/校验/链接、D98 编译白名单、运行时辅助（`set`/`pipe`/`stage` 等）、`substring`/`concat`/`formatNumber`/`ifEquals` 等 |
-| **例外专用名** | 实现源有同名但语义不等价且我方语义为**编译段**必需 → 改用我方专用名登记；**不得**以我方实现覆盖源同名。本实现：编译段空值/清理/拆分/兜底用 `strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`（公开 `trim`/`split`/`default`/`isEmpty` 随源）；`has`（编译守卫）保留我方（源 comparison.has 为 block/inline 混合语义） |
-| **按需注册** | 仅按名挑选注册受控白名单（26 项采纳）；禁止 Node/IO 类 helper（fs/path/logging/markdown/match 等）。D109 起经 fumanchu `HelperRegistry.filter({ names })` 挑选（不整库铺开） |
-| **对拍定稿** | 委托清单以 `tests/unit/helpers.test.ts` 全绿为准（语义回归网）；改名/专用名条目登记迁移清单。D109 起补 **options 剥离**边界用例（fumanchu 变参 helper 未 pop 末位 options，注册层 `withOptionsStripped` 补齐） |
-| **第三方门禁** | 新 helper 只取自白名单类；esbuild `platform:'browser'` + `@jaredwray/fumanchu/browser` + alias 空壳（`scripts/shims/fumanchu-node-deps-empty.mjs`，仅 micromatch/@cacheable/memory/chrono-node）验证打包无 Node 助手泄漏（沿用 D58/js-md5 排查法；勿删 alias、勿对 dayjs/markdown-it alias） |
+| **澶嶇敤浼樺厛锛堜笉閲嶅鑷爺锛?* | 閫氱敤 Helper 鑻ュ疄鐜版簮锛圖109 璧?= `@jaredwray/fumanchu`锛屾浛浠?handlebars-helpers锛夊凡鏈夛紝涓€寰嬮噰鐢ㄥ叾瀹炵幇锛岀姝㈠彟鍐欎竴浠斤紙閲囩撼 array/collection/comparison/math/number/string 鍏被閲嶅彔浠跺叡 26 椤癸紝瑙?handlebars-helpers.ts锛?|
+| **搴撴湁鍗崇敤搴撴敞鍐屽悕锛坴1.2.0锛?* | 鍑″疄鐜版簮鏈夊疄鐜拌€咃紝**浠ュ叾娉ㄥ唽鍚嶆敞鍐?*锛坄upper`鈫抈uppercase`銆乣lower`鈫抈lowercase`锛夛紝涓嶄繚鐣欐垜鏂瑰悕锛沞dge 璇箟闅忓簱銆傛敼鍚嶅睘妯℃澘绾х牬鍧忔€э紙v1.0 鏈彂甯冨彲鎺ュ彈锛屾枃妗?绀轰緥宸查殢瀹炵幇杩佺Щ锛?|
+| **鐗瑰寲浠惰嚜鐮?* | 浠呭疄鐜版簮**娌℃湁**鑰呬繚鐣欐垜鏂瑰悕涓庡疄鐜帮細韬唤璇?鍝堝笇/鏍￠獙/閾炬帴銆丏98 缂栬瘧鐧藉悕鍗曘€佽繍琛屾椂杈呭姪锛坄set`/`pipe`/`stage` 绛夛級銆乣substring`/`concat`/`formatNumber`/`ifEquals` 绛?|
+| **渚嬪涓撶敤鍚?* | 瀹炵幇婧愭湁鍚屽悕浣嗚涔変笉绛変环涓旀垜鏂硅涔変负**缂栬瘧娈?*蹇呴渶 鈫?鏀圭敤鎴戞柟涓撶敤鍚嶇櫥璁帮紱**涓嶅緱**浠ユ垜鏂瑰疄鐜拌鐩栨簮鍚屽悕銆傛湰瀹炵幇锛氱紪璇戞绌哄€?娓呯悊/鎷嗗垎/鍏滃簳鐢?`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`锛堝叕寮€ `trim`/`split`/`default`/`isEmpty` 闅忔簮锛夛紱`has`锛堢紪璇戝畧鍗級淇濈暀鎴戞柟锛堟簮 comparison.has 涓?block/inline 娣峰悎璇箟锛?|
+| **鎸夐渶娉ㄥ唽** | 浠呮寜鍚嶆寫閫夋敞鍐屽彈鎺х櫧鍚嶅崟锛?6 椤归噰绾筹級锛涚姝?Node/IO 绫?helper锛坒s/path/logging/markdown/match 绛夛級銆侱109 璧风粡 fumanchu `HelperRegistry.filter({ names })` 鎸戦€夛紙涓嶆暣搴撻摵寮€锛?|
+| **瀵规媿瀹氱** | 濮旀墭娓呭崟浠?`tests/unit/helpers.test.ts` 鍏ㄧ豢涓哄噯锛堣涔夊洖褰掔綉锛夛紱鏀瑰悕/涓撶敤鍚嶆潯鐩櫥璁拌縼绉绘竻鍗曘€侱109 璧疯ˉ **options 鍓ョ**杈圭晫鐢ㄤ緥锛坒umanchu 鍙樺弬 helper 鏈?pop 鏈綅 options锛屾敞鍐屽眰 `withOptionsStripped` 琛ラ綈锛?|
+| **绗笁鏂归棬绂?* | 鏂?helper 鍙彇鑷櫧鍚嶅崟绫伙紱esbuild `platform:'browser'` + `@jaredwray/fumanchu/browser` + alias 绌哄３锛坄scripts/shims/fumanchu-node-deps-empty.mjs`锛屼粎 micromatch/@cacheable/memory/chrono-node锛夐獙璇佹墦鍖呮棤 Node 鍔╂墜娉勬紡锛堟部鐢?D58/js-md5 鎺掓煡娉曪紱鍕垮垹 alias銆佸嬁瀵?dayjs/markdown-it alias锛?|
 
-> 口径决策见 decisions/2026-09-05-handlebars-helpers-on-demand.md（D102–D104，v1.2.0）；实现源迁移见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
-
-### 1.3 跨平台脚本与子进程调用
-
-| 场景 | 标准 | 说明 |
+> 鍙ｅ緞鍐崇瓥瑙?decisions/2026-09-05-handlebars-helpers-on-demand.md锛圖102鈥揇104锛寁1.2.0锛夛紱瀹炵幇婧愯縼绉昏 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md锛圖109鈥揇111锛夈€?
+### 1.3 璺ㄥ钩鍙拌剼鏈笌瀛愯繘绋嬭皟鐢?
+| 鍦烘櫙 | 鏍囧噯 | 璇存槑 |
 | :--- | :--- | :--- |
-| Node 内复制/移动/删除文件 | 使用 `node:fs` 原生 API（`copyFileSync` 等） | 脚本本身是 Node 时勿用 `execSync('node -e "...")` 启动子进程再执行内联代码，引号嵌套跨 shell 不可靠 |
-| 确需调用外部命令 | `execFileSync`/`spawnSync` 传**参数数组** | 避免把路径/参数拼进 shell 命令字符串 |
-| 打包/压缩 | Windows `Compress-Archive` / Unix `zip` 显式分支 | 平台分支显式判断；Unix `zip` 由 CI 安装步骤保证（见 §8） |
+| Node 鍐呭鍒?绉诲姩/鍒犻櫎鏂囦欢 | 浣跨敤 `node:fs` 鍘熺敓 API锛坄copyFileSync` 绛夛級 | 鑴氭湰鏈韩鏄?Node 鏃跺嬁鐢?`execSync('node -e "...")` 鍚姩瀛愯繘绋嬪啀鎵ц鍐呰仈浠ｇ爜锛屽紩鍙峰祵濂楄法 shell 涓嶅彲闈?|
+| 纭渶璋冪敤澶栭儴鍛戒护 | `execFileSync`/`spawnSync` 浼?*鍙傛暟鏁扮粍** | 閬垮厤鎶婅矾寰?鍙傛暟鎷艰繘 shell 鍛戒护瀛楃涓?|
+| 鎵撳寘/鍘嬬缉 | Windows `Compress-Archive` / Unix `zip` 鏄惧紡鍒嗘敮 | 骞冲彴鍒嗘敮鏄惧紡鍒ゆ柇锛沀nix `zip` 鐢?CI 瀹夎姝ラ淇濊瘉锛堣 搂8锛?|
 
-**历史教训（2026-09-03，D58）**：`scripts/package.mjs` 曾通过
-`node -e "require('fs').copyFileSync("main.js", "dist/main.js")"` 复制产物，内层 `JSON.stringify` 双引号在 Ubuntu runner 的 bash 下被提前截断，eval 收到 `copyFileSync(main.js, ...)` → `ReferenceError: main is not defined`；本机 Windows/PowerShell 引号规则不同故未暴露。已改用原生 `fs.copyFileSync` 消除 shell 依赖。
+**鍘嗗彶鏁欒锛?026-09-03锛孌58锛?*锛歚scripts/package.mjs` 鏇鹃€氳繃
+`node -e "require('fs').copyFileSync("main.js", "dist/main.js")"` 澶嶅埗浜х墿锛屽唴灞?`JSON.stringify` 鍙屽紩鍙峰湪 Ubuntu runner 鐨?bash 涓嬭鎻愬墠鎴柇锛宔val 鏀跺埌 `copyFileSync(main.js, ...)` 鈫?`ReferenceError: main is not defined`锛涙湰鏈?Windows/PowerShell 寮曞彿瑙勫垯涓嶅悓鏁呮湭鏆撮湶銆傚凡鏀圭敤鍘熺敓 `fs.copyFileSync` 娑堥櫎 shell 渚濊禆銆?
+## 2. 娴嬭瘯鏍囧噯
 
-## 2. 测试标准
-
-|类型|覆盖率要求|工具|
+|绫诲瀷|瑕嗙洊鐜囪姹倈宸ュ叿|
 |---|---|---|
-|**单元测试**|≥80%|Vitest + jsdom|
-|**集成测试**|核心流程|Vitest + obsidian-test-mocks（Obsidian API Mock）|
-|**E2E 测试**|核心功能|Playwright + obsidian-testing-framework（Obsidian 闭源无法无头启动，以框架驱动，不直接依赖真实 Obsidian UI）|
+|**鍗曞厓娴嬭瘯**|鈮?0%|Vitest + jsdom|
+|**闆嗘垚娴嬭瘯**|鏍稿績娴佺▼|Vitest + obsidian-test-mocks锛圤bsidian API Mock锛墊
+|**E2E 娴嬭瘯**|鏍稿績鍔熻兘|Playwright + obsidian-testing-framework锛圤bsidian 闂簮鏃犳硶鏃犲ご鍚姩锛屼互妗嗘灦椹卞姩锛屼笉鐩存帴渚濊禆鐪熷疄 Obsidian UI锛墊
 
-> 真实 Obsidian 环境验证由发布前的**手动冒烟清单**完成（见 CI/CD 发布流程）。
-
-### 2.1 测试命名
+> 鐪熷疄 Obsidian 鐜楠岃瘉鐢卞彂甯冨墠鐨?*鎵嬪姩鍐掔儫娓呭崟**瀹屾垚锛堣 CI/CD 鍙戝竷娴佺▼锛夈€?
+### 2.1 娴嬭瘯鍛藉悕
 
 ```typescript
 
-describe('[模块名]', () => {
-  describe('[功能名]', () => {
-    it('should [预期行为] when [条件]', () => { ... });
+describe('[妯″潡鍚峕', () => {
+  describe('[鍔熻兘鍚峕', () => {
+    it('should [棰勬湡琛屼负] when [鏉′欢]', () => { ... });
   });
 });
 ```
 
-### 2.2 测试示例
+### 2.2 娴嬭瘯绀轰緥
 
 ```typescript
 
@@ -179,14 +167,14 @@ describe('TemplateEngine', () => {
     it('should extract gender from ID when ID is valid', () => {
       const result = engine.renderPreprocess(
         template,
-        { 身份证号: '110101199003071234' }
+        { 韬唤璇佸彿: '110101199003071234' }
       );
-      expect(result.性别).toBe('男');
+      expect(result.鎬у埆).toBe('鐢?);
     });
     it('should set _skip to true when ID is empty', () => {
       const result = engine.renderPreprocess(
         template,
-        { 身份证号: '' }
+        { 韬唤璇佸彿: '' }
       );
       expect(result._skip).toBe(true);
     });
@@ -194,53 +182,42 @@ describe('TemplateEngine', () => {
 });
 ```
 
-## 3. 文档规范
+## 3. 鏂囨。瑙勮寖
 
-### 3.1 代码注释
+### 3.1 浠ｇ爜娉ㄩ噴
 
 ```typescript
 /**
- * 智能链接解析器
- * 根据哈希值查找或创建笔记链接
+ * 鏅鸿兘閾炬帴瑙ｆ瀽鍣? * 鏍规嵁鍝堝笇鍊兼煡鎵炬垨鍒涘缓绗旇閾炬帴
  *
- * @param hash - 文件名的哈希值
- * @param targetFolder - 目标文件夹
- * @param fallbackFolder - 备选文件夹
- * @returns Obsidian 内部链接格式
+ * @param hash - 鏂囦欢鍚嶇殑鍝堝笇鍊? * @param targetFolder - 鐩爣鏂囦欢澶? * @param fallbackFolder - 澶囬€夋枃浠跺す
+ * @returns Obsidian 鍐呴儴閾炬帴鏍煎紡
  *
  * @example
- * const link = await smartLink.resolve('e10adc3949', '人员档案', '待建档案');
- * // → "[[人员档案/e10adc3949]]"
+ * const link = await smartLink.resolve('e10adc3949', '浜哄憳妗ｆ', '寰呭缓妗ｆ');
+ * // 鈫?"[[浜哄憳妗ｆ/e10adc3949]]"
  */
 async resolve(hash: string, targetFolder: string, fallbackFolder: string): Promise<string>
 ```
 
-### 3.2 API 文档
+### 3.2 API 鏂囨。
 
-所有 API 必须包含：
+鎵€鏈?API 蹇呴』鍖呭惈锛?
+- 鏂规硶绛惧悕
 
-- 方法签名
+- 鍙傛暟璇存槑
 
-- 参数说明
+- 杩斿洖鍊艰鏄?
+- 浣跨敤绀轰緥
 
-- 返回值说明
+- 閿欒璇存槑
 
-- 使用示例
+### 3.3 鏂囨。涓庤摑鍥惧悓姝?
+浠讳綍浠ｇ爜淇敼锛堝姛鑳?/ 淇 / 閲嶆瀯锛夊湪鎻愪氦鏃堕』鍚屾鏇存柊锛?
+- **钃濆浘鐗堟湰/鐘舵€?*锛歚architecture.md`銆乣project.md` 鐨勭増鏈彿銆佺姸鎬佸強鍙楀奖鍝嶇殑娴佺▼鎻忚堪銆?- **鍐崇瓥璁板綍**锛氬湪 `decisions/` 鏂板鎴栨洿鏂板喅绛栨枃浠讹紙鍚儗鏅€佸喅绛栧唴瀹广€佸奖鍝嶏級銆?- **鏈鑼?*锛氭秹鍙婁唬鐮侀鏍笺€佹祴璇曘€佹枃妗ｃ€丟it銆丆I/CD 绛夋爣鍑嗗彉鍖栨椂锛屽悓姝ヤ慨璁㈡湰 STANDARDS銆?- **鏂囨。鏍煎紡**锛氭棤琛屽熬绌虹櫧銆佹棤 NBSP銆乫rontmatter 闂悎銆佷唬鐮佸洿鏍忓伓鏁帮紱鏀瑰畬閫氳鏍稿銆?
+## 4. Git 瑙勮寖
 
-- 错误说明
-
-### 3.3 文档与蓝图同步
-
-任何代码修改（功能 / 修复 / 重构）在提交时须同步更新：
-
-- **蓝图版本/状态**：`architecture.md`、`project.md` 的版本号、状态及受影响的流程描述。
-- **决策记录**：在 `decisions/` 新增或更新决策文件（含背景、决策内容、影响）。
-- **本规范**：涉及代码风格、测试、文档、Git、CI/CD 等标准变化时，同步修订本 STANDARDS。
-- **文档格式**：无行尾空白、无 NBSP、frontmatter 闭合、代码围栏偶数；改完通读核对。
-
-## 4. Git 规范
-
-### 4.1 Commit 格式
+### 4.1 Commit 鏍煎紡
 
 ```text
 <type>(<scope>): <subject>
@@ -248,45 +225,40 @@ async resolve(hash: string, targetFolder: string, fallbackFolder: string): Promi
 [optional footer]
 ```
 
-**Type 类型**：
-
-|Type|说明|
+**Type 绫诲瀷**锛?
+|Type|璇存槑|
 |---|---|
-|`feat`|新功能|
-|`fix`|Bug 修复|
-|`docs`|文档更新|
-|`style`|代码格式|
-|`refactor`|重构|
-|`test`|测试|
-|`chore`|构建/工具|
+|`feat`|鏂板姛鑳絴
+|`fix`|Bug 淇|
+|`docs`|鏂囨。鏇存柊|
+|`style`|浠ｇ爜鏍煎紡|
+|`refactor`|閲嶆瀯|
+|`test`|娴嬭瘯|
+|`chore`|鏋勫缓/宸ュ叿|
 
-### 4.2 分支策略
+### 4.2 鍒嗘敮绛栫暐
 
 ```text
 
-main          # 稳定版本
-├── develop   # 开发主分支
-├── feature/* # 功能分支
-├── fix/*     # 修复分支
-└── release/* # 发布分支
+main          # 绋冲畾鐗堟湰
+鈹溾攢鈹€ develop   # 寮€鍙戜富鍒嗘敮
+鈹溾攢鈹€ feature/* # 鍔熻兘鍒嗘敮
+鈹溾攢鈹€ fix/*     # 淇鍒嗘敮
+鈹斺攢鈹€ release/* # 鍙戝竷鍒嗘敮
 ```
 
-### 4.3 版本号规范
+### 4.3 鐗堟湰鍙疯鑼?
+閲囩敤璇箟鍖栫増鏈?`MAJOR.MINOR.PATCH`锛?
+- **MAJOR**: 涓嶅吋瀹圭殑 API 鍙樻洿
 
-采用语义化版本 `MAJOR.MINOR.PATCH`：
+- **MINOR**: 鍚戜笅鍏煎鐨勫姛鑳芥柊澧?
+- **PATCH**: 鍚戜笅鍏煎鐨?Bug 淇
 
-- **MAJOR**: 不兼容的 API 变更
-
-- **MINOR**: 向下兼容的功能新增
-
-- **PATCH**: 向下兼容的 Bug 修复
-
-## 5. 错误处理标准
+## 5. 閿欒澶勭悊鏍囧噯
 
 ```typescript
 
-// ✅ 使用标准错误类
-export class ImporterProError extends Error {
+// 鉁?浣跨敤鏍囧噯閿欒绫?export class ImporterProError extends Error {
   constructor(
     public code: string,
     public message: string,
@@ -296,8 +268,7 @@ export class ImporterProError extends Error {
     this.name = 'ImporterProError';
   }
 }
-// ✅ 使用错误码
-const ERROR_CODES = {
+// 鉁?浣跨敤閿欒鐮?const ERROR_CODES = {
   TEMPLATE_NOT_FOUND: 'TEMPLATE_001',
   PARSE_FAILED: 'PARSE_001',
   VALIDATION_FAILED: 'VALIDATE_001',
@@ -305,46 +276,39 @@ const ERROR_CODES = {
 };
 ```
 
-## 6. 性能标准
+## 6. 鎬ц兘鏍囧噯
 
-|指标|阈值|
+|鎸囨爣|闃堝€紎
 |---|---|
-|单条笔记生成时间|< 50ms|
-|1000行导入时间|< 10s|
-|内存占用|< 200MB|
-|首次加载时间|< 500ms（onload 到可用，懒初始化）|
+|鍗曟潯绗旇鐢熸垚鏃堕棿|< 50ms|
+|1000琛屽鍏ユ椂闂磡< 10s|
+|鍐呭瓨鍗犵敤|< 200MB|
+|棣栨鍔犺浇鏃堕棿|< 500ms锛坥nload 鍒板彲鐢紝鎳掑垵濮嬪寲锛墊
 
-> 实现策略（懒初始化、模板索引缓存、解析 LRU、写文件并发限流等）见 [architecture.md](architecture.md) §8，代码评审时须对照核对。
+> 瀹炵幇绛栫暐锛堟噿鍒濆鍖栥€佹ā鏉跨储寮曠紦瀛樸€佽В鏋?LRU銆佸啓鏂囦欢骞跺彂闄愭祦绛夛級瑙?[architecture.md](architecture.md) 搂8锛屼唬鐮佽瘎瀹℃椂椤诲鐓ф牳瀵广€?
+## 7. 瀹夊叏鏍囧噯
 
-## 7. 安全标准
+- 鎵€鏈夌敤鎴疯緭鍏ュ繀椤荤粡杩囨牎楠?
+- 澶栭儴 Helper 杩愯鍦ㄩ殧绂荤幆澧冿細妗岄潰绔娇鐢?`vm` 娌欑鎵ц锛?*绉诲姩绔棤 `vm` 杩愯鏃堕檷绾т负鍐呯疆 Helper 鐧藉悕鍗?*锛堝閮ㄦ敞鍐岀殑 Helper 鍦ㄧЩ鍔ㄧ榛樿涓嶆墽琛岋紝浠呮彁绀猴級
 
-- 所有用户输入必须经过校验
+- 鏁忔劅淇℃伅涓嶅啓鍏ユ棩蹇?
+- 鏂囦欢鎿嶄綔闄愬埗鍦?Vault 鍐?
+- 鍚戝鎵€閫夋枃浠?*浠呰褰曡矾寰勫紩鐢?*锛氫笉棰勫姞杞借繘鍐呭瓨銆佷笉澶嶅埗鍒?Vault銆佷笉鍐欎复鏃剁鐩樼紦瀛橈紱瑙ｆ瀽/棰勮鎸夐渶浠庡師璺緞璇诲彇锛岃鍙栧け璐ワ紙鍘熸枃浠朵笉鍙闂?URI 澶辨晥锛夎 `IO_002`锛堣 architecture.md 搂2.8銆乽i/layout.md 搂4锛?
+- 鏂囦欢鍐欏叆閲囩敤"鍏堟覆鏌撳悗鍐欏叆"锛氬叏閮ㄥ唴瀹瑰湪鍐呭瓨娓叉煋骞舵牎楠岃矾寰勫悗缁熶竴鍐欏叆锛屽崟涓枃浠跺け璐ヤ笉褰卞搷鎵规锛屼笉浜х敓鍗婃垚鍝佹枃浠?
+- 澶栭儴 Helper/閽╁瓙浠呬粠璁剧疆鎸囧畾鐩綍锛坄paths.helpers` / `paths.hooks`锛夊姞杞斤紝绂佹鎵弿 Vault 鍏朵粬璺緞鎵ц鑴氭湰
 
-- 外部 Helper 运行在隔离环境：桌面端使用 `vm` 沙箱执行，**移动端无 `vm` 运行时降级为内置 Helper 白名单**（外部注册的 Helper 在移动端默认不执行，仅提示）
-
-- 敏感信息不写入日志
-
-- 文件操作限制在 Vault 内
-
-- 向导所选文件**仅记录路径引用**：不预加载进内存、不复制到 Vault、不写临时磁盘缓存；解析/预览按需从原路径读取，读取失败（原文件不可访问/URI 失效）记 `IO_002`（见 architecture.md §2.8、ui/layout.md §4）
-
-- 文件写入采用"先渲染后写入"：全部内容在内存渲染并校验路径后统一写入，单个文件失败不影响批次，不产生半成品文件
-
-- 外部 Helper/钩子仅从设置指定目录（`paths.helpers` / `paths.hooks`）加载，禁止扫描 Vault 其他路径执行脚本
-
-## 8. CI/CD 与自动化工作流规范
-
-| 项 | 标准 | 说明 |
+## 8. CI/CD 涓庤嚜鍔ㄥ寲宸ヤ綔娴佽鑼?
+| 椤?| 鏍囧噯 | 璇存槑 |
 | :--- | :--- | :--- |
-| 触发方式 | `push`（main/develop）与 `pull_request`（main） | `ci.yml` / `release.yml` 未启用 `workflow_dispatch`；手动重跑请用 GitHub Actions 页面 Re-run 或推送新提交 |
-| 本地执行 | 不在本地运行 `lint` / `test` / `build` / `package` | `package.json` 已加守卫（主动 exit 1）；验证一律交给 CI（CI 使用 `ci:*` 脚本） |
-| CI 产物 | `main.js` / `dist/` / `importer-pro.zip` / `coverage/` 不入库 | 已由 `.gitignore` 排除 |
-| 查询与调试 | 用 `gh` CLI（`gh api` 等非交互命令） | `gh run list` / `gh api .../actions/runs/.../jobs` 查询状态与日志；避免非 TTY 下 `gh run watch`（交互备用缓冲） |
-| 发布/合入门禁（复用 CI） | 发布（打 tag / 发 Release）或合入 main 前核对待发布 commit 的 CI 状态：**该 commit 已存在通过的 CI run 则直接复用，不重复触发或重跑 CI** | 按 commit 核对（`gh run list --commit <sha>` / `gh api .../actions/runs`）；已有 `success` run 即复用，不空 push、不重复触发同源 run；仅当无既有 run 或非 `success` 时才启动新一轮 CI |
-| 执行后持续监听 | 触发 CI（push / PR）后须**持续监听至终态**，确认 `success` 后才进入合并 / 打 tag / 发布 | 轮询 `gh run list` / `gh api .../actions/runs` 直至 run 结束（非 TTY 不依赖交互 `gh run watch`）；失败即查日志定位修复并重推，不得"触发即走"或并行开多个同源 run |
-| 打包环境 | Ubuntu runner 打包前显式安装 `zip` | `scripts/package.mjs` Unix 分支依赖 `zip`（见 §1.3） |
-| 观察项 | Node 20 运行时弃用 warning | 目前仅 warning 不阻塞；计划升级 `actions/checkout` 等 action 版本 |
+| 瑙﹀彂鏂瑰紡 | `push`锛坢ain/develop锛変笌 `pull_request`锛坢ain锛?| `ci.yml` / `release.yml` 鏈惎鐢?`workflow_dispatch`锛涙墜鍔ㄩ噸璺戣鐢?GitHub Actions 椤甸潰 Re-run 鎴栨帹閫佹柊鎻愪氦 |
+| 鏈湴鎵ц | 涓嶅湪鏈湴杩愯 `lint` / `test` / `build` / `package` | `package.json` 宸插姞瀹堝崼锛堜富鍔?exit 1锛夛紱楠岃瘉涓€寰嬩氦缁?CI锛圕I 浣跨敤 `ci:*` 鑴氭湰锛?|
+| CI 浜х墿 | `main.js` / `dist/` / `importer-pro.zip` / `coverage/` 涓嶅叆搴?| 宸茬敱 `.gitignore` 鎺掗櫎 |
+| 鏌ヨ涓庤皟璇?| 鐢?`gh` CLI锛坄gh api` 绛夐潪浜や簰鍛戒护锛?| `gh run list` / `gh api .../actions/runs/.../jobs` 鏌ヨ鐘舵€佷笌鏃ュ織锛涢伩鍏嶉潪 TTY 涓?`gh run watch`锛堜氦浜掑鐢ㄧ紦鍐诧級 |
+| 鍙戝竷/鍚堝叆闂ㄧ锛堝鐢?CI锛?| 鍙戝竷锛堟墦 tag / 鍙?Release锛夋垨鍚堝叆 main 鍓嶆牳瀵瑰緟鍙戝竷 commit 鐨?CI 鐘舵€侊細**璇?commit 宸插瓨鍦ㄩ€氳繃鐨?CI run 鍒欑洿鎺ュ鐢紝涓嶉噸澶嶈Е鍙戞垨閲嶈窇 CI** | 鎸?commit 鏍稿锛坄gh run list --commit <sha>` / `gh api .../actions/runs`锛夛紱宸叉湁 `success` run 鍗冲鐢紝涓嶇┖ push銆佷笉閲嶅瑙﹀彂鍚屾簮 run锛涗粎褰撴棤鏃㈡湁 run 鎴栭潪 `success` 鏃舵墠鍚姩鏂颁竴杞?CI |
+| 鎵ц鍚庢寔缁洃鍚?| 瑙﹀彂 CI锛坧ush / PR锛夊悗椤?*鎸佺画鐩戝惉鑷崇粓鎬?*锛岀‘璁?`success` 鍚庢墠杩涘叆鍚堝苟 / 鎵?tag / 鍙戝竷 | 杞 `gh run list` / `gh api .../actions/runs` 鐩磋嚦 run 缁撴潫锛堥潪 TTY 涓嶄緷璧栦氦浜?`gh run watch`锛夛紱澶辫触鍗虫煡鏃ュ織瀹氫綅淇骞堕噸鎺紝涓嶅緱"瑙﹀彂鍗宠蛋"鎴栧苟琛屽紑澶氫釜鍚屾簮 run |
+| 鎵撳寘鐜 | Ubuntu runner 鎵撳寘鍓嶆樉寮忓畨瑁?`zip` | `scripts/package.mjs` Unix 鍒嗘敮渚濊禆 `zip`锛堣 搂1.3锛?|
+| 瑙傚療椤?| Node 20 杩愯鏃跺純鐢?warning | 鐩墠浠?warning 涓嶉樆濉烇紱璁″垝鍗囩骇 `actions/checkout` 绛?action 鐗堟湰 |
 
 ---
 
-_版本: 1.12.0
+_鐗堟湰: 1.13.0

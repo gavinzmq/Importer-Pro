@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.8.0"
+version: "1.9.0"
 last_updated: "2026-09-05"
 status: "active"
 ---
@@ -302,11 +302,11 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 行筛选 (Row Filter)
 
-Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全部规则均匹配」的行（多条规则 AND 组合），条件含等于/不等于/包含/不包含/开头为/结尾为/为空/非空/数字比较/正则匹配等 13 种（Excel 式）；列支持「任意列」（`*`，整行任一列值命中即通过，D97）。**执行顺序**：行清洗之后（D122）。旧「按内容删除行」（`byContent`）迁移为筛选的取反表达（删除含 X = 筛选「任意列 不包含 X」，D97）。**D98 执行载体**：规则由编译层生成 preprocess Handlebars 条件块（不匹配即 `{{set "_skip" true}}`，见 [编译段](#编译段-compiled-code-block)），由 `renderPreprocess` 渲染执行而非 JS 函数调用。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
+Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全部规则均匹配」的行（多条规则 AND 组合），条件含等于/不等于/包含/不包含/开头为/结尾为/为空/非空/数字比较/正则匹配等 13 种（Excel 式）；列支持「任意列」（`*`，整行任一列值命中即通过，D97）。**执行顺序**：行清洗之后、表头提升之前（D122/D123；表格类按占位列名 `列1..N` 匹配）。旧「按内容删除行」（`byContent`）迁移为筛选的取反表达（删除含 X = 筛选「任意列 不包含 X」，D97）。**D98 执行载体**：规则由编译层生成 preprocess Handlebars 条件块（不匹配即 `{{set "_skip" true}}`，见 [编译段](#编译段-compiled-code-block)），由 `renderPreprocess` 渲染执行而非 JS 函数调用。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
 
-### 行清洗 (Row Cleaning)
+### 行清洗与表头 (Row Cleaning & Header Row)
 
-Step 3 区块 4「行配置」中的**跨行引擎开关**（D122，不产编译段，语义权威 core/row-clean.ts）：**合并行**（匹配 exact/contains/regex 规则的连续行合并到其前一条不匹配的行，同名列按连接符拼接）/ **过滤重复表头**（所有非空值与其列名相同，基于表头行应用后的列名判定）/ **过滤空行**（含第一行，trim 后判定）。执行顺序 = 合并行 → 过滤重复表头 → 过滤空行 → 行筛选；随 frontmatter `row.clean`/`row.merge_rows` 保存。原「删除行」「去重」「过滤无效数据」已废弃删除（D122）。与「表头行」（headerRow，解析级参数）不重复：后者决定哪一行作为列名。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
+Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123，不产编译段，语义权威 core/row-clean.ts）：**过滤空行**（含第一行，trim 判定）/ **过滤重复表头**（API 路径值==列名；向导 rawRows 路径与将成为表头的首行逐值相同）。**表头行（D123）**：原「从第 N 行开始读取」解析级控件废弃——表格类按 rawRows 解析（占位列名 `列1..N`），**表头 = 行清洗 + 行筛选后剩余的第一行**（`promoteHeaderRow`：其值成为列名、空值回落占位列名、重名唯一化，该行移除）；列映射/派生/校验/笔记条件基于最终列名。执行顺序 = 过滤空行 → 过滤重复表头 → 行筛选 → 表头提升；随 frontmatter `row.clean` 保存。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」（D123）已废弃删除。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
 
 ---
 
@@ -382,4 +382,4 @@ Step 3 区块 4「行配置」中的**跨行引擎开关**（D122，不产编译
 
 ---
 
-*版本: 1.8.0 | 最后更新: 2026-09-05*
+*版本: 1.9.0 | 最后更新: 2026-09-06*

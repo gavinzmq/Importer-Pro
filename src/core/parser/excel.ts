@@ -20,10 +20,22 @@ export class ExcelParser extends BaseParser {
       // 防御：SheetNames 与 Sheets 不一致（正常不出现）
       throw new ImporterProError(ERROR_CODES.PARSE_FAILED, `工作表不存在: ${sheetName}`);
     }
-    // D87：headerRow 以 sheet_to_json 数值 range 语义实现（起始行即表头行，xlsx 内部 offset 从下一行开始读数据）；
-    // 缺省不传 range 保持原行为（以 !ref 首行为表头），避免改变非 0 起始行的文件解析。
+    // D123：原始行模式——全部物理行（含第一行与空行）作为数据记录，列名占位（列1..列N）；
+    // 供向导「表头 = 行清洗+行筛选后剩余第一行」链路使用。缺省保持「第一行为表头」默认行为。
+    if (options?.rawRows) {
+      const rawRows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '', blankrows: true });
+      const width = Math.max(1, ...rawRows.map((r) => r.length));
+      const keys = Array.from({ length: width }, (_, i) => `列${i + 1}`);
+      return sliceRows(
+        rawRows.map((line) => {
+          const rec: DataRecord = {};
+          for (let c = 0; c < width; c++) rec[keys[c]] = line[c] ?? '';
+          return rec;
+        }),
+        options
+      );
+    }
     const jsonOpts: XLSX.Sheet2JSONOpts = { defval: '' };
-    if (options?.headerRow && options.headerRow > 0) jsonOpts.range = options.headerRow;
     const rows = XLSX.utils.sheet_to_json<DataRecord>(sheet, jsonOpts);
     return sliceRows(rows, options);
   }

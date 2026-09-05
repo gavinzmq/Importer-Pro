@@ -10,7 +10,7 @@ export interface IDataPipeline {
   validate(record: DataRecord, rules: ValidationRule[]): ValidationResult;
   shard(record: DataRecord, template: TemplateConfig, ctx?: ShardContext, index?: number): Promise<NoteSpec[]>;
   derive(record: DataRecord): DataRecord;
-  /** D122：按模板 frontmatter 行清洗（row.clean / row.merge_rows）批量预处理跨行记录 */
+  /** D122/D123：按模板 frontmatter 行清洗（row.clean）批量预处理跨行记录 */
   applyEngineRowSwitches(records: DataRecord[], template: TemplateConfig): Promise<DataRecord[]>;
 }
 
@@ -50,9 +50,9 @@ export class DataPipeline implements IDataPipeline {
   }
 
   /**
-   * D122 引擎级跨行开关：行清洗（合并行 / 过滤重复表头 / 过滤空行）是单行 Handlebars 无法表达的
-   * 跨行/结构操作，由引擎在逐行 preprocess 渲染前按模板 frontmatter `row.clean` / `row.merge_rows`
-   * 批量处理（wizard 路径由 applyWizardTransform 调用同一语义的 core/row-clean.ts）。
+   * D122/D123 引擎级跨行开关：行清洗（过滤重复表头 / 过滤空行）是单行 Handlebars 无法表达的
+   * 跨行/结构操作，由引擎在逐行 preprocess 渲染前按模板 frontmatter `row.clean` 批量处理
+   * （wizard 路径由 applyWizardTransform 调用同一语义的 core/row-clean.ts）。
    */
   async applyEngineRowSwitches(records: DataRecord[], template: TemplateConfig): Promise<DataRecord[]> {
     const raw = (template as unknown as { _raw?: Record<string, any> })._raw ?? {};

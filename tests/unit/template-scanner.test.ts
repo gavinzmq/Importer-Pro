@@ -142,13 +142,11 @@ row:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'rename' as const,
       incrementalMode: 'timestamp' as const,
-      headerRow: 2,
       validation: [],
       transform: {
         clean: {
           removeEmpty: true,
-          removeDuplicateHeader: true,
-          mergeRows: [{ mode: 'regex' as const, pattern: '^续', separator: ' / ' }]
+          removeDuplicateHeader: true
         },
         filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
         // D113：格式化并入映射行设置链（不再产出 column-format 段）
@@ -167,12 +165,12 @@ row:
     expect(next).not.toContain('byContent');
     expect(next).not.toContain('removeEmpty');
     expect(next).not.toContain('columns:');
-    // D122：header_row 写入；row.clean 对象 + row.merge_rows 数组写入
-    expect(next).toContain('header_row: 2');
+    // D122/D123：row.clean 对象写入；header_row / merge_rows / row.remove 等旧字段不产出
     expect(next).toContain('remove_empty: true');
     expect(next).toContain('remove_duplicate_header: true');
-    expect(next).toContain('merge_rows:');
-    expect(next).toContain('pattern: ^续');
+    expect(next).not.toContain('header_row');
+    expect(next).not.toContain('merge_rows');
+    expect(next).not.toContain('duplicateHeader');
   });
 
   it('写入 → 读回：段配置往返还原（模板 = 配置源）', () => {
@@ -185,7 +183,6 @@ row:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'overwrite' as const,
       incrementalMode: 'hash' as const,
-      headerRow: 0,
       validation: [],
       transform: {
         clean: { removeEmpty: true },
@@ -241,7 +238,6 @@ output:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'rename' as const,
       incrementalMode: 'timestamp' as const,
-      headerRow: 0,
       validation: [],
       transform: { filters: [] as never[], clean: {}, mappings: [] }
     };
@@ -304,7 +300,6 @@ match:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'overwrite' as const,
       incrementalMode: 'hash' as const,
-      headerRow: 0,
       validation: [
         { field: '身份证号', type: 'id-card', message: '身份证格式不正确' },
         { field: '薪资', type: 'range', message: '', options: { min: 0, max: 100000 } }
@@ -332,7 +327,6 @@ match:
       outputNoteName: '{{_hash}}',
       conflictStrategy: 'overwrite' as const,
       incrementalMode: 'hash' as const,
-      headerRow: 0,
       validation: [],
       transform: { filters: [] as never[], clean: {}, mappings: [] }
     };

@@ -35,9 +35,9 @@ import {
   isDuplicateHeaderRow,
   isPresetEmptyFilter,
   MAPPING_TYPE_LABELS,
-  MERGE_MODE_LABELS,
-  mergeRowRuleLabel,
+  promoteHeaderRow,
   removeAutoMappings,
+  resolvedHeader,
   rowFilterFromRemove,
   rowFilterRuleLabel,
   rowMatchesFilter,
@@ -141,69 +141,22 @@ describe('applyRowCleaning：行清洗（D122：合并行 / 过滤重复表头 /
     ]);
   });
 
-  it('合并行（精确/包含/正则）：匹配的连续行合并到前一条不匹配的行', () => {
+  it('执行顺序：过滤重复表头 → 过滤空行（D123；合并行已废弃）', () => {
     const records = [
-      { 姓名: '张三', 备注: '主行' },
-      { 姓名: '续', 备注: '附加一' },
-      { 姓名: '续', 备注: '附加二' },
-      { 姓名: '李四', 备注: '第二主行' }
-    ];
-    // 正则 ^续：两行续行并入「张三」行（同名列按连接符拼接）
-    expect(applyRowCleaning(records, { mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }] })).toEqual([
-      { 姓名: '张三 / 续 / 续', 备注: '主行 / 附加一 / 附加二' },
-      { 姓名: '李四', 备注: '第二主行' }
-    ]);
-    // 精确匹配：仅「续」整值命中
-    expect(
-      applyRowCleaning(
-        [{ 姓名: '张三' }, { 姓名: '续', 备注: 'x' }],
-        { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] }
-      )
-    ).toEqual([{ 姓名: '张三 续', 备注: 'x' }]);
-    // 包含匹配
-    expect(
-      applyRowCleaning(
-        [{ 姓名: '张三' }, { 姓名: '（续）', 备注: 'y' }],
-        { mergeRows: [{ mode: 'contains', pattern: '续', separator: '-' }] }
-      )
-    ).toEqual([{ 姓名: '张三-（续）', 备注: 'y' }]);
-  });
-
-  it('合并行：首行即匹配（无目标）原样保留；目标缺列新建', () => {
-    const records = [
-      { 姓名: '续', 备注: 'x' },
-      { 姓名: '张三' }
-    ];
-    expect(applyRowCleaning(records, { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] })).toEqual(records);
-    // 缺列新建：合并行独有的列在目标行新建
-    expect(
-      applyRowCleaning(
-        [{ 姓名: '张三' }, { 电话: '138', 备注: '续' }],
-        { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] }
-      )
-    ).toEqual([{ 姓名: '张三', 电话: '138', 备注: '续' }]);
-  });
-
-  it('执行顺序：合并行 → 过滤重复表头 → 过滤空行', () => {
-    const records = [
-      { 姓名: '张三' },
-      { 姓名: '续' },
       { 姓名: '姓名', 年龄: '年龄' }, // 重复表头
       { 姓名: '', 年龄: '' } // 空行
     ];
     expect(
       applyRowCleaning(records, {
-        mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }],
         removeDuplicateHeader: true,
         removeEmpty: true
       })
-    ).toEqual([{ 姓名: '张三 续' }]);
+    ).toEqual([]);
   });
 
-  it('无配置 / 空规则时原样返回', () => {
+  it('无配置 / 空配置时原样返回', () => {
     const records = [{ a: 1 }];
     expect(applyRowCleaning(records, {})).toBe(records);
-    expect(applyRowCleaning(records, { mergeRows: [] })).toBe(records);
   });
 
   it('isDuplicateHeaderRow 单行判断（保留字段不参与数据列判定）', () => {
@@ -212,12 +165,6 @@ describe('applyRowCleaning：行清洗（D122：合并行 / 过滤重复表头 /
     expect(isDuplicateHeaderRow({})).toBe(false);
     expect(isDuplicateHeaderRow({ _index: 1, 姓名: '姓名' })).toBe(true);
     expect(isDuplicateHeaderRow({ _index: 1, 姓名: '张三' })).toBe(false);
-  });
-
-  it('mergeRowRuleLabel / MERGE_MODE_LABELS：合并行规则展示', () => {
-    expect(MERGE_MODE_LABELS.map((m) => m.value)).toEqual(['exact', 'contains', 'regex']);
-    expect(mergeRowRuleLabel({ mode: 'regex', pattern: '^续', separator: ' ' })).toBe('正则 ^续 → 合并到上一行（连接符: 空格）');
-    expect(mergeRowRuleLabel({ mode: 'exact', pattern: '续', separator: ',' })).toBe('精确匹配 续 → 合并到上一行（连接符: ,）');
   });
 });
 
@@ -238,19 +185,6 @@ describe('applyTransformPreview / applyTransform：行清洗置于变换首步�
       { 姓名: '李四', 年龄: '20', _index: 3 }
     ]);
     expect(applyTransformPreview(data, cfg).map((r) => r.src)).toEqual([2, 3]);
-  });
-
-  it('合并行后预览行号 = 合并目标原始行号（# 显示）', () => {
-    const data = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }];
-    const cfg: DataTransformConfig = {
-      clean: { mergeRows: [{ mode: 'exact', pattern: '2', separator: ' ' }] },
-      filters: [],
-      formats: [],
-      processes: [],
-      mappings: []
-    };
-    const rows = applyTransformPreview(data, cfg);
-    expect(rows.map((r) => r.src)).toEqual([1, 3, 4, 5]);
   });
 
   it('countRowsAfterSelection：行清洗 + 行筛选后的保留计数（D122 统计口径）', () => {
@@ -585,8 +519,7 @@ describe('D98 编译/反编译：标记段与往返', () => {
     return {
       clean: {
         removeEmpty: true,
-        removeDuplicateHeader: true,
-        mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }]
+        removeDuplicateHeader: true
       },
       filters: [{ column: '部门', op: 'contains', value: '研发' }],
       // D113：列格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
@@ -668,23 +601,44 @@ describe('D98 编译/反编译：标记段与往返', () => {
     expect(rows[0].row._index).toBe(2);
   });
 
-  it('applyWizardTransform：合并行跨行引擎开关与筛选/派生组合', async () => {
+  it('applyWizardTransform：表头提升（D123）——清洗+筛选后剩余第一行提升为列名，映射基于最终列名', async () => {
+    // rawRows 解析（占位列名）+ 首行空行 + 重复表头 + 数据
     const data = [
-      { 姓名: '张三', 备注: '主行' },
-      { 姓名: '续', 备注: '附加' },
-      { 姓名: '李四', 备注: '' }
+      { 列1: '', 列2: '' }, // 空行（首行）→ removeEmpty
+      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → removeDuplicateHeader
+      { 列1: '姓名', 列2: '年龄' }, // 剩余第一行 → 提升为表头（列名）并移除
+      { 列1: '张三', 列2: '18' },
+      { 列1: '李四', 列2: '20' }
     ];
     const cfg: DataTransformConfig = {
-      clean: { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] },
+      clean: { removeEmpty: true, removeDuplicateHeader: true },
       filters: [],
-      formats: [],
-      processes: [],
-      mappings: [{ source: '备注', target: '备注_hash', type: 'text', rule: 'md5Short' }]
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }]
     };
-    const rows = await applyWizardTransform(engine, data, cfg);
-    expect(rows.map((r) => r.src)).toEqual([1, 3]); // 合并行继承目标行号
-    expect(rows[0].row.姓名).toBe('张三 续');
-    expect(rows[0].row.备注_hash).toBe(deriveValue('md5Short', '主行 附加')); // 合并后同名列拼接为派生源
+    const rows = await applyWizardTransform(engine, data, cfg, { promoteHeader: true });
+    expect(rows.map((r) => r.src)).toEqual([4, 5]); // 表头行（行3）移除，数据保留原始行号
+    expect(rows.map((r) => r.row.姓名)).toEqual(['张三', '李四']);
+    expect(rows.map((r) => r.row.年龄)).toEqual(['18', '20']);
+    // 不开启 promoteHeader：不做表头提升（无首行基准，第二个重复表头行不被删 → 4 行保留）
+    const noPromote = await applyWizardTransform(engine, data, cfg);
+    expect(noPromote.length).toBe(4);
+  });
+
+  it('resolvedHeader：清洗+筛选后剩余第一行提升的表头列名（供 UI 列下拉）', () => {
+    const data = [
+      { 列1: '', 列2: '' }, // 空行
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ];
+    expect(resolvedHeader(data, { clean: { removeEmpty: true }, filters: [], mappings: [] })).toEqual(['姓名', '年龄']);
+    // 无清洗时第一行（空行）→ 列名回落占位
+    expect(resolvedHeader(data, { clean: {}, filters: [], mappings: [] })).toEqual(['列1', '列2']);
+    // 仅剩表头行（数据全被筛选）→ 表头仍可提升
+    expect(
+      resolvedHeader(data, { clean: { removeEmpty: true }, filters: [{ column: '列1', op: 'neq', value: '张三' }], mappings: [] })
+    ).toEqual(['姓名', '年龄']);
+    // 全部被清洗/筛选（无剩余行）→ 空
+    expect(resolvedHeader(data, { clean: { removeEmpty: true }, filters: [{ column: '列1', op: 'eq', value: '不存在' }], mappings: [] })).toEqual([]);
   });
 
   it('applyWizardTransform：行筛选任意列 + 派生 md5Short 空源防护', async () => {

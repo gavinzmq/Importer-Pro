@@ -3,22 +3,26 @@
  * 权威：ui/layout.md §5 / architecture §2.7/§2.10 / template-schema §9 / decisions 2026-09-04-step3-template-config-restructure.md（D94–D98）
  *
  * - D96 行筛选：RowFilterOp 13 种（Excel 式包含式保留，多规则 AND）；`'*'` 任意列。
- * - D122 行清洗重构：删除行（byIndex/duplicateHeader）与「去重 / 过滤无效数据」废弃删除；
- *   行清洗重新设计为三项跨行引擎开关（合并行 / 过滤重复表头 / 过滤空行，含第一行）——
- *   语义统一于 core/row-clean.ts（applyRowCleaning），执行顺序在行筛选之前，不产编译段、
- *   随模板 frontmatter `row.clean` / `row.merge_rows` 保存；旧配置读取自动迁移。
+ * - D122/D123 行清洗重构：删除行 / 去重 / 过滤无效数据 / 合并行废弃删除；行清洗收敛为
+ *   两项跨行引擎开关（过滤重复表头 / 过滤空行，含第一行）——语义统一于 core/row-clean.ts
+ *   （applyRowCleaning），执行顺序在行筛选之前，不产编译段、随 frontmatter `row.clean` 保存；
+ *   旧配置读取自动迁移。
+ * - D123 表头提升：表格类数据源向导链路中「表头 = 行清洗 + 行筛选后剩余的第一行」
+ *   （promoteHeaderRow，core/row-clean.ts）；原 headerRow 解析级参数废弃删除，
+ *   解析改用 rawRows（占位列名 `列1..N`），行筛选按列位置（占位列名）匹配、
+ *   列映射/校验/笔记条件基于提升后的最终列名。
  * - D98 执行载体：配置编译为 preprocess Handlebars 标记段（configToHandlebars / handlebarsToConfig / 段替换），
  *   预览与导入统一走 applyWizardTransform（真实 renderPreprocess，行/列逻辑不调用 JS 变换函数）。
  * - 列格式化 / 列处理 / 列映射 / 派生字段等纯函数（JS 语义层）保留：供配置编译参数换算、迁移与单测；
  *   正式执行（预览/导入）一律经 Handlebars 编译段。
  */
-import type { ConflictStrategy, DataRecord, IncrementalMode, MergeRowMode, MergeRowRule, NoteTypeConfig, RowCleanConfig, ValidationRule } from '../types';
+import type { ConflictStrategy, DataRecord, IncrementalMode, NoteTypeConfig, RowCleanConfig, ValidationRule } from '../types';
 import type { RowFilterOp, RowFilterRule } from '../types';
 import { md5Hash } from '../utils/crypto';
 import { Validator } from '../core/validator/validator';
-import { applyRowCleaning, isDuplicateHeaderRow } from '../core/row-clean';
+import { applyRowCleaning, applyRowCleaningForHeader, isDuplicateHeaderRow, promoteHeaderRow } from '../core/row-clean';
 export type { NoteTypeConfig };
-export type { RowCleanConfig, MergeRowMode, MergeRowRule } from '../types';
+export type { RowCleanConfig } from '../types';
 
 /** D118：向导/预览校验语义与运行时同源（复用 core Validator，无 Obsidian 依赖；保证「预览 == 导入」） */
 const validationEngine = new Validator();
@@ -255,7 +259,7 @@ export function compareOpSymbol(op: ComputeCompareOp): string {
 export interface DataTransformConfig {
   /**
    * 行清洗（D122，跨行引擎开关，不产编译段）：合并行 / 过滤重复表头 / 过滤空行（含第一行），
-   * 语义统一于 core/row-clean.ts；执行顺序在行筛选之前；随模板 frontmatter row.clean/merge_rows 保存。
+   * 语义统一于 core/row-clean.ts；执行顺序在行筛选之前；随模板 frontmatter row.clean 保存。
    */
   clean?: RowCleanConfig;
   /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段 */
@@ -291,8 +295,6 @@ export interface Step3TemplateSnapshot {
   conflictStrategy: ConflictStrategy;
   /** 增量模式（D121：hash/timestamp；写 frontmatter output.incremental_mode，运行时 D112 已消费） */
   incrementalMode: IncrementalMode;
-  /** 表头物理行（0-based；0 = 默认首行；仅表格类数据源，解析级参数不入编译段） */
-  headerRow: number;
   /** 校验规则（D118：区块 4「✅ 校验规则」卡；写 frontmatter validation，不产编译段——校验契约 = frontmatter，template-schema §2） */
   validation: ValidationRule[];
   transform: DataTransformConfig;
@@ -308,7 +310,6 @@ export function emptyStep3Snapshot(): Step3TemplateSnapshot {
     outputNoteName: '{{_hash}}',
     conflictStrategy: 'overwrite',
     incrementalMode: 'hash',
-    headerRow: 0,
     validation: [],
     transform: emptyTransform()
   };
@@ -501,20 +502,6 @@ export const MAPPING_TYPE_LABELS: ReadonlyArray<{ value: MappingType; label: str
   { value: 'ignore', label: '忽略' }
 ];
 
-/** 合并行匹配方式标签（D122） */
-export const MERGE_MODE_LABELS: ReadonlyArray<{ value: MergeRowMode; label: string }> = [
-  { value: 'exact', label: '精确匹配' },
-  { value: 'contains', label: '包含' },
-  { value: 'regex', label: '正则' }
-];
-
-/** 合并行规则展示标签（D122）：`正则 ^续 → 合并到上一行（连接符: ' '）` */
-export function mergeRowRuleLabel(rule: MergeRowRule): string {
-  const mode = MERGE_MODE_LABELS.find((m) => m.value === rule.mode)?.label ?? rule.mode;
-  const sep = rule.separator === ' ' ? '空格' : rule.separator;
-  return `${mode} ${rule.pattern} → 合并到上一行（连接符: ${sep || '空格'}）`;
-}
-
 /* ── 校验规则（D118：区块 4「✅ 校验规则」卡；类型 = Validator 内置 8 种，契约 = frontmatter validation） ── */
 
 /** 校验规则类型选项（needParam：length/range 需 min/max 参数） */
@@ -658,9 +645,20 @@ export function applyColumnFormats(records: DataRecord[], rules: ColumnFormatRul
   });
 }
 
-/* ── 行清洗（D122：合并行 / 过滤重复表头 / 过滤空行；语义权威 = core/row-clean.ts） ── */
+/* ── 行清洗（D122/D123：过滤重复表头 / 过滤空行；表头提升；语义权威 = core/row-clean.ts） ── */
 
-export { applyRowCleaning, isDuplicateHeaderRow };
+export { applyRowCleaning, applyRowCleaningForHeader, isDuplicateHeaderRow, promoteHeaderRow };
+
+/**
+ * D123：行清洗 + 行筛选后剩余第一行提升的表头列名（供 UI 列下拉 / 列映射 / 校验字段 / 笔记条件）。
+ * 表格类 rawRows（占位列名）用首行基准的重复表头语义（applyRowCleaningForHeader）。
+ * 无剩余行 → 返回空数组（UI 回落占位列名）。
+ */
+export function resolvedHeader(records: DataRecord[], cfg: DataTransformConfig): string[] {
+  const cleaned = applyRowCleaningForHeader(records, cfg.clean);
+  const kept = cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  return promoteHeaderRow(kept)?.header ?? [];
+}
 
 /* ── 列处理 ─────────────────────────────────────────────── */
 
@@ -956,6 +954,16 @@ export function applyTransform(records: DataRecord[], cfg: DataTransformConfig):
 export function countRowsAfterSelection(records: DataRecord[], cfg: DataTransformConfig): number {
   const cleaned = applyRowCleaning(records, cfg.clean);
   return cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule))).length;
+}
+
+/**
+ * D123：向导表格类（rawRows 占位列名）「数据行数」统计——行清洗（首行基准重复表头）+
+ * 行筛选后保留行数，再扣除将被提升为表头的首行（该行不产笔记）。
+ */
+export function countRowsAfterHeader(records: DataRecord[], cfg: DataTransformConfig): number {
+  const cleaned = applyRowCleaningForHeader(records, cfg.clean);
+  const kept = cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  return Math.max(0, kept.length - 1);
 }
 
 /* ── D98 编译层：配置 ↔ Handlebars 标记段 ────────────────── */
@@ -1373,7 +1381,7 @@ function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[])
 }
 
 /** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链；
- *  D122：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean/merge_rows 承载） */
+ *  D122/D123：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean 承载） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
   const filter = rowFilterBody(cfg.filters);
@@ -2029,16 +2037,18 @@ export interface PreprocessRenderer {
 
 /**
  * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
- * 行筛选段之前嵌入行清洗引擎开关（合并行 / 过滤重复表头 / 过滤空行，D122）。
+ * 行筛选段之前嵌入行清洗引擎开关（过滤重复表头 / 过滤空行，D122/D123）。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
  * D118：opts.rules（向导实时校验规则）阶段 B 后逐行回填保留字段 `_valid/_errors/_warnings/_status`
  * （供预览徽标与 `{{_status}}`）。
+ * D123：opts.promoteHeader（表格类向导链路）在行筛选后把剩余第一行提升为表头（列名），
+ * 该行从数据中移除；阶段 B（列映射/派生/note-output）基于提升后的最终列名执行。
  */
 export async function applyWizardTransform(
   engine: PreprocessRenderer,
   records: DataRecord[],
   cfg: DataTransformConfig,
-  opts: { rules?: ValidationRule[] } = {}
+  opts: { rules?: ValidationRule[]; promoteHeader?: boolean } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
   // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行
@@ -2054,14 +2064,16 @@ export async function applyWizardTransform(
   // 附加原始行号（引擎保留字段 _index，template-schema §3）
   let rows: TransformRow[] = records.map((r, i) => ({ src: i + 1, row: { ...r, _index: i + 1 } }));
 
-  // 行清洗（D122 跨行引擎开关：合并行 → 过滤重复表头 → 过滤空行，行筛选之前；语义 core/row-clean.ts）
-  const cleaned = applyRowCleaning(
+  // 行清洗（跨行引擎开关：过滤重复表头 → 过滤空行，行筛选之前；语义 core/row-clean.ts）
+  // D123：表头提升链路（promoteHeader = 表格类 rawRows）用首行基准的重复表头语义。
+  const cleaner = opts.promoteHeader ? applyRowCleaningForHeader : applyRowCleaning;
+  const cleaned = cleaner(
     rows.map((t) => t.row),
     cfg.clean
   );
   rows = cleaned.map((r) => ({ src: Number(r._index) || 0, row: r }));
 
-  // 阶段 A：行筛选（逐行 Handlebars）
+  // 阶段 A：行筛选（逐行 Handlebars；表格类按占位列名 `列N` 匹配，D123）
   if (phaseA !== '') {
     const kept: TransformRow[] = [];
     for (const t of rows) {
@@ -2070,6 +2082,14 @@ export async function applyWizardTransform(
       kept.push({ src: t.src, row: (out as DataRecord) ?? t.row });
     }
     rows = kept;
+  }
+
+  // D123：表头提升——剩余第一行提升为列名并从数据移除（其后列映射/派生/校验基于最终列名）
+  if (opts.promoteHeader) {
+    const promoted = promoteHeaderRow(rows.map((t) => t.row));
+    if (promoted) {
+      rows = promoted.rows.map((r) => ({ src: Number(r._index) || 0, row: r }));
+    }
   }
 
   // D119/D120：链接附言与多笔记默认命名依赖派生 `_hash`（运行时 derive 在 preprocess 之后），

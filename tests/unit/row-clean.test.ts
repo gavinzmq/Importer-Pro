@@ -1,16 +1,17 @@
 /**
- * core/row-clean.ts 行清洗引擎单元测试（D122，Vitest；供 CI `ci:test` 消费）
+ * core/row-clean.ts 行清洗引擎单元测试（D122/D123，Vitest；供 CI `ci:test` 消费）
  *
- * 覆盖：空行/重复表头/合并行判定与 applyRowCleaning 执行顺序，
+ * 覆盖：空行/重复表头判定与 applyRowCleaning 执行顺序、表头提升 promoteHeaderRow（D123）、
  * 以及 frontmatter `row` 对象新旧结构解析（rowCleanFromFrontmatter）。
  */
 import { describe, expect, it } from 'vitest';
 import {
   applyRowCleaning,
-  cellMatchesMergeRule,
+  applyRowCleaningForHeader,
   isEmptyCell,
   isEmptyRow,
   isDuplicateHeaderRow,
+  promoteHeaderRow,
   rowCleanFromFrontmatter
 } from '../../src/core/row-clean';
 
@@ -35,9 +36,10 @@ describe('isEmptyCell / isEmptyRow（D122：trim 后判定，含第一行）', (
   });
 });
 
-describe('isDuplicateHeaderRow（D122：值 == 列名，基于解析后列名）', () => {
+describe('isDuplicateHeaderRow（D122：值 == 列名）', () => {
   it('全列值与列名相同且非空 → 重复表头', () => {
     expect(isDuplicateHeaderRow({ 姓名: '姓名', 年龄: '年龄' })).toBe(true);
+    expect(isDuplicateHeaderRow({ 张三: '张三', 18: '18' })).toBe(true);
     expect(isDuplicateHeaderRow({ 姓名: '张三', 年龄: '18' })).toBe(false);
     expect(isDuplicateHeaderRow({ 姓名: '姓名', 年龄: '' })).toBe(false); // 有空值不算
     expect(isDuplicateHeaderRow({})).toBe(false);
@@ -45,68 +47,136 @@ describe('isDuplicateHeaderRow（D122：值 == 列名，基于解析后列名）
   });
 });
 
-describe('cellMatchesMergeRule（D122：精确 / 包含 / 正则）', () => {
-  it('exact / contains / regex', () => {
-    expect(cellMatchesMergeRule('续', { mode: 'exact', pattern: '续', separator: ' ' })).toBe(true);
-    expect(cellMatchesMergeRule('续x', { mode: 'exact', pattern: '续', separator: ' ' })).toBe(false);
-    expect(cellMatchesMergeRule('（续）', { mode: 'contains', pattern: '续', separator: ' ' })).toBe(true);
-    expect(cellMatchesMergeRule('', { mode: 'contains', pattern: '续', separator: ' ' })).toBe(false);
-    expect(cellMatchesMergeRule('续行', { mode: 'regex', pattern: '^续', separator: ' ' })).toBe(true);
-    expect(cellMatchesMergeRule('续行', { mode: 'regex', pattern: '(', separator: ' ' })).toBe(false); // 非法正则
-    expect(cellMatchesMergeRule(undefined, { mode: 'exact', pattern: '', separator: ' ' })).toBe(true); // 空值 == 空模式（UI 防空）
+describe('applyRowCleaning：API/默认解析路径（值 == 列名的重复表头）', () => {
+  it('重复表头（值==列名）与空行（含第一行与全空格）一并过滤；入参不被修改', () => {
+    const records = [
+      { 姓名: '', 年龄: ' ' }, // 首行空行
+      { 姓名: '姓名', 年龄: '年龄' }, // 重复表头
+      { 姓名: '张三', 年龄: '18' },
+      { 姓名: '姓名', 年龄: '年龄' }, // 重复表头
+      { 姓名: '', 年龄: '' } // 空行
+    ];
+    const snapshot = records.map((r) => ({ ...r }));
+    expect(applyRowCleaning(records, { removeDuplicateHeader: true, removeEmpty: true })).toEqual([
+      { 姓名: '张三', 年龄: '18' }
+    ]);
+    expect(records).toEqual(snapshot); // 不修改入参
+  });
+
+  it('无配置 / 空配置原样返回', () => {
+    const records = [{ a: 1 }];
+    expect(applyRowCleaning(records, {})).toBe(records);
+    expect(applyRowCleaning(records, undefined)).toBe(records);
+  });
+
+  it('清洗保留 _index（原始行号），供预览 # 列对齐', () => {
+    const records = [
+      { _index: 1, 姓名: '', 年龄: '' },
+      { _index: 2, 姓名: '张三', 年龄: '18' }
+    ];
+    expect(applyRowCleaning(records, { removeEmpty: true })).toEqual([{ _index: 2, 姓名: '张三', 年龄: '18' }]);
   });
 });
 
-describe('applyRowCleaning 执行顺序（D122：合并行 → 过滤重复表头 → 过滤空行）', () => {
-  it('合并后生成的重复表头行会被 removeDuplicateHeader 过滤；合并后空行被 removeEmpty 过滤', () => {
+describe('applyRowCleaningForHeader：向导 rawRows 路径（D123，首行基准重复表头）', () => {
+  it('先过滤空行（含首行），再以清洗后首行为基准删除重复表头行；首行本身保留', () => {
     const records = [
-      { 姓名: '姓名', 年龄: '年龄' }, // 重复表头（首行）
-      { 姓名: '张三', 年龄: '18' },
-      { 姓名: '续', 年龄: '' }, // 匹配 → 并入张三
-      { 姓名: '', 年龄: '' } // 空行
+      { 列1: '', 列2: ' ' }, // 首行空行 → removeEmpty
+      { 列1: '姓名', 列2: '年龄' }, // 将成为表头的行（保留）
+      { 列1: '姓名', 列2: '年龄' }, // 重复表头 → 删除
+      { 列1: '张三', 列2: '18' },
+      { 列1: '', 列2: '' } // 空行 → removeEmpty
     ];
+    const snapshot = records.map((r) => ({ ...r }));
     expect(
-      applyRowCleaning(records, {
-        mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }],
-        removeDuplicateHeader: true,
-        removeEmpty: true
-      })
-    ).toEqual([{ 姓名: '张三 续', 年龄: '18' }]);
-  });
-
-  it('入参不被修改（合并目标浅拷贝）', () => {
-    const records = [{ 姓名: '张三' }, { 姓名: '续' }];
-    applyRowCleaning(records, { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] });
-    expect(records).toEqual([{ 姓名: '张三' }, { 姓名: '续' }]);
-  });
-
-  it('合并保留 _index（目标行号）供预览 # 列与行号对齐', () => {
-    const records = [
-      { _index: 1, 姓名: '张三' },
-      { _index: 2, 姓名: '续' },
-      { _index: 3, 姓名: '李四' }
-    ];
-    expect(
-      applyRowCleaning(records, { mergeRows: [{ mode: 'exact', pattern: '续', separator: ' ' }] })
+      applyRowCleaningForHeader(records, { removeDuplicateHeader: true, removeEmpty: true })
     ).toEqual([
-      { _index: 1, 姓名: '张三 续' },
-      { _index: 3, 姓名: '李四' }
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
     ]);
+    expect(records).toEqual(snapshot);
+  });
+
+  it('仅开重复表头：首行（非空）保留为基准，后续与首行相同的行删除；不同行保留', () => {
+    const records = [
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ];
+    expect(applyRowCleaningForHeader(records, { removeDuplicateHeader: true })).toEqual([
+      { 列1: '姓名', 列2: '年龄' },
+      { 列1: '张三', 列2: '18' }
+    ]);
+  });
+
+  it('首行为空行且仅开重复表头时不误删（空行交由 removeEmpty）', () => {
+    const records = [
+      { 列1: '', 列2: '' },
+      { 列1: '张三', 列2: '18' }
+    ];
+    expect(applyRowCleaningForHeader(records, { removeDuplicateHeader: true })).toEqual(records);
+  });
+
+  it('无配置 / 空配置原样返回', () => {
+    const records = [{ a: 1 }];
+    expect(applyRowCleaningForHeader(records, {})).toBe(records);
+    expect(applyRowCleaningForHeader(records, undefined)).toBe(records);
+  });
+});
+
+describe('promoteHeaderRow：表头提升（D123：清洗+筛选后剩余第一行成为列名）', () => {
+  it('第一行值提升为列名并从数据移除；空值回落占位列名；重复列名唯一化', () => {
+    const records = [
+      { 列1: '姓名', 列2: '  ', 列3: '姓名', 列4: '备注' },
+      { 列1: '张三', 列2: 'x', 列3: 'y', 列4: 'z' },
+      { 列1: '李四', 列2: 'a', 列3: 'b', 列4: 'c' }
+    ];
+    const promoted = promoteHeaderRow(records);
+    expect(promoted?.header).toEqual(['姓名', '列2', '姓名_2', '备注']);
+    expect(promoted?.rows).toEqual([
+      { 姓名: '张三', 列2: 'x', 姓名_2: 'y', 备注: 'z' },
+      { 姓名: '李四', 列2: 'a', 姓名_2: 'b', 备注: 'c' }
+    ]);
+  });
+
+  it('前部空行清洗后，剩余第一行（真实表头）被提升', () => {
+    const records = [
+      { 列1: '', 列2: '' }, // 空行
+      { 列1: '姓名', 列2: '年龄' }
+    ];
+    // 未清洗时第一行是空行 → 提升为空列名（回落占位）
+    const noClean = promoteHeaderRow(records);
+    expect(noClean?.header).toEqual(['列1', '列2']);
+    // 清洗后第一行 = 真实表头
+    const cleaned = applyRowCleaning(records, { removeEmpty: true });
+    const promoted = promoteHeaderRow(cleaned);
+    expect(promoted?.header).toEqual(['姓名', '年龄']);
+    expect(promoted?.rows).toEqual([]);
+  });
+
+  it('保留字段原样保留；_index 供行号对齐', () => {
+    const records = [
+      { _index: 2, 列1: '姓名', 列2: '年龄' },
+      { _index: 3, 列1: '张三', 列2: '18' }
+    ];
+    const promoted = promoteHeaderRow(records);
+    expect(promoted?.header).toEqual(['姓名', '年龄']);
+    expect(promoted?.rows).toEqual([{ _index: 3, 姓名: '张三', 年龄: '18' }]);
+  });
+
+  it('空输入 / 无数据列 → null', () => {
+    expect(promoteHeaderRow([])).toBeNull();
+    expect(promoteHeaderRow([{ _index: 1 }])).toBeNull();
   });
 });
 
 describe('rowCleanFromFrontmatter：frontmatter row 对象新旧结构解析（API 路径引擎开关）', () => {
-  it('新结构：clean 对象 + merge_rows 数组', () => {
+  it('新结构：clean 对象（remove_empty / remove_duplicate_header）', () => {
     expect(
       rowCleanFromFrontmatter({
-        clean: { remove_empty: true, remove_duplicate_header: true },
-        merge_rows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }]
+        clean: { remove_empty: true, remove_duplicate_header: true }
       })
-    ).toEqual({
-      removeEmpty: true,
-      removeDuplicateHeader: true,
-      mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' / ' }]
-    });
+    ).toEqual({ removeEmpty: true, removeDuplicateHeader: true });
   });
 
   it('旧结构迁移：clean 数组 removeEmpty；dedupe/filterInvalid 忽略；remove duplicateHeader', () => {
@@ -118,21 +188,15 @@ describe('rowCleanFromFrontmatter：frontmatter row 对象新旧结构解析（A
     ).toEqual({ removeEmpty: true, removeDuplicateHeader: true });
   });
 
-  it('空 / 非法输入回落空配置', () => {
+  it('空 / 非法输入回落空配置；merge_rows（D122 已废弃）忽略', () => {
     expect(rowCleanFromFrontmatter(undefined)).toEqual({});
     expect(rowCleanFromFrontmatter({})).toEqual({});
-    expect(rowCleanFromFrontmatter({ clean: 'x', merge_rows: 'y' })).toEqual({});
-  });
-
-  it('非法 merge 规则（缺 pattern / 非法 mode）忽略；空 separator 回落空格', () => {
+    expect(rowCleanFromFrontmatter({ clean: 'x' })).toEqual({});
     expect(
       rowCleanFromFrontmatter({
-        merge_rows: [
-          { mode: 'regex', pattern: '^续' }, // 无 separator
-          { mode: 'bad', pattern: 'x' }, // 非法 mode
-          { mode: 'exact' } // 缺 pattern
-        ]
+        clean: { remove_empty: true },
+        merge_rows: [{ mode: 'regex', pattern: '^续' }]
       })
-    ).toEqual({ mergeRows: [{ mode: 'regex', pattern: '^续', separator: ' ' }] });
+    ).toEqual({ removeEmpty: true });
   });
 });

@@ -89,8 +89,8 @@ export abstract class BaseParser implements IDataParser {
 
   async parse(file: FileInfo, options?: ParseOptions): Promise<DataRecord[]> {
     // 外部文件（携带 blob 句柄）不预加载内容且可能被用户重选/覆盖 → 每次按需解析，不做结果缓存；
-    // Vault 内文件保留 LRU 缓存（键并入 name:size|sheetName|headerRow，避免不同来源/表头配置误命中）。
-    const key = `${file.path}|${file.name}:${file.size}|${options?.sheetName ?? ''}|${options?.headerRow ?? ''}`;
+    // Vault 内文件保留 LRU 缓存（键并入 name:size|sheetName|rawRows，避免不同来源/解析模式误命中）。
+    const key = `${file.path}|${file.name}:${file.size}|${options?.sheetName ?? ''}|${options?.rawRows ? 'raw' : ''}`;
     if (!file.blob) {
       const cached = this.cache.get(key);
       if (cached) return cached;

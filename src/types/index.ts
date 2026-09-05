@@ -30,7 +30,12 @@ export interface ParseOptions {
   maxRows?: number; // 最大解析行数（超出截断）
   sheetName?: string; // Excel 指定 sheet，缺省取第一个；指定且不存在时抛 PARSE_002（D86）
   startRow?: number; // 起始数据行（跳过前 N 个数据行，表头之后）
-  headerRow?: number; // 表头所在物理行索引（0-based，D87）：跳过前 N 行后以该行为表头；仅 Excel/CSV 生效
+  /**
+   * D123：原始行模式（仅 Excel/CSV）——把所有物理行（含第一行与空行）作为数据记录解析，
+   * 列名使用占位（`列1`…`列N`）；供向导「表头 = 行清洗+行筛选后剩余第一行」链路使用。
+   * 缺省（API 直接导入）保持「第一行为表头」的默认行为。
+   */
+  rawRows?: boolean;
 }
 
 /** 多笔记生成：预处理阶段产出的单篇笔记规格（对应 _notes 数组元素） */
@@ -312,34 +317,16 @@ export interface NoteTypeConfig {
   noteName?: string;
 }
 
-/** 合并行匹配方式（D122：行清洗「合并行」规则；exact=精确相等 / contains=包含 / regex=正则） */
-export type MergeRowMode = 'exact' | 'contains' | 'regex';
-
 /**
- * 合并行规则（D122，行清洗引擎开关；随模板 frontmatter `row.merge_rows` 保存，不产编译段）：
- * 匹配（任一数据列命中）的**连续行**合并到其**前一条不匹配的行**——同名列按 separator 拼接、
- * 目标缺列新建；首行即匹配（无合并目标）时原样保留。
- */
-export interface MergeRowRule {
-  mode: MergeRowMode;
-  /** 匹配字符（regex 模式下为正则源文本；非法正则视为不匹配） */
-  pattern: string;
-  /** 合并连接符（同名列拼接分隔，默认 ' '） */
-  separator: string;
-}
-
-/**
- * 行清洗配置（D122，跨行引擎开关；随模板 frontmatter `row.clean` 保存，不产编译段）：
- * 执行顺序 = 合并行 → 过滤重复表头 → 过滤空行（均在行筛选之前）。
- * 取代旧 row.clean 数组（dedupe/filterInvalid 已废弃）与 row.remove（删除行已废弃）。
+ * 行清洗配置（D122/D123，跨行引擎开关；随模板 frontmatter `row.clean` 保存，不产编译段）：
+ * 执行顺序 = 过滤重复表头 → 过滤空行（均在行筛选之前）；「表头行」由行清洗+行筛选后
+ * 剩余的第一行提升而来（D123，向导表格类链路）。
  */
 export interface RowCleanConfig {
   /** 过滤空行（含第一行；单元格 trim 后为空判定） */
   removeEmpty?: boolean;
-  /** 过滤重复表头行（所有非空值与其列名完全相同；基于解析后列名判定） */
+  /** 过滤重复表头行（所有非空值与其列名完全相同；基于当前列名判定） */
   removeDuplicateHeader?: boolean;
-  /** 合并行规则列表（任一命中即合并） */
-  mergeRows?: MergeRowRule[];
 }
 /** pipe 值型管道阶段（D99–D101）：一元变换函数，供 `pipe` 串行调用（值型 set 多步变换） */
 export type PipeStageFn = (value: unknown) => unknown;

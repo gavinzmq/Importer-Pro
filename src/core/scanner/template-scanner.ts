@@ -12,7 +12,7 @@ import {
   upsertSegments,
   type Step3TemplateSnapshot
 } from '../../ui/wizard-data';
-import type { ColumnMapping, DerivedRuleId, LegacyByContentRule, MergeRowRule, RowCleanConfig } from '../../ui/wizard-data';
+import type { ColumnMapping, DerivedRuleId, LegacyByContentRule, RowCleanConfig } from '../../ui/wizard-data';
 
 /** 模板扫描器（architecture §2.7） */
 export interface ITemplateScanner {
@@ -99,7 +99,7 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：读取模板持久化的 Step 3 配置。
    * preprocess 标记段反编译 → transform；frontmatter 提供元信息（match/output/name）与引擎开关
-   * （row.header_row、行清洗 row.clean / row.merge_rows，D122）；
+   * （行清洗 row.clean，D122/D123；旧 header_row/merge_rows 已废弃忽略）；
    * 旧模板 frontmatter（byContent 删除 / removeEmpty 清洗 / row.filter / columns / mapping / derived）
    * 一次性迁移入 transform（读取即迁移，保存不再产出旧字段）。
    */
@@ -117,8 +117,8 @@ export class TemplateScanner implements ITemplateScanner {
   /**
    * D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回所选模板（模板即配置源）。
    * - 写入仅限 paths.templates 目录（STANDARDS §7）；模板不存在抛 TEMPLATE_001，越界抛 SECURITY_001；
-   * - frontmatter 仅写元信息（name/match/output）与引擎开关（row.header_row / 行清洗 row.clean + row.merge_rows，D122），
-   *   列/映射/派生等旧字段不再写入（收敛进编译段）；失败抛 TEMPLATE_005。
+   * - frontmatter 仅写元信息（name/match/output）与行清洗引擎开关（row.clean，D122/D123），
+   *   列/映射/派生/表头行参数等旧字段不再写入（收敛进编译段/向导内存）；失败抛 TEMPLATE_005。
    */
   async saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void> {
     const parsed = this.getParsed(templateId);
@@ -423,7 +423,7 @@ function ensureFilter(rules: RowFilterRule[], rule: RowFilterRule): void {
   if (!hit) rules.push(rule);
 }
 
-/** 旧 frontmatter 行配置一次性迁移进 transform（D122：删除行/去重/过滤无效数据废弃；新行清洗 = 合并行/重复表头/空行） */
+/** 旧 frontmatter 行配置一次性迁移进 transform（D122/D123：删除行/去重/过滤无效数据/合并行废弃；行清洗 = 重复表头/空行） */
 function migrateLegacyRowConfig(transform: Step3TemplateSnapshot['transform'], row: Record<string, any> | undefined): void {
   if (!row || typeof row !== 'object') return;
   const clean: RowCleanConfig = transform.clean ?? (transform.clean = {});
@@ -436,22 +436,7 @@ function migrateLegacyRowConfig(transform: Step3TemplateSnapshot['transform'], r
     if (rc.remove_empty === true) clean.removeEmpty = true;
     if (rc.remove_duplicate_header === true) clean.removeDuplicateHeader = true;
   }
-  // 合并行规则（row.merge_rows 优先，兼容 row.clean.merge_rows）
-  const mergeSource = Array.isArray(row.merge_rows) ? row.merge_rows : (rc && typeof rc === 'object' && Array.isArray(rc.merge_rows) ? rc.merge_rows : []);
-  for (const m of mergeSource) {
-    if (!m || typeof m !== 'object') continue;
-    const mode = m.mode === 'exact' || m.mode === 'contains' || m.mode === 'regex' ? m.mode : null;
-    if (!mode || typeof m.pattern !== 'string' || m.pattern === '') continue;
-    const rule: MergeRowRule = {
-      mode,
-      pattern: m.pattern,
-      separator: typeof m.separator === 'string' && m.separator !== '' ? m.separator : ' '
-    };
-    clean.mergeRows = clean.mergeRows ?? [];
-    if (!clean.mergeRows.some((x) => x.mode === rule.mode && x.pattern === rule.pattern && x.separator === rule.separator)) {
-      clean.mergeRows.push(rule);
-    }
-  }
+  // row.merge_rows（D122 合并行）已废弃，忽略（D123）
   const remove: any[] = Array.isArray(row.remove) ? row.remove : [];
   for (const r of remove) {
     if (!r || typeof r !== 'object') continue;
@@ -553,7 +538,6 @@ export function parseStep3Snapshot(rawContent: string): Step3TemplateSnapshot | 
     incrementalMode: (['hash', 'timestamp'].includes(out.incremental_mode)
       ? out.incremental_mode
       : 'hash') as Step3TemplateSnapshot['incrementalMode'],
-    headerRow: Number((row as any)?.header_row) || 0,
     // D118：frontmatter validation（数组，元素 {field,type,message,options?}）读回（校验契约 = frontmatter，template-schema §2）
     validation: (Array.isArray(frontmatter.validation) ? frontmatter.validation : []) as Step3TemplateSnapshot['validation'],
     transform
@@ -596,18 +580,13 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   // D118：校验规则写 frontmatter validation（不产编译段——校验契约 = frontmatter，template-schema §2）
   if (Array.isArray(snap.validation) && snap.validation.length > 0) next.validation = snap.validation;
   else delete next.validation;
-  // D122：行清洗（引擎开关）写 frontmatter row.clean（对象）/ row.merge_rows；删除行/去重/过滤无效数据不再产出
+  // D122/D123：行清洗（引擎开关）写 frontmatter row.clean（对象）；表头行参数/合并行已废弃不再产出
   const row: Record<string, any> = {};
-  if (snap.headerRow > 0) row.header_row = snap.headerRow;
   const clean = t.clean ?? {};
   const cleanObj: Record<string, any> = {};
   if (clean.removeEmpty) cleanObj.remove_empty = true;
   if (clean.removeDuplicateHeader) cleanObj.remove_duplicate_header = true;
   if (Object.keys(cleanObj).length > 0) row.clean = cleanObj;
-  const mergeRows = (clean.mergeRows ?? []).filter((r) => r && r.pattern !== '');
-  if (mergeRows.length > 0) {
-    row.merge_rows = mergeRows.map((r) => ({ mode: r.mode, pattern: r.pattern, separator: r.separator || ' ' }));
-  }
   if (Object.keys(row).length > 0) next.row = row;
   else delete next.row;
   // D98：columns/mapping/derived 收敛进 preprocess 编译段，不再写 frontmatter（读取旧字段仅兼容迁移）
