@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.31.0"
+version: "1.33.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -247,7 +247,7 @@ export interface IValidator {
 | `DataPipeline` | 按条件分流到 noteType、生成派生字段与 `_notes`（D125 起不再承担校验） | `DataRecord` → `NoteSpec[]` |
 | `Validator` | **D125 起 @deprecated**：字段级/记录级校验规则执行（校验规则功能已废弃删除，保留至 v1.1 供 API 兼容） | `DataRecord` + `rules` → `ValidationResult` |
 
-> **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。
+> **模板 output 运行时求值（D112，2026-09-05 已实现）**：模板 frontmatter `output.folder`/`note_name`（Handlebars 表达式）在 `DataPipeline.shard` 内对每条记录求值（`engine.renderExpression`，基于已含 `_hash` 的派生数据）写入 `_folder`/`_fileName`——`importFile`/`importData` 原始数据路径开启（`ctx.useTemplateOutput`），向导路径由 `ctx.outputOverride`（未保存 UI 实时值）提供；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。实现见 decisions/2026-09-05-unimplemented-gap-fill.md（D112）。**D129（2026-09-06 已实现）**：区块 3 输出位置/命名规则改为编译进 preprocess `output` 段（`{{#if (isNotEmpty (expr "表达式"))}}{{set "_folder" (expr "表达式")}}{{/if}}` / `{{set "_fileName" (expr "表达式")}}`，derived 段之后、note-output 段之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`；D112 运行时求值保留为兜底。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
 >
 > **校验规则功能废弃（D125，2026-09-06 已实现）**：用户反馈「校验规则没用」——D115 运行时接入（`DataPipeline.shard` 逐行校验并回填 `_valid/_errors/_warnings/_status`）与 D118 向导校验规则卡删除；frontmatter `validation` 契约移除（旧模板读取忽略、保存不写出）；保留字段 `_valid`/`_errors` 移除、`_warnings`（D119 条件警告附言）与 `_status`（模板可写）保留；公开校验 API 标 @deprecated 保留一个 MINOR；向导来源下拉 → 目标字段自动清洗（`sourceToTargetName`）、「输出到」增「所有笔记」（noteType `'all'`）。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md（v1.1.0）。
 >
@@ -298,6 +298,7 @@ export interface IValidator {
 | **行筛选** | Excel 式包含式筛选：保留「全部规则（AND）均匹配」的行；D124 执行顺序在过滤空行之后、过滤重复表头之前（`空行 → 行筛选 → 重复表头 → 表头提升 → 列映射`，向导表格类）；类型 `RowFilterRule` / `RowFilterOp` 见 §7；`RowFilterRule.column` 支持 `'*'` 任意列；旧 byContent 删除迁移为筛选规则（删除含 X = 筛选「任意列 不包含 X」，D97） |
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
 | **能力补齐对齐 EXAMPLES（D118–D121；D118 于 D125 废弃删除）** | 校验规则（D118）→ **D125 废弃删除**（frontmatter `validation` 契约一并移除）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120；D125 映射行 `noteType` 增「所有笔记」）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
+| **配置增强（D126–D129，2026-09-06 已实现）** | ① **条件校验（D126）**——「添加设置」增「条件校验」组：布尔 Helper 校验表达式（validateID/isEmail/isPhone/isNumber/isDate/inRange/matchesRegex/isNotEmpty/isEmpty）+ 真/假值（**固定值**或**字段引用** `(lookup this "列名")`），编译整链替换式 `(ternary (校验fn 值 …) 真 假)`（同 D119 口径）；② **输出到「不输出」（D127）**——noteType `'none'`：字段仅作预处理中间值（照常产 `set`），不进入任何笔记渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填），与「类型=忽略」不产 set 区别；③ **数组/Object 提取（D128）**——「添加设置」增「提取」组 + 新公开 Helper `itemAt`（37 → 38，类别「集合」；数组 0-based 索引/负数自末尾、Object 键名，越界缺键返 `''`；阶段白名单增 `itemAt`）；④ **输出位置编译段化（D129）**——区块 3 输出位置/命名编译进新段 `output`（derived 之后、note-output 之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（D112 求值保留兜底）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented） |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
@@ -808,4 +809,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.31.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除；1.31.0 过时内容清理：§2.7/§7 接口对齐代码 `Step3TemplateSnapshot`、删 TemplateRowConfig/TemplateColumnConfig/TemplateTransformConfig 旧口径、§2.10/§3 对齐当前 6 区块与编译段清单、§6 目录树对齐实际仓库、补 MatchRule.priority/TemplateNoteSpec/ValidationResult）_
+_版本: 1.33.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除；1.31.0 过时内容清理：§2.7/§7 接口对齐代码 `Step3TemplateSnapshot`、删 TemplateRowConfig/TemplateColumnConfig/TemplateTransformConfig 旧口径、§2.10/§3 对齐当前 6 区块与编译段清单、§6 目录树对齐实际仓库、补 MatchRule.priority/TemplateNoteSpec/ValidationResult；1.32.0 D126–D129 设计定稿；1.33.0 D126–D129 已实现：条件校验 / 输出到「不输出」（noneFields 过滤）/ itemAt 提取（公开 38）/ 输出位置编译段化（output 段 + frontmatter 固定引用），见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））_

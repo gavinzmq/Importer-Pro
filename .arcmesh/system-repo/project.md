@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.31.0"
+version: "1.33.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -173,6 +173,8 @@ arcmesh:
 >
 > **区块 5 交互增强 + 校验规则废弃（D125，2026-09-06 已实现；decisions/2026-09-06-step3-mapping-ux-validation-removal.md v1.1.0）**：① **来源 → 目标自动清洗**——来源下拉选择后目标字段自动更正为来源值去除全部空格/换行/回车后的值（`sourceToTargetName`，自动映射与派生缺省名同样清洗）；② **输出到「所有笔记」**——映射行「输出到」增「所有笔记」（字段写入主笔记 + 全部附加笔记，noteType `'all'` 编译/反编译）；③ **删除校验规则功能**——D118 区块 4 校验规则卡 / 预览 ✅/⚠️/❌ 标记 / frontmatter `validation` 契约 / D115 运行时接入全链路删除；保留字段 `_valid`/`_errors` 移除、`_warnings`（D119 附言）/`_status`（模板可写）保留；公开校验 API 标 @deprecated 保留一个 MINOR（v1.1 移除）。全量 Vitest 169 例全绿、type-check 0 错误。蓝图同步：architecture 1.30.0 / ui/layout 1.24.0 / template-schema 1.17.0 / api-layer 1.8.0 / glossary 1.12.0 / CHANGELOG 1.25.0 / project 1.31.0。
 >
+> **Step 3 配置增强（D126–D129，2026-09-06 已实现；decisions/2026-09-06-step3-mapping-output-enhancements.md v1.1.0 implemented）**：① **条件校验（D126）**——「添加设置」增「条件校验」组（布尔 Helper 校验表达式 + 真/假值：固定值或字段引用），编译整链替换式 `(ternary (校验fn 值 …) 真 假)`（同 D119 条件计算口径）；② **输出到「不输出」（D127）**——映射行 noteType `'none'`：字段照常产 `set`（预处理中间值）但不进入任何笔记渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填；与「类型=忽略」不产 set 区别）；③ **数组/Object 提取（D128）**——「添加设置」增「提取」组 + 新公开 Helper `itemAt`（37 → 38，类别「集合」；阶段白名单增 `itemAt`）；④ **输出位置编译段化（D129）**——区块 3 输出位置/命名编译进 preprocess 新段 `output`（derived 之后、note-output 之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（D112 运行时求值保留为兜底）。落点：builtin（itemAt/expr）、wizard-data（validate/extract/none/output 段编译·反编译）、template-scanner（固定引用 + noneFields）、pipeline/import-service/api（noneFields 过滤）、import-modal（7 组下拉 + 不输出 + 草稿表单）。验证：全量 Vitest **183 例全绿**、type-check 0 错。蓝图同步：architecture 1.33.0 / ui/layout 1.26.0 / template-schema 1.19.0 / template-engine 1.10.0 / api-layer 1.10.0 / glossary 1.14.0 / CHANGELOG 1.27.0 / project 1.33.0。
+>
 > 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
 ## 5. 里程碑
@@ -221,4 +223,4 @@ arcmesh:
 
 ---
 
-*版本: 1.31.0 | 最后更新: 2026-09-06*
+*版本: 1.33.0 | 最后更新: 2026-09-06（D126–D129 已实现：条件校验 / 输出到「不输出」/ itemAt 提取 / 输出位置编译段化，Vitest 183 例全绿，见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））*

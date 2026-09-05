@@ -1,7 +1,7 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.17.0"
+version: "1.19.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -25,7 +25,7 @@ status: "active"
 | `version` |  | 模板自身版本 |
 | `description` |  | 描述 |
 | `match` |  | `{ enabled, patterns: [{ type: regex\|glob\|exact, value }] }` 自动匹配规则 |
-| `output` |  | `{ folder, note_name, conflict_strategy, incremental_mode }` **输出位置及命名规则**（D94）：`folder` 输出文件夹、`note_name` 文件名表达式 |
+| `output` |  | `{ folder, note_name, conflict_strategy, incremental_mode }` **输出位置及命名规则**（D94）：**D129 起 `folder` / `note_name` 固定写 `"{{_folder}}"` / `"{{_fileName}}"`**（仅作引用保留字段的间接层，用户表达式编译进 preprocess `output` 段，§9）；`conflict_strategy` / `incremental_mode` 仍写此字段（D121） |
 | `row` |  | 行配置：`{ clean }`——`clean` 为行清洗引擎开关（D122/D123/D124，跨行操作不产编译段）：`{ remove_empty, remove_duplicate_header }`；旧 `remove`/`filter`/数组式 `clean`/`header_row`/`merge_rows` 仅兼容旧模板读取（D98/D122/D123，读取即迁移或忽略） |
 | `columns` |  | 列配置（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
 | `mapping` |  | 列映射 `[{ source, target }]`，缺省同名映射（D98 起**仅兼容旧模板读取**，执行契约在 preprocess 编译段 §9） |
@@ -37,7 +37,7 @@ status: "active"
 
 > **校验规则功能废弃（D125，2026-09-06 已实现）**：用户反馈「校验规则没用」——删除向导区块 4「✅ 校验规则」卡（D118）与 frontmatter `validation` 契约（旧模板读取忽略、保存不写出）；D115 运行时接入（shard 逐行校验并回填 `_valid/_errors/_warnings/_status`）同步删除。决策见 decisions/2026-09-06-step3-mapping-ux-validation-removal.md。
 
-> `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由导入运行时渲染为最终路径。**D112（2026-09-05 已实现）**：`DataPipeline.shard` 对每条记录基于已含 `_hash` 的派生数据求值（`engine.renderExpression`）写 `_folder`/`_fileName`——`importFile`/`importData`（auto-match/API）按模板 output；向导按 UI 实时值（outputOverride）；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。
+> `output.folder` / `output.note_name` 支持 Handlebars 表达式（如 `"{{_folder}}"`、`"{{_hash}}"`），由导入运行时渲染为最终路径。**D112（2026-09-05 已实现）**：`DataPipeline.shard` 对每条记录基于已含 `_hash` 的派生数据求值（`engine.renderExpression`）写 `_folder`/`_fileName`——`importFile`/`importData`（auto-match/API）按模板 output；向导按 UI 实时值（outputOverride）；优先级：记录/预处理显式字段 > 向导 outputOverride > 模板 output > 设置默认目录 / `_hash`。**D129（2026-09-06 已实现）**：区块 3 输出位置/命名规则编译进 preprocess 新段 `output`（`{{#if (isNotEmpty (expr "表达式"))}}{{set "_folder" (expr "表达式")}}{{/if}}` / `{{set "_fileName" (expr "表达式")}}`，运行时 `expr` Helper 把完整模板文本按行渲染、derived 段之后、note-output 段之前），frontmatter `folder`/`note_name` 固定写 `"{{_folder}}"` / `"{{_fileName}}"`；D112 运行时求值保留为兜底（表达式此时恒为保留字段引用）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
 
 ## 3. 保留字段（预处理模板契约）
 
@@ -128,7 +128,7 @@ status: "active"
 {{!-- ipro:end:row-filter --}}
 ```
 
-段名与向导区块对应：`row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）/ `note-output`（多笔记输出，D120，位于 derived 段之后，未定义附加笔记类型不产该段）。**`row-remove`（删除行）段 D122 起废弃**（功能删除，保存时自动清理旧段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+段名与向导区块对应：`row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）/ `output`（输出位置及命名，D129，位于 derived 段之后）/ `note-output`（多笔记输出，D120，位于 output 段之后，未定义附加笔记类型不产该段）。**`row-remove`（删除行）段 D122 起废弃**（功能删除，保存时自动清理旧段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
 
 **行清洗与表头（D122/D123/D124，不产编译段）**：过滤空行（含第一行）/ 过滤重复表头为**跨行引擎开关**——语义权威 `core/row-clean.ts`（API 值==列名 `applyRowCleaning`；向导 rawRows 原语 `removeEmptyRows`/`removeDuplicateHeaderRows`），**D124 执行顺序**（向导表格类）= 过滤空行 → 行筛选（row-filter 段）→ 过滤重复表头（基准 = 清洗+筛选后剩余第一行）→ **表头提升**（`promoteHeaderRow`：剩余第一行 → 列名，D123 仅表格类向导链路）；向导路径（Step 3 预览 / Step 4 导入）由 `applyWizardTransform { promoteHeader }`、API 路径（importFile/importData）由 `DataPipeline.applyEngineRowSwitches` 处理；配置随 frontmatter `row.clean`（`remove_empty` / `remove_duplicate_header`）保存。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」「headerRow 表头行」（D123）已废弃删除（旧配置读取时忽略或迁移：`duplicateHeader` → `remove_duplicate_header`、`removeEmpty`/预置「任意列 非空」规则 → `remove_empty`、`byContent` → 行筛选规则）。
 
@@ -145,7 +145,7 @@ status: "active"
 | 列格式化 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
 | 列处理 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
 | 派生字段 | （D105 起并入列映射行的设置链——派生预设作「添加设置」项，不再独立成段；旧模板读取折叠回列映射行 settings） |
-| 输出位置及命名 | **不生成代码段**——渲染时由 `output.folder` / `output.note_name`（Handlebars 表达式，§2）求值 |
+| 输出位置及命名（D129，2026-09-06 已实现） | **编译为 `output` 段**（derived 段之后、note-output 段之前）——`{{#if (isNotEmpty (expr "表达式"))}}{{set "_folder" (expr "表达式")}}{{/if}}` / `{{set "_fileName" (expr "表达式")}}`（运行时 `expr` Helper；空结果不 set，缺省不产段）；frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"` / `"{{_fileName}}"`（D112 运行时求值保留为兜底） |
 
 编译产物禁止引用外部 Helper，保证模板跨库可迁移；编译所需 Helper（`strContains`/`strStartsWith`/`strEndsWith`/`isEmpty`/`isNotEmpty`/`inRange`/`isEmptyRow`/`regexTest`/`col`）计入内置 Helper 白名单。
 
@@ -204,6 +204,15 @@ status: "active"
 >
 > 决策见 decisions/2026-09-05-step3-examples-parity.md。
 
+> **D126–D129 编译口径注记（2026-09-06 已实现）**：
+>
+> - **条件校验（D126）**：「添加设置 · 条件校验」组——校验表达式（布尔 Helper：`validateID`/`isEmail`/`isPhone`/`isNumber`/`isDate`/`inRange`/`matchesRegex`/`isNotEmpty`/`isEmpty`）+ 参数 + 真值/假值（**固定值** = 字符串字面量，或**字段引用** = `(lookup this "列名")`）；编译 = 整链替换式 `(ternary (校验fn 值 参数…) 真值 假值)`（同 D119 条件计算口径，单步直调、不入 pipe）。
+> - **输出到「不输出」（D127）**：映射行 noteType 增 `'none'`——该行仍编译 `{{set "目标" …}}`（供后续设置链/行筛选/输出命名引用），但目标字段**不进入任何笔记渲染数据**；column-mapping 段写 `ipro:none:` 清单标记持久化，shard 组装输出时按 `ctx.noneFields` 过滤主笔记数据与各 `_notes` object 内联字段；读取按清单统一回填 noteType。（与「类型 = 忽略」区别：忽略 = 不产 set；不输出 = 产 set 但不进入输出。）
+> - **数组/Object 提取（D128）**：「添加设置 · 提取」组——新增公开 Helper `itemAt`（api-layer §6.9）：数组按 0-based 索引（负数自末尾）、Object 按键名，越界/缺键/非数组非对象返回 `''`；编译 1 步直调 `(itemAt 源 索引|键)`、≥2 步 `(stage "itemAt" 索引|键)`（阶段白名单增 `itemAt`）。
+> - **输出位置编译段化（D129）**：新段 `output`（derived 段之后、note-output 段之前）`{{#if (isNotEmpty (expr "表达式"))}}{{set "_folder" (expr "表达式")}}{{/if}}` / `{{set "_fileName" (expr "表达式")}}`；frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"` / `"{{_fileName}}"`（§2）；旧 frontmatter 非固定引用表达式读取/保存时一次性编译进 output 段并改写 frontmatter。
+>
+> 决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
+
 **读写规则**：
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
@@ -214,4 +223,4 @@ status: "active"
 
 ---
 
-*版本: 1.17.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」）*
+*版本: 1.19.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」；D126–D129 已实现：条件校验 / 不输出 / itemAt / output 编译段）*

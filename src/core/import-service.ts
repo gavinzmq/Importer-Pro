@@ -53,6 +53,11 @@ export interface ImportRecordsOptions {
    * 求值（folder/noteName 为 Handlebars 表达式）；向导路径不开启模板 output 兜底（useTemplateOutput）。
    */
   outputOverride?: { folder?: string; noteName?: string };
+  /**
+   * D127：不输出字段清单（向导 Step 3 配置中「输出到 = 不输出」的目标字段）——由 DataPipeline.shard
+   * 组装输出数据时从主笔记数据与各 _notes object 内联字段过滤（仅作预处理中间值）。
+   */
+  noneFields?: string[];
 }
 
 /** 导入服务：parse → 匹配模板 → 预处理/分流 → 生成 → 历史记录 */
@@ -139,8 +144,14 @@ export class ImportService {
       let rowNo = 0;
       for (const record of engineRecords) {
         rowNo++;
-        // D112：importFile（auto-match/显式模板）路径按模板 output.folder/note_name 求值命名
-        const specs = await this.pipeline.shard(record, template, { defaultFolder, useTemplateOutput: true }, rowNo);
+        // D112：importFile（auto-match/显式模板）路径按模板 output.folder/note_name 求值命名；
+        // D127：模板 noneFields（不输出字段清单）随 ctx 传给 shard 过滤
+        const specs = await this.pipeline.shard(
+          record,
+          template,
+          { defaultFolder, useTemplateOutput: true, noneFields: template.noneFields },
+          rowNo
+        );
         prepared.push({ ...record, _index: rowNo, _notes: specs.map(specToRecord) });
       }
       await this.hooks.run('after:process', { records: prepared, total: prepared.length });
@@ -241,10 +252,12 @@ export class ImportService {
       const shardTemplate = options.preprocessOverride ? { ...template, preprocess: options.preprocessOverride } : template;
       const prepared: DataRecord[] = [];
       for (const record of records) {
-        // D112：向导实时命名（outputOverride）由 shard 对每条记录求值/回填
+        // D112：向导实时命名（outputOverride）由 shard 对每条记录求值/回填；
+        // D127：向导 noneFields（输出到「不输出」目标字段）随 ctx 传给 shard 过滤
         const specs = await this.pipeline.shard(record, shardTemplate, {
           defaultFolder,
-          outputOverride: options.outputOverride
+          outputOverride: options.outputOverride,
+          noneFields: options.noneFields
         });
         prepared.push({ ...record, _notes: specs.map(specToRecord) });
       }

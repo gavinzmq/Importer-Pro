@@ -1,8 +1,8 @@
 ---
 title: "TemplateEngine 组件"
 type: "component"
-version: "1.7.0"
-last_updated: "2026-09-05"
+version: "1.10.0"
+last_updated: "2026-09-06"
 status: "active"
 ---
 
@@ -34,7 +34,9 @@ export interface ITemplateEngine {
 
 ## 内置 Helper
 
-共 **7 类 37 个**，完整签名以 [api-layer.md](api-layer.md) §6 为权威清单，本表仅列名称。
+共 **8 类 38 个**，完整签名以 [api-layer.md](api-layer.md) §6 为权威清单，本表仅列名称。
+
+> **D128（2026-09-06 已实现）**：新增公开 Helper `itemAt`（自研，类别「集合」，公开 37 → **38**）——数组按 0-based 索引取值（负数自末尾倒数）、Object 按字符串键取值，越界/缺键/非数组非对象返回 `''`；入阶段白名单（21 → 22）。编译 1 步直调 `(itemAt 源 索引|键)`、≥2 步 `(stage "itemAt" 索引|键)`。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
 
 > **实现来源与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用件实现**委托** `handlebars-helpers@0.10.0`——白名单类别（array/collection/comparison/math/number/string——本项目实际采纳的重叠类别）内按名注册、**采用库注册名**（`upper`→`uppercase`、`lower`→`lowercase`，edge 语义随库：非字符串返回 `''` 等）；仅库没有者保留我方名与实现（身份证/哈希/校验/链接、D98 编译白名单、运行时辅助含 `pipe`/`stage`、`substring`/`concat`/`formatNumber`/`ifEquals` 等）。编译段单元格安全语义以**专用名**注册（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`，编译专用、不入公开 37 清单）。改名属模板级破坏性（v1.0 未发布可接受），本表与 api-layer §6 已同步新名；对拍定稿见 `tests/unit/helpers.test.ts`。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
 
@@ -46,6 +48,7 @@ export interface ITemplateEngine {
 | 哈希 | `md5`, `sha256`, `hashShort` |
 | 字符串 | `split`, `join`, `trim`, `uppercase`, `lowercase`, `replace`, `substring`, `concat`, `isEmpty` |
 | 数学 | `add`, `subtract`, `multiply`, `divide`, `sum`, `avg`, `round`, `toFixed`, `formatNumber` |
+| 集合 | `itemAt` |
 | 逻辑 | `ifEquals`, `contains`, `default`, `or`, `and` |
 | 校验 | `isEmail`, `isPhone`, `isNumber`, `isDate`, `inRange`, `matchesRegex` |
 | 链接 | `wikilink`, `smartLink` |
@@ -71,9 +74,11 @@ export interface ITemplateEngine {
 - 阶段名**仅限内置白名单**（编译产物可引用集合）；外部 Helper 不自动入注册表（D98 模板跨库可迁移 / STANDARDS §7 防注入）。
 - 不修改任何现有 Helper 签名；旧嵌套括号写法（如 `(substring (md5 …) 0 10)`）引擎仍可执行，**永久兼容**。
 
-**内置阶段白名单**（权威；2026-09-05 实现时按编译层使用面定稿为 20 个、D117 增 `toBoolean` 至 21 个，与 builtin `PIPE_STAGE_WHITELIST` 一致；`upper`/`lower` 随 D102–D104 改名 `uppercase`/`lowercase`）：`md5` / `sha256` / `hashShort` / `substring` / `trim` / `uppercase` / `lowercase` / `replace` / `replaceText` / `toNumber` / `toString` / `toDate` / `toBoolean` / `toIDCard` / `merge` / `mapValue` / `regexExtract` / `default` / `genderFromID` / `birthFromID` / `multiply`。编译/反编译规范见 template-schema.md §9，决策与实现见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101，v1.1.0 已实现）与 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117 增 `toBoolean`）。
+**内置阶段白名单**（权威；2026-09-05 实现时按编译层使用面定稿为 20 个、D117 增 `toBoolean` 至 21 个，与 builtin `PIPE_STAGE_WHITELIST` 一致；`upper`/`lower` 随 D102–D104 改名 `uppercase`/`lowercase`；**D128 增 `itemAt` 至 22 个**）：`md5` / `sha256` / `hashShort` / `substring` / `trim` / `uppercase` / `lowercase` / `replace` / `replaceText` / `toNumber` / `toString` / `toDate` / `toBoolean` / `toIDCard` / `merge` / `mapValue` / `regexExtract` / `default` / `genderFromID` / `birthFromID` / `multiply` / `itemAt`。编译/反编译规范见 template-schema.md §9，决策与实现见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101，v1.1.0 已实现）与 decisions/2026-09-05-step3-mapping-frontmatter-type-panel.md（D117 增 `toBoolean`）；`itemAt` 见 decisions/2026-09-06-step3-mapping-output-enhancements.md（D128）。
 
-> **D119 白名单扩展与计算口径（2026-09-05 设计定稿，实现待排）**：区块 5「添加设置 · 计算」组落地时白名单 21 → **24**（增 `add` / `subtract` / `divide`；`multiply` 已在）——算术步骤以直调 / `(stage "op" 参)` 入值管线（第二操作数 = 列名或常数，进入阶段前由子表达式求值，如 `(stage "multiply" (lookup this "数量"))`）；条件计算编译为整链替换式 `(if (gte 值 参) 真值 假值)`（单步直调形态，不入 pipe）；条件警告与 smartLink 为映射行附言（`set` 后追加 `{{#if 条件}}{{set "_warnings" (push _warnings "文本")}}{{/if}}` / `{{set "_link" (smartLink _hash "目标" "回退")}}`）。公开 37 清单与 Helper 签名**不变**（仅 UI 组合使用既有 Helper）。决策见 decisions/2026-09-05-step3-examples-parity.md（D119）。
+> **D119 白名单扩展与计算口径（2026-09-05 已实现）**：区块 5「添加设置 · 计算」组已落地——白名单 21 → **24**（增 `add` / `subtract` / `divide`；`multiply` 已在），算术步骤以直调 / `(stage "op" 参)` 入值管线（第二操作数 = 列名或常数，进入阶段前由子表达式求值，如 `(stage "multiply" (lookup this "数量"))`）；条件计算编译为整链替换式 `(if (gte 值 参) 真值 假值)`（单步直调形态，不入 pipe）；条件警告与 smartLink 为映射行附言（`set` 后追加 `{{#if 条件}}{{set "_warnings" (push _warnings "文本")}}{{/if}}` / `{{set "_link" (smartLink _hash "目标" "回退")}}`）。公开 37 清单与 Helper 签名**不变**（仅 UI 组合使用既有 Helper）。决策见 decisions/2026-09-05-step3-examples-parity.md（D119）。
+
+> **D126 条件校验 / D128 提取口径（2026-09-06 已实现）**：「添加设置」增「条件校验」「提取」两组——条件校验编译为整链替换式 `(ternary (校验fn 值 参数…) 真值 假值)`（真/假值 = 固定值字符串字面量或 `(lookup this "列名")` 字段引用，同 D119 条件计算口径，单步直调不入 pipe）；提取编译 `(itemAt 源 索引|键)` / `(stage "itemAt" …)`（索引 0-based、负数自末尾，Object 按键名）。另增运行时 `expr` Helper（D129 output 段：把完整模板文本按行渲染、去首尾空白，空结果不 set）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
 
 ## 依赖
 
@@ -92,4 +97,4 @@ const result = await engine.renderPreprocess(
 
 ---
 
-*版本: 1.8.0 | 最后更新: 2026-09-05*
+*版本: 1.10.0 | 最后更新: 2026-09-06（D126–D129 已实现：公开 Helper 38 个 8 类（集合 `itemAt`）、阶段白名单增 itemAt、D126 条件校验 / D128 提取编译口径注记、D129 `expr` 编译 Helper；顺修 D119 注记状态为已实现）*

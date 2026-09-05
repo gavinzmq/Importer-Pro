@@ -25,6 +25,8 @@ export interface ShardContext {
   useTemplateOutput?: boolean;
   /** D112：向导实时输出命名覆盖（未保存 UI 值），优先级高于模板 output；folder/noteName 为 Handlebars 表达式 */
   outputOverride?: { folder?: string; noteName?: string };
+  /** D127：不输出字段清单——shard 组装输出数据时从主笔记数据与各 `_notes` object 内联字段中过滤（仅作预处理中间值） */
+  noneFields?: string[];
 }
 
 export class DataPipeline implements IDataPipeline {
@@ -77,7 +79,9 @@ export class DataPipeline implements IDataPipeline {
 
     let specs: NoteSpec[] = [];
     if (Array.isArray(data._notes) && data._notes.length > 0) {
-      specs = data._notes.map((n: Record<string, any>) => this.normalizeSpec(n, data, ctx?.defaultFolder));
+      specs = data._notes.map((n: Record<string, any>) =>
+        this.normalizeSpec(n, data, ctx?.defaultFolder, ctx?.noneFields)
+      );
     } else {
       specs = [this.defaultSpec(data, template, ctx)];
     }
@@ -116,10 +120,12 @@ export class DataPipeline implements IDataPipeline {
    * noteType 优先取元素 `_noteType`（主笔记元素缺省 → 沿用 data._status 兼容既有语义）。
    * folder/fileName 兜底：元素显式值 → data._folder/_fileName/_hash → 设置默认目录/散列。
    */
-  private normalizeSpec(n: Record<string, any>, data: DataRecord, defaultFolder?: string): NoteSpec {
+  private normalizeSpec(n: Record<string, any>, data: DataRecord, defaultFolder?: string, noneFields?: string[]): NoteSpec {
+    const excluded = new Set(noneFields ?? []);
     const specData: DataRecord = {};
     for (const [k, v] of Object.entries(n)) {
       if (k.startsWith('_') && ['_folder', '_fileName', '_template', '_noteType', '_noteLabel'].includes(k)) continue;
+      if (excluded.has(k)) continue; // D127：不输出字段过滤（_notes object 内联字段）
       specData[k] = v;
     }
     return {
@@ -135,9 +141,11 @@ export class DataPipeline implements IDataPipeline {
     const folder = normalizeVaultPath(String(data._folder ?? ctx?.defaultFolder ?? ''));
     // D112：_fileName（模板 output.note_name 求值 / 向导实时值）优先于 _hash 作为文件名
     const filename = sanitizeFilename(String(data._fileName ?? data._hash ?? md5Hash(JSON.stringify(data)).slice(0, 10)));
+    const excluded = new Set(ctx?.noneFields ?? []);
     const specData: DataRecord = {};
     for (const [k, v] of Object.entries(data)) {
       if (k.startsWith('_') && k !== '_link' && k !== '_hash' && k !== '_status') continue;
+      if (excluded.has(k)) continue; // D127：不输出字段不进主笔记渲染数据（仅作预处理中间值）
       specData[k] = v;
     }
     return { folder, filename, data: specData, noteType: String(data._status ?? 'main') };

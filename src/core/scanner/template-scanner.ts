@@ -6,6 +6,7 @@ import { normalizeVaultPath, sanitizeFilename } from '../../utils/path';
 import {
   configToSegments,
   DERIVED_PRESETS,
+  extractNoneTargets,
   foldLegacyColumnOps,
   handlebarsToConfig,
   rowFilterFromRemove,
@@ -235,6 +236,8 @@ export class TemplateScanner implements ITemplateScanner {
         condition: n.condition,
         content: n.content
       }));
+      // D127：不输出字段清单（column-mapping 段 `ipro:none:` 标记）→ config.noneFields，供导入运行时（API/自动匹配）过滤
+      const noneFields = extractNoneTargets(blocks[0]);
 
       const config: TemplateConfig = {
         id,
@@ -249,7 +252,8 @@ export class TemplateScanner implements ITemplateScanner {
         },
         preprocess: blocks[0],
         content: blocks[1],
-        notes
+        notes,
+        ...(noneFields.length > 0 ? { noneFields } : {})
       };
       // D112：frontmatter output（folder/note_name 等）提升为 config.output，供导入运行时求值（DataPipeline）
       const outFm = (frontmatter.output ?? {}) as Record<string, any>;
@@ -523,14 +527,23 @@ export function parseStep3Snapshot(rawContent: string): Step3TemplateSnapshot | 
   const patterns = Array.isArray(frontmatter.match?.patterns) ? frontmatter.match.patterns : [];
   const first = patterns[0] as { type?: string; value?: string; priority?: number } | undefined;
   const out = (frontmatter.output ?? {}) as Record<string, any>;
+  // D129：区块 3 输出位置/命名表达式——优先取 output 段反编译（transform.output，handlebarsToConfig 已还原）；
+  // 无段时回退 frontmatter（旧模板真实表达式，下次保存一次性编译进 output 段并改写 frontmatter 为固定引用）；
+  // frontmatter 固定引用（{{_folder}}/{{_fileName}}）= 无实际表达式 → 回落默认（folder 空、name {{_hash}}）。
+  const fmFolder = out.folder ? String(out.folder) : '';
+  const fmNoteName = out.note_name ? String(out.note_name) : '';
+  const segOut = transform.output;
+  const blockFolder = segOut?.folder !== undefined ? segOut.folder : fmFolder === '{{_folder}}' ? '' : fmFolder;
+  const blockNoteName =
+    segOut?.noteName !== undefined ? segOut.noteName : fmNoteName === '{{_fileName}}' ? '{{_hash}}' : fmNoteName || '{{_hash}}';
   return {
     name,
     matchType: (first?.type as Step3TemplateSnapshot['matchType']) ?? 'glob',
     matchPattern: first?.value ? String(first.value) : '',
     // D121：匹配优先级随 patterns[0].priority 读回
     matchPriority: Number((first as any)?.priority) || 0,
-    outputFolder: out.folder ? String(out.folder) : '',
-    outputNoteName: out.note_name ? String(out.note_name) : '{{_hash}}',
+    outputFolder: blockFolder,
+    outputNoteName: blockNoteName,
     // D121：输出策略（冲突/增量）随 frontmatter output 读回（运行时 D112 已消费，此处仅回填 UI）
     conflictStrategy: (['overwrite', 'append', 'skip', 'rename', 'merge'].includes(out.conflict_strategy)
       ? out.conflict_strategy
@@ -569,9 +582,13 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
     };
   }
   const t = snap.transform;
+  // D129：区块 3 输出位置/命名规则编译进 preprocess `output` 段（含快照级表达式）；frontmatter
+  // output.folder / note_name 固定写 "{{_folder}}" / "{{_fileName}}"（仅作引用保留字段的间接层，
+  // 实际表达式在 output 段；D112 运行时求值保留为兜底）。conflict_strategy / incremental_mode 仍写 frontmatter（D121）。
+  const outSeg = configToSegments({ ...t, output: { folder: snap.outputFolder ?? '', noteName: snap.outputNoteName || '{{_hash}}' } });
   next.output = {
-    folder: snap.outputFolder ?? '',
-    note_name: snap.outputNoteName || '{{_hash}}',
+    folder: '{{_folder}}',
+    note_name: '{{_fileName}}',
     // D121：输出策略随模板保存（冲突策略/增量模式，运行时 D112 已消费）
     conflict_strategy: snap.conflictStrategy || 'overwrite',
     incremental_mode: snap.incrementalMode || 'hash'
@@ -592,7 +609,7 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   delete next.mapping;
   delete next.derived;
 
-  const preprocess = upsertSegments(preprocessBlockOf(body), configToSegments(t));
+  const preprocess = upsertSegments(preprocessBlockOf(body), outSeg);
   const newBody = withPreprocess(body, preprocess);
   const yaml = stringifyYaml(next).replace(/\n+$/, '');
   return `---\n${yaml}\n---${newBody}`;

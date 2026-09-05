@@ -1,7 +1,7 @@
 ---
 title: "API Layer 组件"
 type: "component"
-version: "1.8.0"
+version: "1.10.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -350,7 +350,7 @@ listValidators(): string[];
 
 ## 6. Helper API
 
-> **委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用 Helper 委托 `handlebars-helpers@0.10.0`（白名单类别按名注册、edge 语义随库）；公开名随库修订——`upper`→`uppercase`、`lower`→`lowercase`（非字符串输入返回 `''`）；`isEmpty` 为库 collection 语义（判空数组/对象，空串 `''` → false，null/undefined 抛错）；`default` 为库语义（返回首个非 null，缺省 `''`）；`contains` 支持字符串子串与数组包含；数学件随库（`add` 两参、`sum`/`avg` 变参、`round` 忽略精度参、非数字抛错项见各自签名）。编译段单元格安全语义专用 Helper（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`）为**编译专用、不入公开 37 清单**。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
+> **委托与命名（D102–D104，v1.2.0，2026-09-05 已实现）**：通用 Helper 委托 `handlebars-helpers@0.10.0`（白名单类别按名注册、edge 语义随库）；公开名随库修订——`upper`→`uppercase`、`lower`→`lowercase`（非字符串输入返回 `''`）；`isEmpty` 为库 collection 语义（判空数组/对象，空串 `''` → false，null/undefined 抛错）；`default` 为库语义（返回首个非 null，缺省 `''`）；`contains` 支持字符串子串与数组包含；数学件随库（`add` 两参、`sum`/`avg` 变参、`round` 忽略精度参、非数字抛错项见各自签名）。编译段单元格安全语义专用 Helper（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault`）为**编译专用、不入公开 38 清单**。决策与实现见 decisions/2026-09-05-handlebars-helpers-on-demand.md。
 
 > **实现源迁移（D109–D111，v1.5.0，2026-09-05 已实现）**：通用 Helper 实现源由 `handlebars-helpers@0.10.0` 迁移为 **`@jaredwray/fumanchu@4.7.3`**（含引擎运行时）。本节公开 Helper 名/语义（含上述 `isEmpty`/`default`/`contains`/数学件等库语义）**不变**——fumanchu 为 handlebars-helpers 的合包维护版、注册名一致；注册层仅补「末位 options 剥离」（fumanchu 变参 helper 未 pop，`avg` 等对拍已回归）。详见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
 
@@ -432,6 +432,17 @@ wikilink(path: string, alias?: string): string;  // "[[path]]"
 smartLink(hash: string, targetFolder: string, fallbackFolder: string): string;
 // 同步返回链接文本，如 "[[人员档案/e10adc3949]]"。
 // ⚠️ 同步约束：依赖 warmCache() 预构建的内存链接索引，未预热时按 fallbackFolder 生成"待建"链接。
+```
+
+### 6.9 集合 Helper
+
+> **D128（2026-09-06 已实现）**：新增公开 Helper `itemAt`（自研；公开清单 37 → 38）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
+
+```typescript
+itemAt(value: unknown, indexOrKey: number | string): string;
+// 数组：按 0-based 整数索引取值（负数自末尾倒数）；Object：按字符串键取值。
+// 越界 / 缺键 / 非数组非对象 → 返回 ''（不抛错）。
+// 入阶段白名单（PIPE_STAGE_WHITELIST），供 ≥2 步 pipe：(stage "itemAt" 索引|键)。
 ```
 
 ---
@@ -637,4 +648,4 @@ interface GeneratedFileInfo {
 
 ---
 
-*版本: 1.8.0 | 最后更新: 2026-09-06（D125 已实现：§5 校验 API 标 @deprecated，保留一个 MINOR）*
+*版本: 1.10.0 | 最后更新: 2026-09-06（D125 已实现：§5 校验 API 标 @deprecated，保留一个 MINOR；D128 已实现：§6.9 新增集合 Helper `itemAt`，公开清单 38）*

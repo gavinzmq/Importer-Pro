@@ -160,7 +160,11 @@ row:
     // frontmatter：name/output 更新；row 仅行清洗开关；旧 byContent/removeEmpty/columns/mapping/derived 不产出
     expect(next).toContain('name: 新模板名');
     expect(next).toContain('^员工');
-    expect(next).toContain('folder: 输出目录');
+    // D129：output.folder/note_name 固定引用保留字段（{{_folder}}/{{_fileName}}），用户表达式编译进 preprocess output 段
+    expect(next).toContain("folder: '{{_folder}}'");
+    expect(next).toContain('ipro:begin:output');
+    expect(next).toContain('{{set "_folder" (expr "输出目录")}}');
+    expect(next).not.toContain('folder: 输出目录');
     expect(next).not.toContain('byContent');
     expect(next).not.toContain('removeEmpty');
     expect(next).not.toContain('columns:');

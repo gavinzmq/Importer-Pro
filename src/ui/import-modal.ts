@@ -55,8 +55,10 @@ import {
   FORMAT_OP_LABELS,
   isPostscriptSetting,
   LINK_OP_LABELS,
+  mappingNoneTargets,
   mappingSettingLabel,
   MAPPING_TYPE_LABELS,
+  NONE_NOTE_TYPE,
   PROCESS_OP_LABELS,
   removeAutoMappings,
   resolvedHeader,
@@ -66,9 +68,10 @@ import {
   settingParamSpec,
   sourceToTargetName,
   unmappedColumns,
-  upsertSegments
+  upsertSegments,
+  VALIDATE_FN_LABELS
 } from './wizard-data';
-import type { ComputeCompareOp } from './wizard-data';
+import type { ComputeCompareOp, ValidateBranchValue, ValidateFnOp } from './wizard-data';
 import { dryRunStats, type DryRunSummary } from './wizard-data';
 import { TemplateEngine } from '../core/template/engine';
 
@@ -177,6 +180,8 @@ export class ImportModal extends Modal {
     | { index: number; group: 'compute'; op: 'condition' }
     | { index: number; group: 'compute'; op: 'warn' }
     | { index: number; group: 'link'; op: 'smartLink' }
+    | { index: number; group: 'validate'; op: ValidateFnOp }
+    | { index: number; group: 'extract'; op: 'itemAt' }
     | null = null;
 
   // D91：Step 3 区块局部刷新——.ipw-body 容器持久，各区块仅重建自身内容（含滚动保持）
@@ -566,6 +571,8 @@ export class ImportModal extends Modal {
       this.conflictStrategy = this.deps.settings().conflictStrategy;
       this.incrementalMode = this.deps.settings().incrementalMode;
       this.matchPriority = 0;
+      this.transform = emptyTransform();
+      this.syncTransformOutput();
       return false;
     }
     const snap = await this.deps.scanner.readTemplateConfig(this.templateId);
@@ -577,6 +584,8 @@ export class ImportModal extends Modal {
     this.incrementalMode = snap.incrementalMode || this.deps.settings().incrementalMode || 'hash';
     this.matchPriority = snap.matchPriority || 0;
     this.transform = snap.transform;
+    // D129：区块 3 值同步进 transform（output 段编译/加载后的实时口径一致）
+    this.syncTransformOutput();
     return true;
   }
 
@@ -960,6 +969,7 @@ export class ImportModal extends Modal {
     folderInput.value = this.outputFolder;
     folderInput.addEventListener('input', () => {
       this.outputFolder = folderInput.value;
+      this.syncTransformOutput(); // D129：编译口径（output 段）同步实时值
       this.renderOutputExample(outExample);
     });
 
@@ -974,6 +984,7 @@ export class ImportModal extends Modal {
     nameExpr.value = this.outputNoteName;
     nameExpr.addEventListener('input', () => {
       this.outputNoteName = nameExpr.value;
+      this.syncTransformOutput(); // D129：编译口径（output 段）同步实时值
       this.renderOutputExample(outExample);
     });
 
@@ -1312,7 +1323,9 @@ export class ImportModal extends Modal {
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
     mapCard.createDiv({
       cls: 'ipw-card-title',
-      text: '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记（D120，含「所有笔记」D125）；「添加设置」= 格式化/处理/派生/计算/链接）'
+      text:
+        '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记（D120/D125/D127：附加类型 · 所有笔记 · 不输出）；' +
+        '「添加设置」= 格式化/处理/派生/计算/链接/条件校验/提取）'
     });
     this.renderMappingCard(mapCard, cols);
 
@@ -1372,7 +1385,7 @@ export class ImportModal extends Modal {
       host.createDiv({
         cls: 'ipw-muted ipw-note',
         text:
-          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 / 计算 / 链接 步骤——选「列派生」即成为派生计算行）'
+          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取 步骤——选「列派生」即成为派生计算行）'
       });
     }
 
@@ -1439,6 +1452,8 @@ export class ImportModal extends Modal {
         noteSel.createEl('option', { value: t.id, text: t.name || t.id });
       }
       noteSel.createEl('option', { value: ALL_NOTE_TYPES, text: '所有笔记' });
+      // D127：不输出——字段不进任何笔记渲染数据（仅作预处理中间值）
+      noteSel.createEl('option', { value: NONE_NOTE_TYPE, text: '不输出（仅预处理中间值）' });
       noteSel.value = m.noteType && m.noteType !== 'main' ? m.noteType : '';
       noteSel.addEventListener('change', () => {
         const mp = this.transform.mappings[i];
@@ -1528,8 +1543,10 @@ export class ImportModal extends Modal {
       text:
         `💡 可用源列: ${freeCols.join(' / ') || '(无未映射列)'}。` +
         `「类型」为目标字段的 FrontMatter 类型（数字/日期/布尔自动转换，忽略=不产出）；` +
-        `「添加设置」下拉加入 列格式化/列处理/列派生/计算/链接 步骤（选「列派生」即按预设计算该字段；` +
-        `计算=加减乘除/条件计算/条件警告，链接=智能链接，条件与链接仅适用于普通映射行）；` +
+        `「添加设置」下拉加入 列格式化/列处理/列派生/计算/链接/条件校验/提取 步骤（选「列派生」即按预设计算该字段；` +
+        `计算=加减乘除/条件计算/条件警告，链接=智能链接，条件与链接仅适用于普通映射行；` +
+        `条件校验=布尔校验该行值→真/假值（可固定值或引用字段），提取=数组/Object 取第 N 个/键值）；` +
+        `「输出到·不输出」= 字段仅作预处理中间值、不进任何笔记；` +
         `标记「自动」的行由 🧹自动映射 生成，「🗑 删除所有自动映射」仅删除此类行。`
     });
   }
@@ -1698,6 +1715,12 @@ export class ImportModal extends Modal {
     for (const o of COMPUTE_COND_LABELS) gCmp.createEl('option', { value: o.value, text: o.label });
     const gLnk = sel.createEl('optgroup', { attr: { label: '链接' } });
     for (const o of LINK_OP_LABELS) gLnk.createEl('option', { value: o.value, text: o.label });
+    // D126 条件校验（布尔 Helper：真/假值 = 固定值 | 字段引用）
+    const gVal = sel.createEl('optgroup', { attr: { label: '条件校验' } });
+    for (const o of VALIDATE_FN_LABELS) gVal.createEl('option', { value: o.value, text: o.label });
+    // D128 提取（数组/Object 取第 N 个/键值）
+    const gExt = sel.createEl('optgroup', { attr: { label: '提取' } });
+    gExt.createEl('option', { value: 'itemAt', text: '提取 · itemAt（数组第 N 个 / Object 键值）' });
 
     sel.addEventListener('change', () => {
       const val = sel.value;
@@ -1713,6 +1736,24 @@ export class ImportModal extends Modal {
       const arith = COMPUTE_ARITH_LABELS.find((o) => o.value === val);
       if (arith) {
         this.pendingSettingDraft = { index, group: 'compute', op: arith.value };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      // D126 条件校验（仅普通映射行——整链替换式以行源列值为校验对象）
+      if (VALIDATE_FN_LABELS.some((o) => o.value === val)) {
+        if (isDerived) {
+          new Notice('条件校验仅适用于普通映射行（请选一条有来源的映射行）');
+          return;
+        }
+        this.pendingSettingDraft = { index, group: 'validate', op: val as ValidateFnOp };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      // D128 提取·itemAt（值管线步骤，1 步直调 / ≥2 步 pipe）
+      if (val === 'itemAt') {
+        this.pendingSettingDraft = { index, group: 'extract', op: 'itemAt' };
         this.mappingPanelsOpen.add(index);
         this.refreshStep3Blocks(['columns']);
         return;
@@ -1822,7 +1863,7 @@ export class ImportModal extends Modal {
     if (!m.rule && (m.settings?.length ?? 0) === 0 && !(draft && draft.index === index)) {
       list.createDiv({
         cls: 'ipw-muted ipw-note',
-        text: '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生 / 计算 / 链接）'
+        text: '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取）'
       });
     }
   }
@@ -1851,6 +1892,14 @@ export class ImportModal extends Modal {
     }
     if (draft.group === 'link' && draft.op === 'smartLink') {
       this.renderLinkDraft(panel, index);
+      return;
+    }
+    if (draft.group === 'validate') {
+      this.renderValidateDraft(panel, index, draft.op);
+      return;
+    }
+    if (draft.group === 'extract' && draft.op === 'itemAt') {
+      this.renderExtractDraft(panel, index);
       return;
     }
   }
@@ -1963,6 +2012,89 @@ export class ImportModal extends Modal {
     });
   }
 
+  /** D126：真/假值编辑器（固定值 | 字段引用两种形态切换），返回读取当前分支值的函数 */
+  private renderValidateBranch(host: HTMLElement, label: string): { read: () => ValidateBranchValue } {
+    const wrap = host.createDiv({ cls: 'ipw-validate-branch' });
+    wrap.createSpan({ cls: 'ipw-muted', text: label });
+    const modeSel = wrap.createEl('select', { cls: 'ipw-select' });
+    modeSel.createEl('option', { value: 'fixed', text: '固定值' });
+    modeSel.createEl('option', { value: 'field', text: '引用字段' });
+    const fixedIn = wrap.createEl('input', { cls: 'ipw-input', type: 'text', value: '', attr: { placeholder: '固定内容（可空串）' } });
+    const fieldSel = wrap.createEl('select', { cls: 'ipw-select' });
+    fieldSel.createEl('option', { value: '', text: '(选择来源字段)' });
+    for (const c of this.columns()) fieldSel.createEl('option', { value: c, text: c });
+    const toggle = (): void => {
+      const isField = modeSel.value === 'field';
+      fixedIn.style.display = isField ? 'none' : '';
+      fieldSel.style.display = isField ? '' : 'none';
+    };
+    modeSel.addEventListener('change', toggle);
+    toggle();
+    return {
+      read(): ValidateBranchValue {
+        if (modeSel.value === 'field') return { kind: 'field', field: fieldSel.value };
+        return { kind: 'fixed', value: fixedIn.value };
+      }
+    };
+  }
+
+  /** D126：条件校验草稿（布尔 Helper 校验当前行值 → 真/假值；固定值 | 字段引用） */
+  private renderValidateDraft(panel: HTMLElement, index: number, op: ValidateFnOp): void {
+    const meta = VALIDATE_FN_LABELS.find((o) => o.value === op);
+    const box = panel.createDiv({ cls: 'ipw-settings-editor' });
+    box.createSpan({ cls: 'ipw-muted', text: '添加 条件校验·' });
+    box.createSpan({ text: meta?.label ?? op });
+    let paramInput: HTMLInputElement | null = null;
+    if (meta?.needParam) {
+      box.createSpan({ cls: 'ipw-muted', text: '  参数:' });
+      paramInput = box.createEl('input', {
+        cls: 'ipw-input',
+        type: 'text',
+        value: '',
+        attr: { placeholder: op === 'inRange' ? '集合，如 1-100 或 2,5,8-10' : '正则文本（匹配返回 true）' }
+      });
+    }
+    const truthy = this.renderValidateBranch(box, '真值:');
+    const falsy = this.renderValidateBranch(box, '假值:');
+    this.draftButtons(box, index, () => {
+      const mp = this.transform.mappings[index];
+      // 整链替换式（同 D119 条件计算）：清空其余值管线步骤，保留附言
+      mp.settings = (mp.settings ?? []).filter((s) => isPostscriptSetting(s));
+      mp.settings.push({
+        group: 'validate',
+        op,
+        param: paramInput ? paramInput.value.trim() : '',
+        truthy: truthy.read(),
+        falsy: falsy.read()
+      });
+      return true;
+    });
+  }
+
+  /** D128：提取·itemAt 草稿（数组第 N 个 / Object 键值；索引 0-based 负数自末尾） */
+  private renderExtractDraft(panel: HTMLElement, index: number): void {
+    const row = panel.createDiv({ cls: 'ipw-settings-editor' });
+    row.createSpan({ cls: 'ipw-muted', text: '添加 提取·itemAt ' });
+    const key = row.createEl('input', {
+      cls: 'ipw-input',
+      type: 'text',
+      value: '0',
+      attr: { placeholder: '索引（数组 0 起，负数自末尾）或 Object 键名' }
+    });
+    row.createSpan({ cls: 'ipw-muted', text: '（来源应为数组/Object，如「列处理·拆分」产出）' });
+    this.draftButtons(row, index, () => {
+      const t = key.value.trim();
+      if (t === '') {
+        new Notice('请填写索引或键名');
+        return null;
+      }
+      const mp = this.transform.mappings[index];
+      mp.settings = mp.settings ?? [];
+      mp.settings.push({ group: 'extract', op: 'itemAt', key: t });
+      return true;
+    });
+  }
+
   /** 草稿区「添加/取消」按钮（提交回调返回 null = 校验失败不关闭；true = 写入后关闭刷新） */
   private draftButtons(host: HTMLElement, index: number, submit: () => boolean | null): void {
     const ok = host.createEl('button', { cls: 'ipw-mini ipw-primary', text: '添加' });
@@ -2020,9 +2152,9 @@ export class ImportModal extends Modal {
   }
 
   /** D117/D119：设置面板内编辑某设置参数（就地展开输入；保存后刷新）。仅 format/process 走通用单参编辑，
-   *  compute/link 参数较多（compare/operand/truthy/falsy 等），采用「删除后重加」维护。 */
+   *  compute/link 参数较多（compare/operand/truthy/falsy 等）、validate/extract 走专用表单，采用「删除后重加」维护。 */
   private renderSettingEditForm(item: HTMLElement, index: number, j: number, s: MappingSetting): void {
-    if (s.group === 'compute' || s.group === 'link') return;
+    if (s.group === 'compute' || s.group === 'link' || s.group === 'validate' || s.group === 'extract') return;
     const editor = item.createDiv({ cls: 'ipw-map-edit' });
     const spec = settingParamSpec(s);
     const param = editor.createEl('input', {
@@ -2092,9 +2224,11 @@ export class ImportModal extends Modal {
       note.addClass('ipw-preview-grid-wrap');
       return;
     }
-    // 隐藏内部回填保留字段（行号/哈希/链接等不展示为数据列；D125 _valid/_errors 保留字段已移除）
-    const IGNORED = new Set(['_index', '_warnings', '_status', '_hash', '_link', '_notes']);
-    const cols = Object.keys(preview[0].row).filter((k) => !IGNORED.has(k));
+    // 隐藏内部回填保留字段（行号/哈希/链接等不展示为数据列；D125 _valid/_errors 保留字段已移除；
+    // D129：output 段写入的 _folder/_fileName；D127：不输出字段不进任何笔记 → 预览同样隐藏，仅作预处理中间值）
+    const IGNORED = new Set(['_index', '_warnings', '_status', '_hash', '_link', '_notes', '_folder', '_fileName']);
+    const noneTargets = new Set(mappingNoneTargets(this.transform.mappings));
+    const cols = Object.keys(preview[0].row).filter((k) => !IGNORED.has(k) && !noneTargets.has(k));
     const grid = container.createDiv({ cls: 'ipw-preview-grid-wrap' });
     const gridEl = grid.createDiv({ cls: 'ipw-preview-grid' });
     gridEl.createDiv({ cls: 'ipw-cell is-head ipw-row-num', text: '#' });
@@ -2194,7 +2328,9 @@ export class ImportModal extends Modal {
         sourceLabel: this.sourceLabelFor(target),
         dryRun: true,
         preprocessOverride: this.importPreprocessOverride(),
-        outputOverride: this.liveOutputOverride()
+        outputOverride: this.liveOutputOverride(),
+        // D127：输出到「不输出」字段不进任何笔记数据
+        noneFields: this.currentNoneFields()
       });
       if (!this.contentEl.isConnected) return; // 向导已关闭，放弃后续渲染
       this.lastDryResult = dry;
@@ -2271,6 +2407,17 @@ export class ImportModal extends Modal {
     const noteName = this.outputNoteName.trim();
     if (noteName !== '') out.noteName = noteName;
     return out;
+  }
+
+  /** D129：区块 3 输出表达式同步进 transform——applyWizardTransform 编译 `output` 段时与保存口径一致，
+   *  避免已加载模板的 output 段（transform.output 反编译值）在向导实时编辑后成为陈旧 _folder/_fileName。 */
+  private syncTransformOutput(): void {
+    this.transform.output = { folder: this.outputFolder ?? '', noteName: this.outputNoteName ?? '{{_hash}}' };
+  }
+
+  /** D127：当前 Step 3 配置的「不输出」字段清单（importRecords.noneFields / 预览隐藏） */
+  private currentNoneFields(): string[] {
+    return mappingNoneTargets(this.transform.mappings);
   }
 
   /**
@@ -2355,6 +2502,8 @@ export class ImportModal extends Modal {
       startAt,
       preprocessOverride: this.importPreprocessOverride(),
       outputOverride: this.liveOutputOverride(),
+      // D127：输出到「不输出」字段不进任何笔记数据
+      noneFields: this.currentNoneFields(),
       onProgress: (p) => {
         if (p.phase === 'parse') {
           status.setText(`正在解析 ${p.done}/${p.total}…`);

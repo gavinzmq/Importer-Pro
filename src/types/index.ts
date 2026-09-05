@@ -276,6 +276,8 @@ export interface TemplateConfig {
   notes?: TemplateNoteSpec[];
   /** 模板输出位置及命名规则（frontmatter `output` 提升，parseTemplateFile 填充） */
   output?: TemplateOutput;
+  /** D127：不输出字段清单（column-mapping 段 `ipro:none:` 标记，parseTemplateFile 填充）——shard 组装输出数据时过滤 */
+  noneFields?: string[];
 }
 
 /** 行筛选操作（D96，Excel 式筛选，包含式保留；公共类型登记 architecture §7） */

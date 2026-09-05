@@ -179,3 +179,43 @@ describe('D102–D104 例外专用 Helper：编译段单元格安全语义保留
   });
 });
 
+describe('D128 itemAt：数组/Object 提取（公开 38 · 集合）', () => {
+  const engine = new TemplateEngine();
+  const helpers = engine.handlebars.helpers as Record<string, unknown>;
+
+  it('注册为公开 Helper 且入阶段白名单（PipeStages）', () => {
+    expect(typeof helpers.itemAt).toBe('function');
+    expect(PipeStages.has('itemAt')).toBe(true);
+  });
+
+  it('真实渲染：数组 0-based / 负数自末尾 / 越界返空 / Object 键值 / 非集合返空', async () => {
+    const out = await renderLines(
+      [
+        '{{set "a0" (itemAt (array "甲" "乙" "丙") 0)}}',
+        '{{set "a2" (itemAt (array "甲" "乙" "丙") 2)}}',
+        '{{set "neg" (itemAt (array "甲" "乙" "丙") -1)}}',
+        '{{set "oob" (itemAt (array "甲" "乙") 9)}}',
+        '{{set "key" (itemAt (object "name" "张三" "age" 30) "name")}}',
+        '{{set "miss" (itemAt (object "a" "b") "x")}}',
+        '{{set "scalar" (itemAt "abc" 0)}}',
+        '{{set "undef" (itemAt (array "甲") -5)}}'
+      ]
+    );
+    expect(out.a0).toBe('甲');
+    expect(out.a2).toBe('丙');
+    expect(out.neg).toBe('丙');
+    expect(out.oob).toBe('');
+    expect(out.key).toBe('张三');
+    expect(out.miss).toBe('');
+    expect(out.scalar).toBe('');
+    expect(out.undef).toBe('');
+  });
+
+  it('itemAt 可作为 pipe 阶段（D128：阶段白名单 21→22），与拆分配合取首元素', async () => {
+    const out = await renderLines([
+      '{{set "first" (pipe (strSplit (lookup this "tags") ",") (stage "itemAt" "0"))}}'
+    ], { tags: 'a,b,c' });
+    expect(out.first).toBe('a');
+  });
+});
+

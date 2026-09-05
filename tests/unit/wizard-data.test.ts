@@ -1312,3 +1312,207 @@ describe('D120：多笔记输出（noteTypes + 输出到 + note-output 段）', 
   });
 });
 
+describe('D126：条件校验（「添加设置 · 条件校验」整链替换式）', () => {
+  it('编译固定值真/假：布尔 Helper 校验当前行值 → ternary；往返还原', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        {
+          source: '邮箱',
+          target: '邮箱类型',
+          type: 'text',
+          settings: [
+            {
+              group: 'validate',
+              op: 'isEmail',
+              param: '',
+              truthy: { kind: 'fixed', value: '邮箱' },
+              falsy: { kind: 'fixed', value: '非邮箱' }
+            }
+          ]
+        }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(ternary (isEmail (lookup this "邮箱")) "邮箱" "非邮箱")');
+    const back = handlebarsToConfig(hb);
+    expect(back.mappings[0].settings).toEqual(cfg.mappings[0].settings);
+  });
+
+  it('字段引用真值：真/假值为 (lookup this "列名")，往返还原', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        {
+          source: '身份证号',
+          target: '备注',
+          type: 'text',
+          settings: [
+            {
+              group: 'validate',
+              op: 'validateID',
+              param: '',
+              truthy: { kind: 'field', field: '性别' },
+              falsy: { kind: 'fixed', value: '待补录' }
+            }
+          ]
+        }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(ternary (validateID (lookup this "身份证号")) (lookup this "性别") "待补录")');
+    const back = handlebarsToConfig(hb);
+    expect(back.mappings[0].settings).toEqual(cfg.mappings[0].settings);
+  });
+
+  it('带参数校验（inRange 集合串 / matchesRegex 正则）编译与往返', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        {
+          source: '分数',
+          target: '评级',
+          type: 'text',
+          settings: [
+            {
+              group: 'validate',
+              op: 'inRange',
+              param: '60-100',
+              truthy: { kind: 'fixed', value: '达标' },
+              falsy: { kind: 'fixed', value: '待提升' }
+            }
+          ]
+        }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('(inRange (lookup this "分数") "60-100")');
+    const back = handlebarsToConfig(hb);
+    expect(back.mappings[0].settings).toEqual(cfg.mappings[0].settings);
+  });
+
+  it('真实渲染：固定值分支与 JS 语义一致（真/假两路）', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        {
+          source: '邮箱',
+          target: '邮箱类型',
+          type: 'text',
+          settings: [
+            {
+              group: 'validate',
+              op: 'isEmail',
+              param: '',
+              truthy: { kind: 'fixed', value: '邮箱' },
+              falsy: { kind: 'fixed', value: '非邮箱' }
+            }
+          ]
+        }
+      ]
+    };
+    const rows = await applyWizardTransform(engine, [{ 邮箱: 'a@b.com' }, { 邮箱: 'abc' }], cfg);
+    expect(rows[0].row['邮箱类型']).toBe('邮箱');
+    expect(rows[1].row['邮箱类型']).toBe('非邮箱');
+  });
+});
+
+describe('D127：输出到「不输出」（noteType none，仅作预处理中间值）', () => {
+  it('编译：none 行仍产 set + 写清单标记；不进 note-output 对象；往返还原 none', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      noteTypes: [{ id: 'contact', name: '联系方式' }],
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '标签原', target: '标签', type: 'text', noteType: 'none' },
+        { source: '电话', target: '电话', type: 'text', noteType: 'contact' }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    // none 字段照常计算（column-mapping 段）
+    expect(hb).toContain('{{set "标签" (lookup this "标签原")}}');
+    // 清单标记
+    expect(hb).toContain('{{!-- ipro:none:标签 --}}');
+    // note-output 主笔记与附加对象均不含 none 字段
+    const noteOut = hb.slice(hb.indexOf('ipro:begin:note-output'));
+    expect(noteOut).not.toContain('"标签"');
+    // 往返还原 noteType
+    const back = handlebarsToConfig(hb);
+    expect(back.mappings.find((m) => m.target === '标签')?.noteType).toBe('none');
+    expect(back.mappings.find((m) => m.target === '电话')?.noteType).toBe('contact');
+    expect(back.mappings.find((m) => m.target === '姓名')?.noteType).toBeUndefined();
+  });
+
+  it('无附加类型（单主笔记）+ none 行：不产 note-output；往返仍还原 none（主字段不落 noteType）', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '原备注', target: '备注', type: 'text', noteType: 'none' }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('ipro:none:备注');
+    expect(hb).not.toContain('ipro:begin:note-output');
+    const back = handlebarsToConfig(hb);
+    expect(back.mappings.find((m) => m.target === '备注')?.noteType).toBe('none');
+    expect(back.mappings.find((m) => m.target === '姓名')?.noteType).toBeUndefined();
+  });
+});
+
+describe('D129：输出位置及命名规则编译段（output）', () => {
+  it('缺省（folder 空 / noteName {{_hash}}）不产出 output 段', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      output: { folder: '', noteName: '{{_hash}}' },
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).not.toContain('ipro:begin:output');
+  });
+
+  it('编译：output 段位于 derived 之后；expr 求值 + isNotEmpty 守卫；往返还原', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      output: { folder: '人员档案', noteName: '{{_hash}}_{{姓名}}' },
+      mappings: [
+        { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' },
+        { source: '姓名', target: '姓名', type: 'text' }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb.indexOf('ipro:begin:derived')).toBeGreaterThanOrEqual(0);
+    expect(hb.indexOf('ipro:begin:output')).toBeGreaterThan(hb.indexOf('ipro:end:derived'));
+    expect(hb).toContain('{{#if (isNotEmpty (expr "人员档案"))}}{{set "_folder" (expr "人员档案")}}{{/if}}');
+    expect(hb).toContain('{{set "_fileName" (expr "{{_hash}}_{{姓名}}")}}');
+    const back = handlebarsToConfig(hb);
+    expect(back.output?.folder).toBe('人员档案');
+    expect(back.output?.noteName).toBe('{{_hash}}_{{姓名}}');
+  });
+
+  it('真实渲染：output 段按行写入 _folder/_fileName（含派生的确定性 _hash 占位）', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      output: { folder: '人员档案', noteName: '{{_hash}}_档案' },
+      mappings: [{ source: '姓名', target: '姓名', type: 'text' }]
+    };
+    const rows = await applyWizardTransform(engine, [{ 姓名: '张三' }], cfg);
+    const row = rows[0].row;
+    expect(row._folder).toBe('人员档案');
+    expect(row._fileName).toBeDefined();
+    expect(String(row._fileName).endsWith('_档案')).toBe(true);
+    expect(String(row._fileName).length).toBe(13); // 10 位 _hash + `_档案`
+  });
+});
+

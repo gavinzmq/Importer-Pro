@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.12.0"
+version: "1.14.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -32,7 +32,11 @@ status: "active"
 
 ### 编译段 (Compiled Code Block)
 
-Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代码段**（D98），以成对注释 `{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 包裹，与用户手写代码共存；段名对应向导区块（row-filter/column-mapping/derived/note-output；column-format/column-process 仅旧模板读取兼容，row-remove 已废弃）。模板逻辑自包含、可迁移、可手改；权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9。
+Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代码段**（D98），以成对注释 `{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 包裹，与用户手写代码共存；段名对应向导区块（row-filter/column-mapping/derived/`output`（D129 已实现）/note-output；column-format/column-process 仅旧模板读取兼容，row-remove 已废弃）。模板逻辑自包含、可迁移、可手改；权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9。
+
+### 不输出 (No Output)
+
+映射行「输出到」选项（D127 已实现，noteType `'none'`）——该行字段照常编译 `{{set}}`（仅作预处理中间值，供设置链/行筛选/输出命名引用），但不进入任何笔记的渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填）；与「类型 = 忽略」（不产 set）语义不同。
 
 ### 内容模板 (Content Template)
 
@@ -53,6 +57,10 @@ Handlebars 模板的第一阶段，负责数据校验、字段转换、分流逻
 ### 缓存提供者 (Cache Provider)
 
 实现 `ICacheProvider` 接口的缓存方案，支持 Dataview、自建索引等多种后端。
+
+### 条件校验 (Conditional Validation)
+
+区块 5「添加设置」分组之一（D126 已实现）——按布尔 Helper 校验表达式（validateID/isEmail/isPhone/isNumber/isDate/inRange/matchesRegex/isNotEmpty/isEmpty）对值管线当前值判定，真/假值可填固定内容或引用字段；编译为整链替换式 `(ternary (校验fn 值 …) 真值 假值)`（同 D119 条件计算口径，单步直调不入 pipe）。
 
 ### 派生字段 (Derived Field)
 
@@ -288,6 +296,10 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 通过 4 步向导（来源选择 → 文件管理 → 模板配置 → 进度执行）完成模板配置，无需编写代码；布局细节以 [layout.md](ui/layout.md) 为准。
 
+### 提取 (Extraction)
+
+区块 5「添加设置」分组之一（D128 已实现）——公开 Helper `itemAt` 从数组（0-based 索引，负数自末尾）或 Object（键名）提取单个值；越界/缺键/非数组非对象返回空串；入阶段白名单供 ≥2 步 pipe（编译 1 步直调 / ≥2 步 `(stage "itemAt" …)`）。
+
 ---
 
 ## W
@@ -382,4 +394,4 @@ Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123/D124，�
 
 ---
 
-*版本: 1.12.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃）*
+*版本: 1.14.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃；D126–D129 已实现：条件校验 / 不输出 / 提取词条 + 编译段清单补 output）*

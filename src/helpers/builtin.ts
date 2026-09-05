@@ -5,7 +5,7 @@ import { md5Hash, sha256Hash, hashShort as shortHash } from '../utils/crypto';
 import { adoptedLibraryHelpers } from './handlebars-helpers';
 
 /**
- * 内置 Helper：7 类 37 个（权威清单见 components/api-layer.md §6）
+ * 内置 Helper：8 类 38 个（权威清单见 components/api-layer.md §6；D128 增「集合」类 itemAt）
  * + 模板运行时辅助（set/array/object/push/first/second/now/log/比较运算，供预处理模板使用）
  * + pipe 值型变换管道（D99–D101：pipe/stage + PipeStages 阶段注册表）
  */
@@ -42,7 +42,9 @@ export const PIPE_STAGE_WHITELIST = [
   // D113：列映射「添加设置」链的编译专用 Helper（单元格安全语义，作 pipe 阶段随链执行）
   'strTrim',
   'strSplit',
-  'fillDefault'
+  'fillDefault',
+  // D128：数组/Object 提取「添加设置 · 提取」链步骤（索引/键入参，作 pipe 阶段随链执行）
+  'itemAt'
 ] as const;
 
 /** pipe 阶段注册表（D99–D101）：阶段名 → 阶段工厂；`registerPipeStages` 按白名单从已注册 Helper 构建 */
@@ -113,6 +115,24 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
   // 见 handlebars-helpers.ts）；仅库没有者保留我方实现：
   // formatNumber：zh-CN locale 千分位（库 number.addCommas 不覆盖 zh-CN，保留我方）
   hb.registerHelper('formatNumber', (value: unknown) => Number(value).toLocaleString('zh-CN'));
+
+  // ── 集合（公开 1：itemAt，D128 自研，库无对应语义）──
+  // 数组 → 0-based 整数索引取值（负数自末尾倒数）；Object → 字符串键取值；
+  // 越界/缺键/非数组非对象 → 返回 ''（不抛错）；供「添加设置 · 提取」编译（直调/pipe 阶段）。
+  hb.registerHelper('itemAt', (value: unknown, indexOrKey: unknown) => {
+    if (Array.isArray(value)) {
+      const n = Number(indexOrKey);
+      if (!Number.isInteger(n)) return '';
+      const idx = n < 0 ? value.length + n : n;
+      return idx >= 0 && idx < value.length ? value[idx] : '';
+    }
+    if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+      const key = String(indexOrKey ?? '');
+      const obj = value as Record<string, unknown>;
+      return key in obj ? obj[key] : '';
+    }
+    return '';
+  });
 
   // ── 逻辑（公开 5；D102–D104 委托，D109–D111 实现源迁 fumanchu）──
   // contains / default / or / and 已委托 fumanchu（comparison 类别；行内/子表达式返回原始布尔）；
@@ -201,6 +221,25 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
   hb.registerHelper('log', (value: unknown) => {
     console.log('[Importer Pro template]', value);
     return '';
+  });
+  // D129：区块 3 输出位置/命名规则编译——把用户填写的完整 Handlebars 模板文本（可含 {{#if}} 块）对当前行数据
+  // 渲染为字符串（去首尾空白，失败回落 ''）。供 preprocess `output` 段 `(expr "文本")` 求值后 set _folder/_fileName；
+  // 运行时辅助 Helper，不入公开 API 清单。
+  hb.registerHelper('expr', function (this: unknown, text: unknown, options: { data?: { root?: Record<string, any> } }) {
+    const root = (options?.data?.root ?? this ?? {}) as Record<string, any>;
+    const tpl = String(text ?? '');
+    if (tpl.trim() === '') return '';
+    try {
+      const compiled = hb.compile(tpl, { noEscape: true, strict: false });
+      return String(
+        compiled(root, {
+          allowProtoMethodsByDefault: true,
+          allowProtoPropertiesByDefault: true
+        } as any) ?? ''
+      ).trim();
+    } catch {
+      return '';
+    }
   });
   hb.registerHelper('<', (a: unknown, b: unknown) => Number(a) < Number(b));
   hb.registerHelper('>', (a: unknown, b: unknown) => Number(a) > Number(b));

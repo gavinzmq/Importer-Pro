@@ -78,6 +78,13 @@ export const MAIN_NOTE_TYPE = 'main';
 export const ALL_NOTE_TYPES = 'all';
 
 /**
+ * 不输出（D127）：「输出到」列特殊值——该字段不进入任何笔记的渲染数据（主笔记与全部 `_notes` object 均不含），
+ * 但仍在 preprocess 中照常计算（`{{set}}` 进 column-mapping/derived 段），供后续设置链/行筛选/输出命名/手写模板引用，
+ * 即仅作预处理中间值。与「类型 = 忽略」区别：忽略 = 该行不产出 set（完全不计算）；不输出 = 产出 set 但过滤出笔记数据。
+ */
+export const NONE_NOTE_TYPE = 'none';
+
+/**
  * D125：来源下拉选择后，目标字段自动更正 = 来源值去除所有空格与回车（\s 全部空白）。
  * 去除后为空（源名全空白）时回落原值，避免目标字段被清空。
  */
@@ -86,13 +93,43 @@ export function sourceToTargetName(source: string): string {
   return cleaned !== '' ? cleaned : String(source ?? '');
 }
 
-/** 判断附加笔记类型是否被任何行使用（D120：note-output 段仅在至少一个附加类型有行时产出） */
+/** 判断附加笔记类型是否被任何行使用（D120：note-output 段仅在至少一个附加类型有行时产出；D127：不输出不是类型） */
 export function hasUsedNoteTypes(mappings: ColumnMapping[]): boolean {
-  return (mappings ?? []).some((m) => m.noteType && m.noteType !== MAIN_NOTE_TYPE && m.type !== 'ignore');
+  return (mappings ?? []).some(
+    (m) =>
+      m.noteType &&
+      m.noteType !== MAIN_NOTE_TYPE &&
+      m.noteType !== NONE_NOTE_TYPE &&
+      m.type !== 'ignore'
+  );
 }
 
-/** 行内「添加设置」链的分组（D113：列格式化 / 列处理；D119：计算 / 链接；列派生为行级 rule 预设，走独立下拉组） */
-export type MappingSettingGroup = 'format' | 'process' | 'compute' | 'link';
+/** 不输出字段清单（D127：noteType='none' 行的目标字段集合，供 shard 过滤 / 模板 none 标记 / UI 预览隐藏） */
+export function mappingNoneTargets(mappings: ColumnMapping[]): string[] {
+  return (mappings ?? [])
+    .filter((m) => m.noteType === NONE_NOTE_TYPE && m.type !== 'ignore')
+    .map((m) => m.target || m.source)
+    .filter(Boolean);
+}
+
+/** 从 preprocess 提取不输出字段清单（D127：扫描 column-mapping 段内 `ipro:none:` 标记；
+ *  供模板 parse（config.noneFields）提升，使 API/自动匹配路径也能在 shard 过滤不输出字段） */
+export function extractNoneTargets(preprocess: string): string[] {
+  const out: string[] = [];
+  const re = /\{\{!-- ipro:none:([\s\S]*?)--\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(preprocess)) !== null) {
+    for (const f of m[1].split(',')) {
+      const name = f.trim();
+      if (name && !out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+}
+
+/** 行内「添加设置」链的分组（D113：列格式化 / 列处理；D119：计算 / 链接；D126 条件校验；D128 提取；
+ *  列派生为行级 rule 预设，走独立下拉组） */
+export type MappingSettingGroup = 'format' | 'process' | 'compute' | 'link' | 'validate' | 'extract';
 
 /** 条件比较运算符（D119 条件计算 / 条件警告） */
 export type ComputeCompareOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte';
@@ -105,6 +142,33 @@ export const COMPUTE_COMPARE_LABELS: ReadonlyArray<{ value: ComputeCompareOp; la
   { value: 'lte', label: '≤' }
 ];
 
+/** 条件校验的布尔 Helper（D126：「添加设置 · 条件校验」组，均已在引擎注册） */
+export type ValidateFnOp =
+  | 'validateID'
+  | 'isEmail'
+  | 'isPhone'
+  | 'isNumber'
+  | 'isDate'
+  | 'inRange'
+  | 'matchesRegex'
+  | 'isNotEmpty'
+  | 'isEmpty';
+
+export const VALIDATE_FN_LABELS: ReadonlyArray<{ value: ValidateFnOp; label: string; needParam: boolean }> = [
+  { value: 'validateID', label: '身份证号合法', needParam: false },
+  { value: 'isEmail', label: '是邮箱', needParam: false },
+  { value: 'isPhone', label: '是手机号', needParam: false },
+  { value: 'isNumber', label: '是数字', needParam: false },
+  { value: 'isDate', label: '是日期', needParam: false },
+  { value: 'inRange', label: '在范围内（集合，如 1-100 或 2,5,8-10）', needParam: true },
+  { value: 'matchesRegex', label: '匹配正则', needParam: true },
+  { value: 'isNotEmpty', label: '非空', needParam: false },
+  { value: 'isEmpty', label: '为空（库 isEmpty：判空集合/对象）', needParam: false }
+];
+
+/** 条件校验真/假值形态（D126）：固定值（字符串字面量）或字段引用（来源列 → 编译 (lookup this "列名")） */
+export type ValidateBranchValue = { kind: 'fixed'; value: string } | { kind: 'field'; field: string };
+
 /**
  * 列映射行「添加设置」链中的一步（D105/D113/D119）。组内 op/参数语义随组而定；顺序 = 执行顺序
  * （类型快捷转换视作隐含前置步骤，与首个设置同语义去重）：
@@ -114,6 +178,10 @@ export const COMPUTE_COMPARE_LABELS: ReadonlyArray<{ value: ComputeCompareOp; la
  *   作为值管线唯一步骤（UI 添加时清空其余值步骤）；
  * - compute · warn（条件警告）/ link · smartLink：**附言**（映射行 set 之后追加条件写 _warnings / 写 _link），
  *   非值管线步骤。
+ * - validate · 条件校验（D126）：整链替换式——布尔 Helper（validateID/isEmail/…）校验当前行值 → 真/假值
+ *   （各含形态：fixed 固定值 | field 字段引用），同 D119 条件计算口径（单步直调、不入 pipe）；
+ * - extract · 提取（D128）：从数组/Object 取第 N 个元素/键值（itemAt，索引 0-based 负数自末尾），值管线步骤
+ *   （1 步直调 / ≥2 步以 pipe 阶段表达）。
  */
 export type MappingSetting =
   | { group: 'format'; op: ColumnFormatOp; param: string }
@@ -121,7 +189,9 @@ export type MappingSetting =
   | { group: 'compute'; op: 'add' | 'subtract' | 'multiply' | 'divide'; operand: string }
   | { group: 'compute'; op: 'condition'; compare: ComputeCompareOp; operand: string; truthy: string; falsy: string }
   | { group: 'compute'; op: 'warn'; compare: ComputeCompareOp; operand: string; text: string }
-  | { group: 'link'; op: 'smartLink'; target: string; fallback: string };
+  | { group: 'link'; op: 'smartLink'; target: string; fallback: string }
+  | { group: 'validate'; op: ValidateFnOp; param: string; truthy: ValidateBranchValue; falsy: ValidateBranchValue }
+  | { group: 'extract'; op: 'itemAt'; key: string };
 
 /** 是否为「附言」类设置（warn / link：映射行 set 之后追加，非值管线步骤） */
 export function isPostscriptSetting(
@@ -137,9 +207,23 @@ export function isConditionSetting(
   return s.group === 'compute' && s.op === 'condition';
 }
 
-/** 是否为值管线步骤（format / process / 算术 / 条件计算；附言除外） */
+/** 是否为「条件校验」设置（D126：整链替换式，同条件计算口径） */
+export function isValidateSetting(
+  s: MappingSetting
+): s is Extract<MappingSetting, { group: 'validate'; op: ValidateFnOp }> {
+  return s.group === 'validate';
+}
+
+/** 是否为「提取」设置（D128：数组/Object 取值，值管线步骤） */
+export function isExtractSetting(
+  s: MappingSetting
+): s is Extract<MappingSetting, { group: 'extract'; op: 'itemAt' }> {
+  return s.group === 'extract' && s.op === 'itemAt';
+}
+
+/** 是否为值管线步骤（format / process / 算术 / 条件计算 / 提取；附言除外；条件校验 = 整链替换不入链） */
 export function isValueChainSetting(s: MappingSetting): boolean {
-  return !isPostscriptSetting(s);
+  return !isPostscriptSetting(s) && !isValidateSetting(s);
 }
 
 /**
@@ -259,7 +343,22 @@ export function mappingSettingLabel(s: MappingSetting): string {
     }
     return `计算·${computeArithLabel(s.op).replace('（第二操作数）', '')}(${s.operand || '?'})`;
   }
+  // D126：条件校验（校验 fn + 参数 → 真/假值，展示形态）
+  if (s.group === 'validate') {
+    const base = VALIDATE_FN_LABELS.find((o) => o.value === s.op)?.label ?? s.op;
+    const p = s.param && (s.op === 'inRange' || s.op === 'matchesRegex') ? ` [${s.param}]` : '';
+    return `校验·${base}${p} → ${branchLabel(s.truthy)} / ${branchLabel(s.falsy)}`;
+  }
+  // D128：提取（数组/Object）
+  if (s.group === 'extract') {
+    return `提取·第 ${s.key || '?'} 个/键`;
+  }
   return `链接·智能链接(→${s.target || '?'}${s.fallback ? ` 回退 ${s.fallback}` : ''})`;
+}
+
+/** 条件校验分支展示（D126：固定值原样 / 字段引用 `@列`） */
+function branchLabel(b: ValidateBranchValue): string {
+  return b.kind === 'field' ? `@${b.field}` : String(b.value ?? '');
 }
 
 /** 比较符符号化（D119 标签） */
@@ -284,6 +383,13 @@ export interface DataTransformConfig {
   mappings: ColumnMapping[];
   /** D120：多笔记输出 · 附加笔记类型配置（空 = 单主笔记，note-output 段不产出，零回归） */
   noteTypes?: NoteTypeConfig[];
+  /**
+   * D129：区块 3 输出位置/命名规则表达式——编译进 preprocess `output` 段
+   * （`{{set "_folder" …}}` / `{{set "_fileName" …}}`）；frontmatter output.folder/note_name 固定写
+   * `{{_folder}}` / `{{_fileName}}`（仅引用保留字段的间接层）。folder 空 = 缺省（回落设置默认目录）；
+   * noteName 空/`{{_hash}}` = 缺省（回落 _hash）。反编译由 output 段回填区块 3 两个输入框。
+   */
+  output?: { folder: string; noteName: string };
   /** ⚠️ 遗留兼容字段（D113 起不再由 UI/编译/解码写入或消费；仅旧版测试/结构沿用） */
   formats?: ColumnFormatRule[];
   processes?: ColumnProcessRule[];
@@ -724,6 +830,25 @@ export function applyMappingChainValue(value: unknown, type: MappingType, settin
           return x;
       }
     }
+    // D128 提取·itemAt（JS 语义层；对当前值取数组元素/Object 键值，越界/缺键返 ''）
+    if (s.group === 'extract') {
+      if (Array.isArray(x)) {
+        const n = Number(s.key);
+        const idx = Number.isInteger(n) ? (n < 0 ? x.length + n : n) : NaN;
+        return Number.isInteger(idx) && idx >= 0 && idx < x.length ? x[idx] : '';
+      }
+      if (x !== null && typeof x === 'object' && !(x instanceof Date)) {
+        const obj = x as Record<string, unknown>;
+        const k = String(s.key ?? '');
+        return k in obj ? obj[k] : '';
+      }
+      return '';
+    }
+    // D126 条件校验（整链替换式 JS 语义：布尔校验当前值 → 真/假值；字段引用分支单值语义下返回 ''）
+    if (s.group === 'validate') {
+      const hit = validateCellBool(x, s.op, s.param);
+      return hit ? validateBranchVal(s.truthy) : validateBranchVal(s.falsy);
+    }
     // D119 计算/链接（JS 语义层仅供单测/兼容对拍；正式执行走 D98 编译段）。列操作数（非数字常数）在
     // 单值语义下无法解析 → 原样返回；数字常数按数值运算/比较处理。
     if (s.group === 'link') return x; // 附言非值变换
@@ -946,6 +1071,7 @@ export type IproSegment =
   | 'column-process'
   | 'column-mapping'
   | 'derived'
+  | 'output'
   | 'note-output';
 export const IPRO_SEGMENT_ORDER: IproSegment[] = [
   'row-filter',
@@ -953,6 +1079,8 @@ export const IPRO_SEGMENT_ORDER: IproSegment[] = [
   'column-process',
   'column-mapping',
   'derived',
+  // D129：输出位置及命名段（位于 derived 之后、note-output 之前——可引用 _hash 与派生字段）
+  'output',
   // D120：多笔记输出段（位于 derived 之后；未定义附加类型时不产出）
   'note-output'
 ];
@@ -1131,7 +1259,12 @@ function settingStep(s: MappingSetting): StepSpec | null {
   if (s.group === 'compute' && s.op !== 'condition' && s.op !== 'warn') {
     return { helper: s.op, args: [operandArg(s.operand)] };
   }
-  // condition / warn / link 不走值管线链步骤（condition = 整链替换式、warn/link = 附言，见 mappingRowExpr / mappingBody）
+  // D128 提取·itemAt（值管线链步骤）：索引/键入参（数组 0-based 负数自末尾 / Object 键名）
+  if (s.group === 'extract') {
+    return { helper: 'itemAt', args: [hbQuote(s.key)] };
+  }
+  // condition / warn / link / validate 不走值管线链步骤
+  // （condition = 整链替换式、warn/link = 附言、validate = 整链替换式 validateReplaceExpr，见 mappingRowExpr / mappingBody）
   return null;
 }
 
@@ -1173,6 +1306,92 @@ function stepStage(spec: StepSpec): string {
   return `(stage ${hbQuote(spec.helper)}${spec.args.length > 0 ? ` ${spec.args.join(' ')}` : ''})`;
 }
 
+/* ── D126 条件校验编译（整链替换式，同 D119 条件计算口径） ── */
+
+/** 布尔校验子表达式：(校验fn 值 参数…)——仅 inRange/matchesRegex 需要参数，其余布尔 Helper 单参 */
+function validateFnExpr(op: ValidateFnOp, param: string, valueExpr: string): string {
+  if (op === 'inRange') return `(inRange ${valueExpr} ${hbQuote(param)})`; // 集合串，如 1-100 / 2,5,8-10
+  if (op === 'matchesRegex') return `(matchesRegex ${valueExpr} ${hbQuote(param)})`;
+  return `(${op} ${valueExpr})`;
+}
+
+/** 真/假值 → 表达式：固定值 = 字符串字面量；字段引用 = (lookup this "列名") */
+function branchValueExpr(b: ValidateBranchValue): string {
+  return b.kind === 'field' ? `(lookup this ${hbQuote(b.field)})` : hbQuote(b.value);
+}
+
+/** 整链替换式：(ternary (校验fn 值 参数…) 真值 假值)；单步直调形态、不入 pipe（同 D119 条件计算） */
+function validateReplaceExpr(s: Extract<MappingSetting, { group: 'validate' }>, valueExpr: string): string {
+  return `(ternary ${validateFnExpr(s.op, s.param, valueExpr)} ${branchValueExpr(s.truthy)} ${branchValueExpr(s.falsy)})`;
+}
+
+/** 条件校验分支 JS 取值（固定值原样；字段引用在单值语义下无法解析 → ''） */
+function validateBranchVal(b: ValidateBranchValue): unknown {
+  return b.kind === 'field' ? '' : String(b.value ?? '');
+}
+
+/** 条件校验布尔 JS 语义（与 builtin 校验 Helper 对拍；正式执行走 D98 编译段） */
+function validateCellBool(v: unknown, op: ValidateFnOp, param: string): boolean {
+  const cell = (y: unknown): string => (y === undefined || y === null ? '' : String(y));
+  const str = cell(v);
+  switch (op) {
+    case 'isNotEmpty':
+      return str !== '';
+    case 'isEmpty':
+      return Array.isArray(v)
+        ? v.length === 0
+        : v !== null && typeof v === 'object' && !(v instanceof Date)
+          ? Object.keys(v as object).length === 0
+          : false;
+    case 'isEmail':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(str);
+    case 'isPhone':
+      return /^1[3-9]\d{9}$/.test(str);
+    case 'isNumber':
+      return !Number.isNaN(Number(v)) && v !== '' && v !== null;
+    case 'isDate':
+      return !Number.isNaN(Date.parse(str));
+    case 'validateID':
+      return jsValidateID(str);
+    case 'inRange': {
+      const set = new Set<number>();
+      for (const part of String(param ?? '').split(/[,，;；\s]+/)) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const m = /^(\d+)\s*-\s*(\d+)$/.exec(seg);
+        if (m) {
+          let a = Number(m[1]);
+          let b = Number(m[2]);
+          if (a > b) [a, b] = [b, a];
+          for (let n = Math.max(1, a); n <= b; n++) set.add(n);
+        } else if (/^[1-9]\d*$/.test(seg)) {
+          set.add(Number(seg));
+        }
+      }
+      const n = Number(v);
+      return Number.isInteger(n) && set.has(n);
+    }
+    case 'matchesRegex':
+      try {
+        return new RegExp(String(param)).test(str);
+      } catch {
+        return false;
+      }
+    default:
+      return false;
+  }
+}
+
+/** GB11643-1999 身份证校验（18 位，与 builtin isValidID 对拍；JS 语义层使用） */
+function jsValidateID(id: string): boolean {
+  if (!/^\d{17}[\dXx]$/.test(id)) return false;
+  const weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+  const codes = '10X98765432';
+  let sum = 0;
+  for (let i = 0; i < 17; i++) sum += Number(id[i]) * weights[i];
+  return codes[sum % 11] === id[17].toUpperCase();
+}
+
 /**
  * 映射行值管线 → `{ target(引号), expr }`；返回 null = 该行不产出（ignore / 派生 rule / 缺源或缺目标）。
  * D105/D113：0 步=复制 `(lookup this src)`、1 步=直调、≥2 步=`(pipe src (stage …)…)`；
@@ -1191,11 +1410,16 @@ function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | nu
     const cmp = compareValueExpr(cond.compare, srcExpr, cond.operand);
     return { target: hbQuote(target), expr: `(ternary ${cmp} ${hbQuote(cond.truthy)} ${hbQuote(cond.falsy)})` };
   }
+  // D126 条件校验：整链替换式（同条件计算口径；真/假值 = 固定值字符串字面量 | (lookup this "列名") 字段引用）
+  const valid = settings.find(isValidateSetting);
+  if (valid) {
+    return { target: hbQuote(target), expr: validateReplaceExpr(valid, srcExpr) };
+  }
   const steps: StepSpec[] = [];
   const quick = typeQuickStep(m.type);
   if (quick) steps.push(quick);
   for (const s of settings) {
-    if (isPostscriptSetting(s) || isConditionSetting(s)) continue;
+    if (isPostscriptSetting(s) || isConditionSetting(s) || isValidateSetting(s)) continue;
     const spec = settingStep(s);
     if (spec) steps.push(spec);
   }
@@ -1236,6 +1460,9 @@ function mappingBody(mappings: ColumnMapping[]): string {
     lines.push(`{{#if (has this ${hbQuote(m.source)})}}{{set ${built.target} ${built.expr}}}{{/if}}`);
     for (const p of mappingPostLines(m)) lines.push(p);
   }
+  // D127：不输出字段清单持久化标记——'none' 行照常产 set 但不进任何笔记对象，段内无法还原归属 → 显式记录目标字段
+  const none = mappingNoneTargets(mappings);
+  if (none.length > 0) lines.push(`{{!-- ipro:none:${none.join(',')} --}}`);
   return lines.join('\n');
 }
 
@@ -1247,7 +1474,7 @@ function derivePostExpr(base: string, type: MappingType, settings?: MappingSetti
   if (quick) steps.push(quick);
   for (const s of settings ?? []) {
     if (typeQuickConversionEquals(type, s)) continue;
-    if (isPostscriptSetting(s) || isConditionSetting(s)) continue;
+    if (isPostscriptSetting(s) || isConditionSetting(s) || isValidateSetting(s)) continue;
     const spec = settingStep(s);
     if (spec) steps.push(spec);
   }
@@ -1334,7 +1561,8 @@ function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[])
   const allRows = mappings.filter((m) => m.type !== 'ignore' && m.noteType === ALL_NOTE_TYPES);
   const byNote = new Map<string, ColumnMapping[]>();
   for (const m of mappings) {
-    if (m.type === 'ignore' || m.noteType === ALL_NOTE_TYPES) continue; // 所有笔记行单独展开进每个对象
+    // 所有笔记行单独展开进每个对象；不输出（none）行不进任何对象（D127，仅作预处理中间值）
+    if (m.type === 'ignore' || m.noteType === ALL_NOTE_TYPES || m.noteType === NONE_NOTE_TYPE) continue;
     const nt = m.noteType && m.noteType !== MAIN_NOTE_TYPE ? m.noteType : MAIN_NOTE_TYPE;
     const arr = byNote.get(nt) ?? [];
     arr.push(m);
@@ -1354,8 +1582,34 @@ function noteOutputBody(mappings: ColumnMapping[], noteTypes?: NoteTypeConfig[])
   return lines.join('\n');
 }
 
+/* ── D129 输出位置及命名段（output）编译 ──────────────── */
+
+/**
+ * D129：区块 3 输出文件夹/文件命名表达式 → `output` 段体（位于 derived 之后、note-output 之前）。
+ * 表达式以编译专用 `expr` 运行时 Helper 对当前行数据渲染（完整 Handlebars 文本，可含 {{#if}} 块），
+ * 结果非空才 `{{set}}`（空结果回落既有默认：folder=设置默认目录、name=_hash）。
+ * 缺省（folder 空、noteName 空/`{{_hash}}`）不产出任何行 → 整段省略。
+ */
+function outputBody(output?: { folder: string; noteName: string }): string {
+  if (!output) return '';
+  const folder = String(output.folder ?? '').trim();
+  const noteName = String(output.noteName ?? '').trim();
+  const lines: string[] = [];
+  // 每行：`{{#if (isNotEmpty (expr "文本"))}}{{set "_folder" (expr "文本")}}{{/if}}`
+  const setLine = (key: '_folder' | '_fileName', text: string): string => {
+    const val = `(expr ${hbQuote(text)})`;
+    return `{{#if (isNotEmpty ${val})}}{{set ${hbQuote(key)} ${val}}}{{/if}}`;
+  };
+  if (folder !== '' && folder !== '{{_folder}}') lines.push(setLine('_folder', folder));
+  if (noteName !== '' && noteName !== '{{_hash}}' && noteName !== '{{_fileName}}') {
+    lines.push(setLine('_fileName', noteName));
+  }
+  return lines.join('\n');
+}
+
 /** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链；
- *  D122/D123：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean 承载） */
+ *  D122/D123：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean 承载；
+ *  D129：output 段位于 derived 与 note-output 之间） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
   const filter = rowFilterBody(cfg.filters);
@@ -1364,6 +1618,9 @@ export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproS
   if (mapping !== '') seg['column-mapping'] = mapping;
   const derived = derivedBody(cfg.mappings);
   if (derived !== '') seg.derived = derived;
+  // D129：输出位置及命名段（缺省不产出）
+  const out = outputBody(cfg.output);
+  if (out !== '') seg.output = out;
   // D120：多笔记输出段（无附加类型被使用 → 空段省略，零回归）
   const noteOut = noteOutputBody(cfg.mappings, cfg.noteTypes);
   if (noteOut !== '') seg['note-output'] = noteOut;
@@ -1592,27 +1849,48 @@ function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
     // 纯复制
     return { source: stripQuotes(call.args[1] ?? ''), target, type: 'text' };
   }
-  // D119 条件计算：`(ternary (cmp VALUE operand) 真 假)` 整链替换式
+  // D119 条件计算 / D126 条件校验：`(ternary (fn VALUE …) 真 假)` 整链替换式
   if (call.name === 'ternary') {
-    const cmp = parseParenCall(call.args[0] ?? '');
-    if (!cmp || !isCompareHelper(cmp.name)) return null;
-    const source = colOf(cmp.args[0] ?? '');
+    const fn = parseParenCall(call.args[0] ?? '');
+    if (!fn) return null;
+    const source = colOf(fn.args[0] ?? '');
     if (!source) return null;
-    return {
-      source,
-      target,
-      type: 'text',
-      settings: [
-        {
-          group: 'compute',
-          op: 'condition',
-          compare: cmp.name as ComputeCompareOp,
-          operand: decodeOperand(cmp.args[1] ?? ''),
-          truthy: stripQuotes(call.args[1] ?? ''),
-          falsy: stripQuotes(call.args[2] ?? '')
-        }
-      ]
-    };
+    // D119 条件计算：比较 helper（eq/neq/gt/…）
+    if (isCompareHelper(fn.name)) {
+      return {
+        source,
+        target,
+        type: 'text',
+        settings: [
+          {
+            group: 'compute',
+            op: 'condition',
+            compare: fn.name as ComputeCompareOp,
+            operand: decodeOperand(fn.args[1] ?? ''),
+            truthy: stripQuotes(call.args[1] ?? ''),
+            falsy: stripQuotes(call.args[2] ?? '')
+          }
+        ]
+      };
+    }
+    // D126 条件校验：布尔校验 helper（validateID/isEmail/…）；真/假值 = 固定值 | 字段引用
+    if (isValidateFnName(fn.name)) {
+      return {
+        source,
+        target,
+        type: 'text',
+        settings: [
+          {
+            group: 'validate',
+            op: fn.name as ValidateFnOp,
+            param: validateParamOf(fn.name, fn.args[1]),
+            truthy: decodeValidateBranch(call.args[1] ?? ''),
+            falsy: decodeValidateBranch(call.args[2] ?? '')
+          }
+        ]
+      };
+    }
+    return null;
   }
   let source: string | null = null;
   const steps: StepSpec[] = [];
@@ -1655,6 +1933,26 @@ function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
 /** 是否为 D119 比较 helper 名（eq/neq/gt/gte/lt/lte） */
 function isCompareHelper(name: string): boolean {
   return name === 'eq' || name === 'neq' || name === 'gt' || name === 'gte' || name === 'lt' || name === 'lte';
+}
+
+/** 是否为 D126 条件校验布尔 Helper 名（validateID/isEmail/…/isEmpty） */
+function isValidateFnName(name: string): boolean {
+  return VALIDATE_FN_LABELS.some((o) => o.value === name);
+}
+
+/** 条件校验参数还原（D126）：inRange 集合串 / matchesRegex 正则文本；其余无参 */
+function validateParamOf(op: string, arg: string | undefined): string {
+  return op === 'inRange' || op === 'matchesRegex' ? stripQuotes(arg ?? '') : '';
+}
+
+/** 真/假值反编译（D126）：`(lookup this "列名")` → 字段引用；否则 = 固定值字符串字面量 */
+function decodeValidateBranch(arg: string): ValidateBranchValue {
+  const call = parseParenCall(arg);
+  if (call && call.name === 'lookup') {
+    const field = stripQuotes(call.args[1] ?? '');
+    if (field) return { kind: 'field', field };
+  }
+  return { kind: 'fixed', value: stripQuotes(arg) };
 }
 
 /** 反编译操作数（D119）：列引用 → 列名；数值/字面量 → 原文本 */
@@ -1704,6 +2002,9 @@ function stepSpecToSetting(spec: StepSpec): MappingSetting | null {
         op: spec.helper as 'add' | 'subtract' | 'multiply' | 'divide',
         operand: decodeOperand(spec.args[0] ?? '')
       };
+    // D128 提取·itemAt（直调/pipe 阶段）→ extract 设置（索引/键）
+    case 'itemAt':
+      return { group: 'extract', op: 'itemAt', key: arg(0) };
     default:
       return null;
   }
@@ -1716,6 +2017,8 @@ function decodeMappingBody(body: string): ColumnMapping[] {
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t) continue;
+    // D127：不输出清单标记行（`{{!-- ipro:none:目标A,目标B --}}`）仅作元信息，跳过（回填统一在 handlebarsToConfig 末尾）
+    if (/^\{\{!-- ipro:none:/.test(t)) continue;
     // warn：`{{#if (cmp VALUE operand)}}{{set "_warnings" (push _warnings "文本")}}{{/if}}`
     const warn = /^\{\{#if ([\s\S]*?)\}\}\{\{set "_warnings" \(push _warnings "([^"]*)"\)\}\}\{\{\/if\}\}$/.exec(t);
     if (warn) {
@@ -1757,7 +2060,7 @@ function decodeMappingBody(body: string): ColumnMapping[] {
   return out;
 }
 
-/** 派生变换操作白名单（decode 扁平化用；含 derive 生产者/格式化/处理/算术/类型隐含转换，D119 增算术） */
+/** 派生变换操作白名单（decode 扁平化用；含 derive 生产者/格式化/处理/算术/类型隐含转换/提取，D119 增算术、D128 增 itemAt） */
 const DERIVED_TRANSFORM_OPS = new Set([
   'genderFromID',
   'birthFromID',
@@ -1778,7 +2081,8 @@ const DERIVED_TRANSFORM_OPS = new Set([
   'add',
   'subtract',
   'multiply',
-  'divide'
+  'divide',
+  'itemAt'
 ]);
 
 /** 派生段表达式 → 扁平链（D117：支持派生 base + 后续类型/设置直调或 pipe；兼容 D99 旧嵌套括号形态） */
@@ -1985,8 +2289,30 @@ function decodeNoteOutput(body: string): { noteTypes: NoteTypeConfig[]; targetNo
   return { noteTypes, targetNote };
 }
 
+/** D129：output 段体反编译 → { folder?, noteName? }（回填区块 3 输出文件夹/文件命名输入框）。
+ *  解析 `{{#if (isNotEmpty (expr "文本"))}}{{set "_folder" (expr "文本")}}{{/if}}` 行；
+ *  用户表达式中含 `{{…}}`（且可能含 `\"` 转义），取每行首个 `(expr "…")` 字符串参数并反转义。 */
+function decodeOutputSegment(body: string): { folder?: string; noteName?: string } | null {
+  const out: { folder?: string; noteName?: string } = {};
+  const exprRe = /\(\s*expr\s+"((?:[^"\\]|\\.)*)"\s*\)/g;
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const setM = /set\s+"(_folder|_fileName)"\s+/.exec(t);
+    if (!setM) continue;
+    exprRe.lastIndex = 0;
+    const m = exprRe.exec(t);
+    if (!m) continue;
+    const text = m[1].replace(/\\"/g, '"');
+    if (setM[1] === '_folder') out.folder = text;
+    else out.noteName = text;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /** preprocess 标记段 → DataTransformConfig（D98 反编译；D113：列侧统一收口为 mappings，旧 format/process 段折叠；
- *  D120 note-output；D122：row-remove 废弃段忽略，旧「去除空行」预置规则（任意列 非空）迁移为 clean.removeEmpty） */
+ *  D120 note-output；D122：row-remove 废弃段忽略，旧「去除空行」预置规则（任意列 非空）迁移为 clean.removeEmpty；
+ *  D129：output 段反编译回填） */
 export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   const seg = extractSegments(preprocess);
   const cfg = emptyTransform();
@@ -2008,6 +2334,20 @@ export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   if (folded.length > 0) cfg.mappings = [...folded, ...cfg.mappings];
   // 派生段反编译为带 rule 的统一映射行，接在纯映射行之后
   if (seg.derived) cfg.mappings = [...cfg.mappings, ...decodeDerivedBody(seg.derived)];
+  // D129：output 段反编译 → cfg.output（区块 3 表达式；缺省不产出）
+  if (seg.output) {
+    const decOut = decodeOutputSegment(seg.output);
+    if (decOut) cfg.output = { folder: decOut.folder ?? '', noteName: decOut.noteName ?? '{{_hash}}' };
+  }
+  // D127：按不输出清单（column-mapping 段内 `ipro:none:` 标记）统一回填 noteType='none'
+  // （含纯映射/派生/折叠行；这些字段不进任何笔记对象，段内无法按对象归属还原）
+  const noneTargets = extractNoneTargets(preprocess);
+  if (noneTargets.length > 0) {
+    for (const m of cfg.mappings) {
+      const key = m.target || m.source;
+      if (key && noneTargets.includes(key)) m.noteType = NONE_NOTE_TYPE;
+    }
+  }
   // D120：note-output 段还原 noteTypes 与映射行 noteType（按目标字段归属）
   if (seg['note-output']) {
     const dec = decodeNoteOutput(seg['note-output']);
@@ -2046,13 +2386,15 @@ export async function applyWizardTransform(
   opts: { promoteHeader?: boolean } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
-  // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行
+  // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行；
+  // D129：output 段（derived 之后、note-output 之前，可引用派生字段与 _hash）随阶段 B 执行
   const phaseA = segmentsToPreprocess({
     'row-filter': seg['row-filter']
   });
   const phaseB = segmentsToPreprocess({
     'column-mapping': seg['column-mapping'],
     derived: seg.derived,
+    output: seg.output,
     'note-output': seg['note-output']
   });
 
@@ -2103,11 +2445,12 @@ export async function applyWizardTransform(
     }
   }
 
-  // D119/D120：链接附言与多笔记默认命名依赖派生 `_hash`（运行时 derive 在 preprocess 之后），
-  // 向导变换在渲染前为每行注入确定性占位哈希（非保留字段 JSON 的 md5 前 10 位，预览与 Step 4 同路径）
+  // D119/D120/D129：链接附言与多笔记默认命名 / output 段文件命名依赖派生 `_hash`（运行时 derive 在 preprocess
+  // 之后），向导变换在渲染前为每行注入确定性占位哈希（非保留字段 JSON 的 md5 前 10 位，预览与 Step 4 同路径）
   const hasLink = (cfg.mappings ?? []).some((m) => (m.settings ?? []).some((s) => s.group === 'link'));
   const hasNoteOutput = !!seg['note-output'];
-  if (hasLink || hasNoteOutput) {
+  const hasOutput = !!seg.output;
+  if (hasLink || hasNoteOutput || hasOutput) {
     rows = rows.map((t) => {
       const row = t.row;
       if (row._hash === undefined) row._hash = seedRowHash(row);

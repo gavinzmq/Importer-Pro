@@ -141,10 +141,11 @@ export class ApiFacade {
     this.engine.setLinkIndex((this.cache as any).getLinkIndex?.());
     const prepared: DataRecord[] = [];
     for (const record of records) {
-      // D112：importData 路径按模板 output.folder/note_name 求值命名
+      // D112：importData 路径按模板 output.folder/note_name 求值命名；D127：模板 noneFields 随 ctx 过滤
       const specs = await this.pipeline.shard(record, template, {
         defaultFolder: this.settings().paths.outputFolder,
-        useTemplateOutput: true
+        useTemplateOutput: true,
+        noneFields: template.noneFields
       });
       prepared.push({
         ...record,

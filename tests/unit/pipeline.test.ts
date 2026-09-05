@@ -130,3 +130,42 @@ describe('向导 outputOverride（D112，实时命名优先于模板 output）',
     expect(r.filename).toBe('feedbeef12'); // 回落 _hash
   });
 });
+
+describe('D127 不输出字段过滤（ctx.noneFields，仅作预处理中间值）', () => {
+  it('单主笔记 defaultSpec：noneFields 不进笔记渲染数据', async () => {
+    const engine = new TemplateEngine();
+    const pipeline = new DataPipeline(engine);
+    const template = makeTemplate({ content: '# {{姓名}}' });
+    const specs = await pipeline.shard(
+      { 姓名: '张三', 标签原: 'a,b', 备注: '仅预处理' },
+      template,
+      { defaultFolder: '', noneFields: ['备注'] }
+    );
+    const spec = specs[0];
+    expect(spec.data.姓名).toBe('张三');
+    expect(spec.data['标签原']).toBe('a,b');
+    expect(spec.data['备注']).toBeUndefined(); // 不输出字段被过滤
+  });
+
+  it('_notes object 内联字段：noneFields 从各 object data 过滤', async () => {
+    const engine = new TemplateEngine();
+    const pipeline = new DataPipeline(engine);
+    // 记录自带 _notes（向导 applyWizardTransform note-output 产物）；其中手动含 none 字段名应被过滤
+    const template = makeTemplate({ content: '# x' });
+    const specs = await pipeline.shard(
+      {
+        姓名: '张三',
+        临时: 'x',
+        _notes: [
+          { 姓名: '张三', 临时: 'x', _folder: '档案', _fileName: '张三_主' }
+        ]
+      },
+      template,
+      { defaultFolder: '', noneFields: ['临时'] }
+    );
+    const spec = specs[0];
+    expect(spec.data.姓名).toBe('张三');
+    expect(spec.data['临时']).toBeUndefined();
+    expect(spec.folder).toBe('档案');
+  });
+});
