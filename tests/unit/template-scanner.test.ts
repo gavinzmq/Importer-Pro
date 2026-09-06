@@ -130,9 +130,9 @@ row:
     expect(snap.matchPattern).toBe('*.csv');
     expect(snap.outputFolder).toBe('人员档案');
     expect(snap.outputNoteName).toBe('{{_hash}}');
-    // byContent(contains) → 任意列 不包含（筛选迁移保留）；removeEmpty → clean.removeEmpty（行清洗引擎开关）
+    // byContent(contains) → 任意列 不包含（筛选迁移保留，并入组数组首组）；removeEmpty → clean.removeEmpty（行清洗开关）
     const filter = snap.transform.filters;
-    expect(filter.some((f) => f.op === 'notContains' && f.value === '测试' && f.column === '*')).toBe(true);
+    expect(filter.flat().some((f) => f.op === 'notContains' && f.value === '测试' && f.column === '*')).toBe(true);
     expect(snap.transform.clean?.removeEmpty).toBe(true);
   });
 
@@ -151,7 +151,7 @@ row:
           removeEmpty: true,
           removeDuplicateHeader: true
         },
-        filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
+        filters: [[{ column: '部门', op: 'contains' as const, value: '研发' }]],
         // D113：格式化并入映射行设置链（不再产出 column-format 段）
         mappings: [{ source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] }]
       }
@@ -192,7 +192,7 @@ row:
       incrementalMode: 'hash' as const,
       transform: {
         clean: { removeEmpty: true },
-        filters: [{ column: '部门', op: 'contains' as const, value: '研发' }],
+        filters: [[{ column: '部门', op: 'contains' as const, value: '研发' }]],
         // D113：格式化/处理并入映射行设置链（不再有独立 column-format/column-process 段）
         mappings: [
           { source: '姓名', target: '姓名', type: 'text' as const, settings: [{ group: 'format' as const, op: 'trim' as const, param: '' }] },

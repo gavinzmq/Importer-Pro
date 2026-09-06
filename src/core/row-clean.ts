@@ -117,8 +117,11 @@ export function removeDuplicateHeaderRows(records: DataRecord[], enabled: boolea
  * - 该第一行从数据中移除（它是表头不是数据）；其余行按新列名重映射（保留字段原样保留）；
  * - 无剩余行 / 无数据列 → 返回 null（无可提升表头）。
  * 仅表格类数据源向导链路调用（rawRows 解析 + 清洗/筛选后调用，D124 见本文件头执行顺序）。
+ * D136：返回值附带 `snapshot` = 将被提升为表头的第一行按**新列名**映射的数据快照（仅数据列，不含
+ * 保留字段）——供引擎在渲染遍注入 `_header`（row-header-dup 段 `(isDuplicateHeader this _header)`
+ * 判定的基准行）；快照值与列名通常一致（表头值即列名来源），重复打印表头行与其逐值相同。
  */
-export function promoteHeaderRow(records: DataRecord[]): { header: string[]; rows: DataRecord[] } | null {
+export function promoteHeaderRow(records: DataRecord[]): { header: string[]; rows: DataRecord[]; snapshot: DataRecord } | null {
   if (records.length === 0) return null;
   const first = records[0];
   const allKeys: string[] = [];
@@ -149,6 +152,10 @@ export function promoteHeaderRow(records: DataRecord[]): { header: string[]; row
   const keyMap = new Map<string, string>();
   allKeys.forEach((k, i) => keyMap.set(k, header[i]));
 
+  // D136：_header 快照 = 表头行按新列名映射的数据值（与 promoted 行同键空间，供重复表头逐值比较）
+  const snapshot: DataRecord = {};
+  for (const k of allKeys) snapshot[keyMap.get(k) ?? k] = first[k];
+
   const rows = records.slice(1).map((r) => {
     const out: DataRecord = {};
     for (const [k, v] of Object.entries(r)) {
@@ -160,7 +167,7 @@ export function promoteHeaderRow(records: DataRecord[]): { header: string[]; row
     }
     return out;
   });
-  return { header, rows };
+  return { header, rows, snapshot };
 }
 
 /**

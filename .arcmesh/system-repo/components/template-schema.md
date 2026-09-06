@@ -1,8 +1,8 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.21.0"
-last_updated: "2026-09-06"
+version: "1.23.0"
+last_updated: "2026-09-07"
 status: "active"
 ---
 
@@ -52,10 +52,12 @@ status: "active"
 > **D125（2026-09-06 已实现）**：校验规则功能废弃删除——保留字段 `_valid` / `_errors` 移除（不再由引擎回填）；`_warnings` 保留（D119 条件警告附言写入）；`_status` 保留为模板可写字段（不再由校验自动回填，仍可用于输出命名表达式 `{{_status}}`）。
 
 > **D132/D133（2026-09-06 已实现；decisions/2026-09-06-step3-row-order-special-fields-content-template.md v1.1.0 implemented）**：保留字段**可配置子集** = `_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link`——Step 3 区块 5 以**特殊字段行**显示与配置（目标字段下拉选择、每字段**唯一**）；`_folder`/`_fileName` 与区块 3 输出位置/命名（output 段，D129）同源共享表达式、`_skip` 与区块 4 行筛选（row-filter 段）同源共享规则集——三者是**区块 4/3 联动视图行**（数据源 `filters`/`output`，不入 `mappings`，上方区块为权威编辑入口、双向同步、`✕` 复位）；`_status`/`_warnings`/`_link` 为**真实行**（入 `mappings`，source 可空、type=text、输出到禁用，编译进 `column-mapping` 段并在行前置 `{{!-- ipro:specialrow:<target> --}}` 标记，反编译据此无歧义还原为独立特殊字段行）；`_index`（引擎注入只读）、`_hash`（引擎/派生生成）、`_notes`（note-output 段管理）不在此列。特殊字段行同样产 `{{set "_xxx" …}}`（`_folder`/`_fileName` → output 段、`_skip` → row-filter 段由上方区块承载，不重复产段）。
+
+> **D136（2026-09-07 已实现；decisions/2026-09-07-step3-block5-panel-revision-row-clean-handlebars.md v1.1.0 implemented）**：修订 D132/D133——① 特殊字段入口由普通行「类型」下拉移至**特殊字段面板顶部「添加特殊字段」下拉**（面板恒显，无内容不隐藏；`_skip`/`_link` 恒可选可多行、其余唯一灰置），特殊字段行独立创建/删除、不再与普通映射行互移；② `_folder`/`_fileName`/`_skip` 面板行**可编辑**（输出表达式/行筛选规则组），与区块 3/4 同源共享、**取消「权威编辑入口」**（任一入口修改 → 广播 → 其余入口同步回显）；③ **`_skip` 允许多行** = 多组行筛选规则组（组内 AND 保留、组间 OR 保留；单组编译退化为现状形态、区块 4 多组展示一一对应同步）；④ **`_link` 允许多行** = 多个 smartLink 候选，编译 `{{set "_link" (push _link (smartLink …))}}`、类型升级 `string | string[]`（引擎首个成功命中优先）。`_folder`/`_fileName`/`_status`/`_warnings` 仍唯一。
 | `_folder` | string | 目标文件夹 | NoteGenerator |
 | `_status` | string | 状态字段（模板可写，如 valid / warning / error；D125 起不再由校验自动回填） | DataPipeline |
 | `_hash` | string | 哈希值（默认文件名） | NoteGenerator |
-| `_link` | string | 智能链接文本 | NoteGenerator |
+| `_link` | string \| string[]（D136 多候选） | 智能链接文本（D136 起可多行：多个 smartLink 候选，push 数组形态、首个命中优先） | NoteGenerator |
 | `_notes` | array | 多笔记生成清单 | NoteGenerator |
 
 ## 4. `_notes` 元素结构（对应 `NoteSpec`）
@@ -130,9 +132,9 @@ status: "active"
 {{!-- ipro:end:row-filter --}}
 ```
 
-段名与向导区块对应：`row-filter`（行筛选）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）/ `output`（输出位置及命名，D129，位于 derived 段之后）/ `note-output`（多笔记输出，D120，位于 output 段之后，未定义附加笔记类型不产该段）。**`row-remove`（删除行）段 D122 起废弃**（功能删除，保存时自动清理旧段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
+段名与向导区块对应：`row-clean`（过滤空行，D136 已实现，位于 row-filter 之前）/ `row-filter`（行筛选；D136 起可含多组 OR 组合）/ `row-header-dup`（过滤重复表头，D136 已实现，位于 row-filter 之后、column-mapping 之前）/ `column-mapping`（列映射，D113 起每行含列转换设置链——列格式化/列处理并入该段；派生 rule 行仍在 `derived` 段）/ `output`（输出位置及命名，D129，位于 derived 段之后）/ `note-output`（多笔记输出，D120，位于 output 段之后，未定义附加笔记类型不产该段）。**`row-remove`（删除行）段 D122 起废弃**（功能删除，保存时自动清理旧段）。`column-format` / `column-process` 段 **D113 起不再由 UI 产出**，仅旧模板读取兼容（折叠回列映射行设置链，见下「列侧段收敛」）；`derived` 段由派生 rule 行产出（D108，维持）。标记段与用户手写代码共存于同一 preprocess 块，渲染顺序即代码顺序，引擎不区分来源。
 
-**行清洗与表头（D122/D123/D124，不产编译段）**：过滤空行（含第一行）/ 过滤重复表头为**跨行引擎开关**——语义权威 `core/row-clean.ts`（API 值==列名 `applyRowCleaning`；向导 rawRows 原语 `removeEmptyRows`/`removeDuplicateHeaderRows`），**D124 执行顺序**（向导表格类）= 过滤空行 → 行筛选（row-filter 段）→ 过滤重复表头（基准 = 清洗+筛选后剩余第一行）→ **表头提升**（`promoteHeaderRow`：剩余第一行 → 列名，D123 仅表格类向导链路）；向导路径（Step 3 预览 / Step 4 导入）由 `applyWizardTransform { promoteHeader }`、API 路径（importFile/importData）由 `DataPipeline.applyEngineRowSwitches` 处理；配置随 frontmatter `row.clean`（`remove_empty` / `remove_duplicate_header`）保存。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」「headerRow 表头行」（D123）已废弃删除（旧配置读取时忽略或迁移：`duplicateHeader` → `remove_duplicate_header`、`removeEmpty`/预置「任意列 非空」规则 → `remove_empty`、`byContent` → 行筛选规则）。
+**行清洗与表头（D122/D123/D124，D136 修订·已实现）**：**D136 起过滤空行/过滤重复表头与行筛选一致地编译为 Handlebars 段**——`row-clean`（过滤空行含第一行，row-filter 之前）：`{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}`；`row-header-dup`（过滤重复表头，row-filter 之后、column-mapping 之前）：`{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}`（`_header` = 引擎注入表头基准行快照，`isDuplicateHeader` = 新增公开 Helper 计入白名单）。引擎改**判定遍 + 渲染遍**编排：判定遍渲染 `row-clean` + `row-filter` 段（占位列名）确定 `_skip` → 基准行定位（未 `_skip` 第一行 = 将成为表头的行）→ **表头提升**（`promoteHeaderRow` 保留为引擎结构性原语：列名生成 + 基准行移除）→ 注入 `_header` 快照 → 渲染遍渲染 `row-header-dup` + 其余段（提升后列名）；`_skip` 行统一由 DataPipeline 跳过。frontmatter `row.clean`（`remove_empty` / `remove_duplicate_header`）保留为**开关**（决定是否编译相应段）；API/非表格路径（importFile/importData）维持 `applyRowCleaning`（值==列名 + 空行一次完成，渲染前）不变。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」「headerRow 表头行」（D123）已废弃删除（旧配置读取时忽略或迁移：`duplicateHeader` → `remove_duplicate_header`、`removeEmpty`/预置「任意列 非空」规则 → `remove_empty`、`byContent` → 行筛选规则）。
 
 **编译映射**（向导状态 → Handlebars，目标代码**仅引用内置 Helper 白名单**）：
 
@@ -142,7 +144,7 @@ status: "active"
 | :--- | :--- |
 | 行筛选（多规则 AND，保留=全部匹配） | `{{#unless (and 条件1 条件2 …)}}{{set "_skip" true}}{{/unless}}`；条件由 op → 内置 Helper（eq/neq/strContains/strStartsWith/strEndsWith/isEmpty/isNotEmpty/gt/gte/lt/lte/regexTest） |
 | 行筛选·任意列 | `col "*"` 内置 Helper 返回整行列值（任一列命中即通过，D97） |
-| 行清洗 / 表头（D122/D123/D124） | **不生成代码段**——过滤空行/过滤重复表头为跨行引擎开关（frontmatter `row.clean`），向导表格类由 `removeEmptyRows`（渲染前）与 `removeDuplicateHeaderRows`（行筛选后，D124）处理、非表格由 `applyRowCleaning` 处理；表头提升 `promoteHeaderRow`（向导 rawRows 链路） |
+| 行清洗 / 表头（D122/D123/D124，D136 修订） | **D136 起生成代码段**——过滤空行 → `row-clean` 段 `{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}`；过滤重复表头 → `row-header-dup` 段 `{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}`（`_header` 引擎注入快照）；开关随 frontmatter `row.clean`；表头提升 `promoteHeaderRow` 保留为引擎结构性原语；API/非表格路径 `applyRowCleaning` 不变 |
 | 列映射（D105 起列侧唯一产出） | `{{set "目标" (lookup this "来源")}}`（无设置=复制）；含设置链时——1 步=直调 `(op 源)`、**≥2 步 = `(pipe 源 (stage …) …)`**；`ignore` / 类型不产出该行 |
 | 列格式化 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
 | 列处理 | （D105 起并入列映射行的设置链，不再独立成段；旧模板读取折叠回列映射行 settings） |
@@ -154,10 +156,18 @@ status: "active"
 **结构示例**（preprocess 块内，编译产物）：
 
 ```handlebars
+{{!-- ipro:begin:row-clean --}}
+{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}
+{{!-- ipro:end:row-clean --}}
+
 {{!-- ipro:begin:row-filter --}}
 {{#unless (strContains (col "部门") "技术")}}{{set "_skip" true}}{{/unless}}
 {{#unless (not (strContains (col "*") "测试"))}}{{set "_skip" true}}{{/unless}}
 {{!-- ipro:end:row-filter --}}
+
+{{!-- ipro:begin:row-header-dup --}}
+{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}
+{{!-- ipro:end:row-header-dup --}}
 
 {{!-- ipro:begin:column-format --}}
 {{set "身份证号" (toIDCard 身份证号)}}
@@ -228,10 +238,10 @@ status: "active"
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
 - **读取（反编译）**：进入 Step 3 时解析 preprocess 标记段回填 UI（覆盖向导默认值）；段内代码被用户深度手改致无法反编译时，该区块回退默认值、保留代码不阻断。
-- **兼容迁移（D95→D98→D122→D123→D124）**：读取旧模板时，frontmatter `row` / `columns` / `mapping` / `derived` 一次性编译进 preprocess 标记段（D97 `byContent`→neq/notContains 保留；`removeEmpty` 与旧「任意列 非空」预置规则 → `row.clean.remove_empty`、`duplicateHeader` → `row.clean.remove_duplicate_header`、`dedupe`/`filterInvalid`/`byIndex`/`header_row`/`merge_rows` 忽略）；下次保存不再写这些旧字段。`match` / `output` / 行清洗 `row.clean`（跨行引擎开关）保留 frontmatter。
-- **执行语义**：全部行/列/派生逻辑由 `renderPreprocess` 逐行执行，`_skip` 行由 DataPipeline 跳过；**跨行操作**（过滤空行 / 过滤重复表头）与**表头提升**单行 Handlebars 无法表达，由引擎在渲染前按行清洗开关处理（D122/D123/D124 例外，core/row-clean.ts）。
-- 执行顺序（D124）：表格类向导链 = 过滤空行（`removeEmptyRows`）→ 行级段 `row-filter` → 过滤重复表头（`removeDuplicateHeaderRows`，基准 = 清洗+筛选后剩余第一行）→ **表头提升**（promoteHeaderRow，表格类向导链路）→ `column-mapping` 段；非表格/API 链（表头已解析为列名）= `applyRowCleaning`（值==列名 + 空行，渲染前一次）→ `row-filter` → `column-mapping` 段——列映射每行内设置链按序执行（类型隐含转换置前；D105 起列格式化/列处理/派生并入行内链），与编译段代码顺序一致（D96/D97/D105/D122/D123/D124）。
+- **兼容迁移（D95→D98→D122→D123→D124，D136 修订）**：读取旧模板时，frontmatter `row` / `columns` / `mapping` / `derived` 一次性编译进 preprocess 标记段（D97 `byContent`→neq/notContains 保留；`removeEmpty` 与旧「任意列 非空」预置规则 → `row.clean.remove_empty`、`duplicateHeader` → `row.clean.remove_duplicate_header`、`dedupe`/`filterInvalid`/`byIndex`/`header_row`/`merge_rows` 忽略）；下次保存不再写这些旧字段。`match` / `output` / 行清洗 `row.clean` 保留 frontmatter（**D136 起为编译段开关**：开 → 编译 `row-clean`/`row-header-dup` 段；读段反编译回填开关）。
+- **执行语义**：全部行/列/派生逻辑由 `renderPreprocess` 逐行执行，`_skip` 行由 DataPipeline 跳过；**D136 起过滤空行/过滤重复表头亦为 Handlebars 段**（`row-clean`/`row-header-dup`，引擎判定遍/渲染遍编排 + `_header` 快照注入）；仅**表头提升**（跨行列名生成）保留为引擎结构性原语（core/row-clean.ts）。
+- 执行顺序（D124，D136 修订）：表格类向导链 = 判定遍（`row-clean` 段 过滤空行 → `row-filter` 段 行筛选，占位列名）→ 基准行定位 → **表头提升**（promoteHeaderRow，结构性）→ 注入 `_header` → 渲染遍（`row-header-dup` 段 过滤重复表头 → `column-mapping` 段，提升后列名）；非表格/API 链（表头已解析为列名）= `applyRowCleaning`（值==列名 + 空行，渲染前一次）→ `row-filter` → `column-mapping` 段——列映射每行内设置链按序执行（类型隐含转换置前；D105 起列格式化/列处理/派生并入行内链），与编译段代码顺序一致（D96/D97/D105/D122/D123/D124/D136）。
 
 ---
 
-*版本: 1.21.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」；D126–D129 已实现：条件校验 / 不输出 / itemAt / output 编译段；D130–D134 已实现：行顺序 = 段内 set 行序（内容模板顺序）/ 设置顺序 = pipe 阶段序（受限集 isReorderableSetting）/ 特殊字段行（§3 可配置子集：联动视图行 + 真实行 `ipro:specialrow` 标记）/ 保存到内容模板（applyContentLayout，仅主笔记字段），见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*
+*版本: 1.23.0 | 最后更新: 2026-09-07（D136 已实现：行清洗 Handlebars 化——新段 `row-clean`/`row-header-dup` + `_header` 快照 + `isDuplicateHeader`（判定遍/渲染遍编排，表头提升保留引擎原语 `promoteHeaderRow` 并返回快照）；`_link` 类型升级 `string | string[]`（多行 push 候选）；`_skip` 多行 = 多组行筛选（`filters` 组数组，组内 AND、组间 OR）；特殊字段入口移面板顶部下拉、`_folder`/`_fileName`/`_skip` 全入口可编辑双向同步，见 decisions/2026-09-07-step3-block5-panel-revision-row-clean-handlebars.md（v1.1.0 implemented）。前序 1.22.0：D136 设计定稿（v1.0.0 accepted）。前序 1.21.0：D130–D134 已实现，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*

@@ -965,3 +965,89 @@
   }
 }
 
+/* D136：区块 5 面板修订 + 行清洗 Handlebars 化
+   （按钮行与可用源列置顶 / 多组筛选编辑器 / 面板恒显顶部下拉 / 可编辑表达式行 / 设置下拉入面板头部） */
+.ipw-map-top-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.ipw-map-top-ops .ipw-form-row {
+  flex-wrap: wrap;
+}
+.ipw-map-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ipw-map-panel-head .ipw-select.ipw-add-setting-sel {
+  width: auto;
+  min-width: 150px;
+  flex: 0 1 340px;
+}
+.ipw-filter-groups-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ipw-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary, transparent);
+}
+.ipw-filter-group-head {
+  gap: 8px;
+}
+.ipw-chip-group {
+  border-color: var(--text-accent, #7e5cd0);
+  color: var(--text-accent);
+  background: color-mix(in srgb, var(--text-accent, #7e5cd0) 10%, transparent);
+  font-weight: 600;
+}
+.ipw-special-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.ipw-special-panel-head .ipw-special-add-top {
+  width: auto;
+  min-width: 170px;
+  flex: 0 1 340px;
+}
+.ipw-special-skip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 6px;
+}
+.ipw-special-skip-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ipw-special-expr {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ipw-special-expr-input {
+  width: 100%;
+}
+.ipw-special-expr-example {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

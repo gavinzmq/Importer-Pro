@@ -461,9 +461,18 @@ function withPreprocess(body: string, preprocess: string): string {
   return body.slice(0, m.index) + newBlock + body.slice(m.index + m[0].length);
 }
 
-function ensureFilter(rules: RowFilterRule[], rule: RowFilterRule): void {
-  const hit = rules.some((x) => x.column === rule.column && x.op === rule.op && x.value === rule.value);
-  if (!hit) rules.push(rule);
+/** D136：把旧迁移规则并入多组筛选（transform.filters 为组数组）——并入首个非空组（保持旧 AND 语义），
+ *  无有效组则新建单组 */
+function ensureFilter(groups: RowFilterRule[][], rule: RowFilterRule): void {
+  if (!Array.isArray(groups)) return;
+  const nonEmpty = groups.filter((g) => Array.isArray(g) && g.length > 0);
+  const hit = (g: RowFilterRule[]): boolean => g.some((x) => x.column === rule.column && x.op === rule.op && x.value === rule.value);
+  if (nonEmpty.length === 0) {
+    groups.push([rule]);
+    return;
+  }
+  const first = nonEmpty[0];
+  if (!hit(first)) first.push(rule);
 }
 
 /** 旧 frontmatter 行配置一次性迁移进 transform（D122/D123/D124：删除行/去重/过滤无效数据/合并行废弃；行清洗 = 重复表头/空行） */

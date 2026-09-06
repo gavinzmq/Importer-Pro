@@ -1,8 +1,8 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.16.0"
-last_updated: "2026-09-06"
+version: "1.18.0"
+last_updated: "2026-09-07"
 status: "active"
 ---
 
@@ -24,7 +24,7 @@ status: "active"
 
 ### 保留字段 (Reserved Field)
 
-预处理模板中以 `_` 开头的系统字段（`_skip`、`_folder`、`_hash`、`_notes` 等），由模板设置、由引擎消费，权威清单见 [template-schema.md](system-repo/components/template-schema.md)。**可配置子集（D132/D133，2026-09-06 已实现）**：`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类可在 Step 3 区块 5 以**特殊字段行**显示与配置（目标字段下拉选择、每个唯一；`_folder`/`_fileName` 与区块 3 输出位置/命名、`_skip` 与区块 4 行筛选双向联动同源共享——三者是联动视图行、不入 mappings；`_status`/`_warnings`/`_link` 为真实行、编译带 `ipro:specialrow` 标记反编译无歧义还原；「添加设置」增专属设置、新建即附默认设置）；`_index`（引擎注入只读）、`_hash`（引擎/派生生成）、`_notes`（note-output 段管理）不在此列。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md。
+预处理模板中以 `_` 开头的系统字段（`_skip`、`_folder`、`_hash`、`_notes` 等），由模板设置、由引擎消费，权威清单见 [template-schema.md](system-repo/components/template-schema.md)。**可配置子集（D132/D133，2026-09-06 已实现；D136 修订，2026-09-07 已实现）**：`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类在 Step 3 区块 5 以**特殊字段行**显示与配置（入口 = 特殊字段面板顶部「添加特殊字段」下拉，`_skip`/`_link` 恒可选可多行、其余唯一灰置；`_folder`/`_fileName`/`_skip` 面板行可编辑，与区块 3 输出位置/命名、区块 4 行筛选同源共享、**取消权威编辑**——任一入口修改均同步到其余入口；`_status`/`_warnings`/`_link` 为真实行、编译带 `ipro:specialrow` 标记反编译无歧义还原；「添加设置」增专属设置、新建即附默认设置）；`_index`（引擎注入只读）、`_hash`（引擎/派生生成）、`_notes`（note-output 段管理）不在此列。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md 与 decisions/2026-09-07-step3-block5-panel-revision-row-clean-handlebars.md。
 
 ---
 
@@ -32,7 +32,7 @@ status: "active"
 
 ### 编译段 (Compiled Code Block)
 
-Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代码段**（D98），以成对注释 `{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 包裹，与用户手写代码共存；段名对应向导区块（row-filter/column-mapping/derived/`output`（D129 已实现）/note-output；column-format/column-process 仅旧模板读取兼容，row-remove 已废弃）。模板逻辑自包含、可迁移、可手改；权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9。
+Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代码段**（D98），以成对注释 `{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 包裹，与用户手写代码共存；段名对应向导区块（`row-clean`/`row-header-dup`（行清洗，D136 已实现）/row-filter/column-mapping/derived/`output`（D129 已实现）/note-output；column-format/column-process 仅旧模板读取兼容，row-remove 已废弃）。模板逻辑自包含、可迁移、可手改；权威规范见 [template-schema.md](system-repo/components/template-schema.md) §9。
 
 ### 不输出 (No Output)
 
@@ -302,7 +302,7 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 特殊字段 (Special Field)
 
-保留字段的**可配置子集**（D132/D133，2026-09-06 已实现）——`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类，在 Step 3 区块 5 以特殊字段行显示与配置（目标字段输入 + 下拉「特殊字段」分组选择、**每个唯一**、来源可空、类型与「输出到」禁用；`_skip`/`_folder`/`_fileName` 为联动视图行、`_status`/`_warnings`/`_link` 为真实行）；与上方区块双向联动（`_folder`/`_fileName` ↔ 区块 3 输出位置/命名、`_skip` ↔ 区块 4 行筛选，上方区块为权威编辑入口）；「添加设置」增专属设置（`_status`=固定值/`_warnings`=条件警告/`_link`=smartLink），新建即自动加入默认设置；删除该行 = 回落引擎默认语义。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md。
+保留字段的**可配置子集**（D132/D133，2026-09-06 已实现；D136 修订，2026-09-07 已实现）——`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类，在 Step 3 区块 5 的**特殊字段面板**（恒显，无内容不隐藏）以特殊字段行显示与配置（面板顶部「添加特殊字段」下拉新增，`_skip`/`_link` 恒可选可多行、其余唯一灰置；来源可空、类型与「输出到」禁用；普通行「类型」下拉不再含特殊字段分组、不再与普通行互移）；与上方区块**双向同步且无权威编辑**（`_folder`/`_fileName` ↔ 区块 3 输出位置/命名、`_skip` ↔ 区块 4 行筛选规则组，面板行可编辑、任一入口修改均同步到其余入口）；`_skip` 多行 = 多组行筛选规则组（组内 AND 保留、组间 OR 保留）；`_link` 多行 = 多个 smartLink 候选（`push _link` 数组形态，引擎首个命中优先）；「添加设置」增专属设置（`_status`=固定值/`_warnings`=条件警告/`_link`=smartLink），新建即自动加入默认设置；删除该行 = 回落引擎默认语义并同步上方区块。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md 与 decisions/2026-09-07-step3-block5-panel-revision-row-clean-handlebars.md。
 
 ---
 
@@ -318,11 +318,11 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 ### 行筛选 (Row Filter)
 
-Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全部规则均匹配」的行（多条规则 AND 组合），条件含等于/不等于/包含/不包含/开头为/结尾为/为空/非空/数字比较/正则匹配等 13 种（Excel 式）；列支持「任意列」（`*`，整行任一列值命中即通过，D97）。**执行顺序**（D124）：过滤空行之后、过滤重复表头之前（表格类按占位列名 `列1..N` 匹配）；被行筛选剔除的行不参与后续重复表头判定与表头提升。旧「按内容删除行」（`byContent`）迁移为筛选的取反表达（删除含 X = 筛选「任意列 不包含 X」，D97）。**D98 执行载体**：规则由编译层生成 preprocess Handlebars 条件块（不匹配即 `{{set "_skip" true}}`，见 [编译段](#编译段-compiled-code-block)），由 `renderPreprocess` 渲染执行而非 JS 函数调用。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
+Step 3 区块 4「行配置」中的**包含式筛选**（D96）：保留「全部规则均匹配」的行（多条规则 AND 组合），条件含等于/不等于/包含/不包含/开头为/结尾为/为空/非空/数字比较/正则匹配等 13 种（Excel 式）；列支持「任意列」（`*`，整行任一列值命中即通过，D97）。**D136 多组（已实现）**：`_skip` 特殊字段多行 = 多组规则组——组内 AND 保留、**组间 OR 保留**（保留 = 任一组的全部规则匹配；编译单组 `{{#unless (and …)}}{{set "_skip" true}}{{/unless}}`、多组 `{{#unless (or (and …组1) (and …组2))}}{{set "_skip" true}}{{/unless}}`），区块 4 多组展示与特殊字段面板 `_skip` 行一一对应双向同步。**执行顺序**（D124/D136）：过滤空行之后、过滤重复表头之前（表格类按占位列名 `列1..N` 匹配）；被行筛选剔除的行不参与后续重复表头判定与表头提升。旧「按内容删除行」（`byContent`）迁移为筛选的取反表达（删除含 X = 筛选「任意列 不包含 X」，D97）。**D98 执行载体**：规则由编译层生成 preprocess Handlebars 条件块（不匹配即 `{{set "_skip" true}}`，见 [编译段](#编译段-compiled-code-block)），由 `renderPreprocess` 渲染执行而非 JS 函数调用。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
 
 ### 行清洗与表头 (Row Cleaning & Header Row)
 
-Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123/D124，不产编译段，语义权威 core/row-clean.ts）：**过滤空行**（含第一行，trim 判定）/ **过滤重复表头**（API 路径值==列名；向导 rawRows 路径与将成为表头的行逐值相同）。**表头行（D123）**：原「从第 N 行开始读取」解析级控件废弃——表格类按 rawRows 解析（占位列名 `列1..N`），**表头 = 过滤空行 + 行筛选 + 过滤重复表头后剩余的第一行**（`promoteHeaderRow`：其值成为列名、空值回落占位列名、重名唯一化，该行移除）；列映射/派生/校验/笔记条件基于最终列名。**D124 执行顺序**（向导表格类）= 过滤空行（`removeEmptyRows`）→ 行筛选 → 过滤重复表头（`removeDuplicateHeaderRows`，基准 = 清洗+筛选后剩余第一行）→ 表头提升；随 frontmatter `row.clean` 保存。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」（D123）已废弃删除。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
+Step 3 区块 4「行配置」中的行清洗（D122/D123/D124；**D136 起 Handlebars 化，2026-09-07 已实现**）：**过滤空行**（含第一行，trim 判定）编译为 `row-clean` 段 `{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}`（row-filter 之前）；**过滤重复表头**编译为 `row-header-dup` 段 `{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}`（row-filter 之后、column-mapping 之前；`_header` = 引擎注入表头基准行快照、`isDuplicateHeader` = 新增公开 Helper；API 路径值==列名）。引擎改**判定遍 + 渲染遍**编排：判定遍（row-clean + row-filter，占位列名）定 `_skip` → 基准行定位 → **表头提升**（`promoteHeaderRow` 保留为引擎结构性原语：列名生成 + 基准行移除；**表头 = 空行 + 行筛选后剩余第一行**）→ 注入 `_header` → 渲染遍（row-header-dup + 其余段，提升后列名）；frontmatter `row.clean` 保留为开关。原「删除行」「去重」「过滤无效数据」（D122）与「合并行」（D123）已废弃删除。权威规范见 [layout.md](ui/layout.md) §5.5 与 [architecture.md](system-repo/architecture.md) §2.10。
 
 ---
 
@@ -398,4 +398,4 @@ Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123/D124，�
 
 ---
 
-*版本: 1.16.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃；D126–D129 已实现：条件校验 / 不输出 / 提取词条 + 编译段清单补 output；D130–D134 已实现：保留字段·内容模板词条可配置子集（联动视图行 + 真实行 ipro:specialrow）与行顺序/保存到内容模板口径、T 节特殊字段词条，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*
+*版本: 1.18.0 | 最后更新: 2026-09-07（D136 已实现：保留字段/特殊字段词条修订——入口面板顶部下拉、`_skip`/`_link` 多行、`_folder`/`_fileName`/`_skip` 可编辑双向同步（取消权威编辑）；编译段清单补 `row-clean`/`row-header-dup`；行清洗与表头词条 Handlebars 化；行筛选词条多组 OR，见 decisions/2026-09-07-step3-block5-panel-revision-row-clean-handlebars.md（v1.1.0 implemented）。前序 1.17.0：D136 设计定稿（v1.0.0 accepted）。前序 1.16.0：D130–D134 已实现，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*

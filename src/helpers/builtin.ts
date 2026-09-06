@@ -287,6 +287,17 @@ export function registerBuiltinHelpers(hb: HB, getLinkIndex: () => LinkIndex | u
       .map((k) => root[k]);
     return vals.length === 0 || vals.every((v) => v === undefined || v === null || String(v).trim() === '');
   });
+  // D136：当前行是否与 `_header` 表头基准快照逐值相同（数据列；保留字段忽略）——row-header-dup 段
+  // `{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}` 的判定（重复打印的表头行）。
+  // 语义与 core/row-clean.ts removeDuplicateHeaderRows（D124 向导 rawRows 基准判定）一致。
+  hb.registerHelper('isDuplicateHeader', (row: unknown, header: unknown) => {
+    const a = (row ?? {}) as Record<string, any>;
+    const b = (header ?? {}) as Record<string, any>;
+    const ka = Object.keys(a).filter((k) => !k.startsWith('_'));
+    const kb = Object.keys(b).filter((k) => !k.startsWith('_'));
+    if (ka.length === 0 || ka.length !== kb.length) return false;
+    return ka.every((k) => k in b && String(a[k] ?? '') === String(b[k] ?? ''));
+  });
   // 字符串包含类（大小写敏感；str 为数组时任一元素命中即 true——支持 col "*"）
   const anyString = (str: unknown): unknown[] => (Array.isArray(str) ? str : [str]);
   hb.registerHelper('strContains', (str: unknown, needle: unknown) => {

@@ -422,8 +422,15 @@ export interface DataTransformConfig {
    * applyWizardTransform），非表格路径 applyRowCleaning 一次完成；随模板 frontmatter row.clean 保存。
    */
   clean?: RowCleanConfig;
-  /** 行筛选（包含式，多规则 AND）：编译进 row-filter 段 */
-  filters: RowFilterRule[];
+  /**
+   * 行筛选（D96 包含式；D136 起支持多组）：**组数组**——组内多条规则 AND（保留 = 该组全部规则均匹配）、
+   * **组间 OR**（保留 = 任一组的全部规则均匹配；跳过 = 所有组均不匹配）。空数组 = 无筛选（保留全部）；
+   * 空组（无规则的组）在保留语义下恒通过 → 编译/判定时忽略。区块 4 行筛选多组展示与特殊字段 `_skip`
+   * 多行一一对应双向同步（D136）。单组形态与旧单数组 AND 语义等价（编译/反编译退化现状形态）。
+   * 编译进 row-filter 段：单组 `{{#unless (组条件…)}}{{set "_skip" true}}{{/unless}}`、
+   * 多组 `{{#unless (or (and 组1…) (and 组2…))}}{{set "_skip" true}}{{/unless}}`。
+   */
+  filters: RowFilterRule[][];
   /**
    * 列映射 / 派生统一行（rule 有值即派生计算行；settings 行内设置链）。
    * D113 起为列侧唯一执行字段；formats/processes 旧字段已折叠入 mappings.settings。
@@ -594,10 +601,23 @@ export function rowMatchesFilter(record: DataRecord, rule: RowFilterRule): boole
   }
 }
 
-/** 保留「全部规则（AND）均匹配」的行（D96 包含式筛选） */
+/** 行是否通过多组筛选（D136：组内 AND、组间 OR；空组忽略，无有效组 = 全保留） */
+export function rowPassesFilterGroups(record: DataRecord, groups: RowFilterRule[][]): boolean {
+  const valid = (groups ?? []).filter((g) => Array.isArray(g) && g.length > 0);
+  if (valid.length === 0) return true;
+  return valid.some((g) => g.every((rule) => rowMatchesFilter(record, rule)));
+}
+
+/** 保留「全部规则（AND）均匹配」的行（D96 包含式筛选；单组形态——由多组判定退化） */
 export function applyRowFilter(records: DataRecord[], rules: RowFilterRule[]): DataRecord[] {
   if (!rules || rules.length === 0) return records;
   return records.filter((r) => rules.every((rule) => rowMatchesFilter(r, rule)));
+}
+
+/** 保留「任一组（AND）均匹配」的行（D136 多组；等价 rowPassesFilterGroups 批量过滤） */
+export function applyRowFilterGroups(records: DataRecord[], groups: RowFilterRule[][]): DataRecord[] {
+  if (!groups || groups.length === 0) return records;
+  return records.filter((r) => rowPassesFilterGroups(r, groups));
 }
 
 /** 行筛选规则展示标签（供已配置列表）：`姓名 等于 张三` / `任意列 不包含 测试` / `薪资 大于 10000` */
@@ -776,7 +796,7 @@ export { applyRowCleaning, isDuplicateHeaderRow, promoteHeaderRow, removeDuplica
  */
 export function resolvedHeader(records: DataRecord[], cfg: DataTransformConfig): string[] {
   const noEmpty = removeEmptyRows(records, cfg.clean?.removeEmpty === true);
-  const kept = noEmpty.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  const kept = noEmpty.filter((r) => rowPassesFilterGroups(r, cfg.filters));
   const deduped = removeDuplicateHeaderRows(kept, cfg.clean?.removeDuplicateHeader === true);
   return promoteHeaderRow(deduped)?.header ?? [];
 }
@@ -1168,8 +1188,8 @@ export function applyTransformPreview(records: DataRecord[], cfg: DataTransformC
   // 以 _index 保留原始行号（过滤自然保留；与预览「#」列一致）。
   const seeded = records.map((r, i) => ({ ...r, _index: i + 1 }));
   let rows: TransformRow[] = applyRowCleaning(seeded, cfg.clean).map((r) => ({ src: Number(r._index) || 0, row: r }));
-  // 行筛选（D96 包含式，保留 AND）
-  rows = rows.filter(({ row }) => cfg.filters.every((rule) => rowMatchesFilter(row, rule)));
+  // 行筛选（D96 包含式，保留；D136 多组 = 组内 AND、组间 OR）
+  rows = rows.filter(({ row }) => rowPassesFilterGroups(row, cfg.filters));
   // 列映射 / 派生统一行（D113：set 语义保留未映射列，仅覆写/追加目标字段，与真实渲染一致）
   const mapped = applyMappingsRuntime(
     rows.map((r) => r.row),
@@ -1186,17 +1206,17 @@ export function applyTransform(records: DataRecord[], cfg: DataTransformConfig):
 /** 供预览「筛选后 X / Y 行」统计：行清洗 + 行筛选后保留的行数（D122 统计口径） */
 export function countRowsAfterSelection(records: DataRecord[], cfg: DataTransformConfig): number {
   const cleaned = applyRowCleaning(records, cfg.clean);
-  return cleaned.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule))).length;
+  return cleaned.filter((r) => rowPassesFilterGroups(r, cfg.filters)).length;
 }
 
 /**
  * D124：向导表格类（rawRows 占位列名）「数据行数」统计——与真实执行同序：
- * 空行（removeEmptyRows）→ 行筛选 → 重复表头（removeDuplicateHeaderRows，基准 = 清洗+筛选后
+ * 空行（removeEmptyRows）→ 行筛选（D136 多组）→ 重复表头（removeDuplicateHeaderRows，基准 = 清洗+筛选后
  * 剩余第一行）→ 再扣除将被提升为表头的首行（该行不产笔记）。
  */
 export function countRowsAfterHeader(records: DataRecord[], cfg: DataTransformConfig): number {
   const noEmpty = removeEmptyRows(records, cfg.clean?.removeEmpty === true);
-  const kept = noEmpty.filter((r) => cfg.filters.every((rule) => rowMatchesFilter(r, rule)));
+  const kept = noEmpty.filter((r) => rowPassesFilterGroups(r, cfg.filters));
   const deduped = removeDuplicateHeaderRows(kept, cfg.clean?.removeDuplicateHeader === true);
   return Math.max(0, deduped.length - 1);
 }
@@ -1205,7 +1225,9 @@ export function countRowsAfterHeader(records: DataRecord[], cfg: DataTransformCo
 
 /** preprocess 编译段名（对应向导区块；无配置的区块省略整段） */
 export type IproSegment =
+  | 'row-clean'
   | 'row-filter'
+  | 'row-header-dup'
   | 'column-format'
   | 'column-process'
   | 'column-mapping'
@@ -1213,7 +1235,11 @@ export type IproSegment =
   | 'output'
   | 'note-output';
 export const IPRO_SEGMENT_ORDER: IproSegment[] = [
+  // D136：行清洗 Handlebars 化——过滤空行段位于 row-filter 之前（判定遍首步）
+  'row-clean',
   'row-filter',
+  // D136：过滤重复表头段位于 row-filter 之后、column-mapping 之前（渲染遍，基准 _header 快照）
+  'row-header-dup',
   'column-format',
   'column-process',
   'column-mapping',
@@ -1324,12 +1350,35 @@ function filterCondition(rule: RowFilterRule): string {
   }
 }
 
-/** 行筛选段体：全部规则 AND；保留=全部匹配（unless 任一不匹配 → _skip） */
-function rowFilterBody(rules: RowFilterRule[]): string {
-  if (!rules || rules.length === 0) return '';
-  const conds = rules.map(filterCondition);
-  const anded = conds.length === 1 ? conds[0] : `(and ${conds.join(' ')})`;
-  return `{{#unless ${anded}}}{{set "_skip" true}}{{/unless}}`;
+/**
+ * 行筛选段体（D136 多组）：组内规则 AND、组间 OR——保留 = 任一组的全部规则均匹配
+ * （unless「所有组均不匹配」→ _skip）。单组退化为现状形态 `unless(组条件)`（兼容旧模板）。
+ */
+function rowFilterBody(groups: RowFilterRule[][]): string {
+  const valid = (groups ?? []).filter((g) => Array.isArray(g) && g.length > 0);
+  if (valid.length === 0) return '';
+  const groupExpr = (rules: RowFilterRule[]): string => {
+    const conds = rules.map(filterCondition);
+    return conds.length === 1 ? conds[0] : `(and ${conds.join(' ')})`;
+  };
+  if (valid.length === 1) {
+    return `{{#unless ${groupExpr(valid[0])}}}{{set "_skip" true}}{{/unless}}`;
+  }
+  // 多组：每组统一 (and …) 包裹（即使组内单条），组间 (or …)
+  const ors = valid.map((g) => `(and ${g.map(filterCondition).join(' ')})`);
+  return `{{#unless (or ${ors.join(' ')})}}{{set "_skip" true}}{{/unless}}`;
+}
+
+/** D136 行清洗段体：过滤空行（含第一行，trim 判定）——位于 row-filter 之前（判定遍首步） */
+function rowCleanBody(enabled: boolean): string {
+  if (!enabled) return '';
+  return `{{#if (isEmptyRow this)}}{{set "_skip" true}}{{/if}}`;
+}
+
+/** D136 行清洗段体：过滤重复表头——与引擎注入的 `_header` 表头基准快照逐值相同（渲染遍，row-filter 之后） */
+function rowHeaderDupBody(enabled: boolean): string {
+  if (!enabled) return '';
+  return `{{#if (isDuplicateHeader this _header)}}{{set "_skip" true}}{{/if}}`;
 }
 
 /** 单步骤的 Helper 形态：helper 名 + 附加参数表达式（值自动作为首参；stage 追加在值后） */
@@ -1569,8 +1618,12 @@ function mappingRowExpr(m: ColumnMapping): { target: string; expr: string } | nu
   return { target: hbQuote(target), expr };
 }
 
-/** D119 附言（warn/link）：映射行 set 之后追加的行级逻辑（warn 条件写 _warnings；link 写 _link） */
-function mappingPostLines(m: ColumnMapping): string[] {
+/**
+ * D119 附言（warn/link）：映射行 set 之后追加的行级逻辑（warn 条件写 _warnings；link 写 _link）。
+ * D136：`_link` 存在多个 smartLink 候选（accumulate）时以 push 数组候选累积（_link 类型 string | string[]，
+ * 首个命中优先由引擎消费）；单一候选保持现状 `set "_link" (smartLink …)`（字符串）。
+ */
+function mappingPostLines(m: ColumnMapping, accumulate = false): string[] {
   const out: string[] = [];
   const srcExpr = `(lookup this ${hbQuote(m.source)})`;
   for (const s of m.settings ?? []) {
@@ -1581,9 +1634,10 @@ function mappingPostLines(m: ColumnMapping): string[] {
       );
     } else if (s.group === 'link' && s.op === 'smartLink') {
       // 依赖派生 _hash（向导变换在渲染前注入占位哈希；guard 防 _hash 缺失时产生空链接）
-      out.push(
-        `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(s.target)} ${hbQuote(s.fallback)})}}{{/if}}`
-      );
+      const setExpr = accumulate
+        ? `{{#if (isNotEmpty _hash)}}{{set "_link" (push _link (smartLink _hash ${hbQuote(s.target)} ${hbQuote(s.fallback)}))}}{{/if}}`
+        : `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(s.target)} ${hbQuote(s.fallback)})}}{{/if}}`;
+      out.push(setExpr);
     }
   }
   return out;
@@ -1632,8 +1686,22 @@ function warningsRowLines(m: ColumnMapping): string[] {
   return out;
 }
 
-/** `_link` 行：settings 中每个 smartLink（D133 专属/默认设置）产一条 _link set（依赖 _hash） */
-function linkRowLines(m: ColumnMapping): string[] {
+/** D136：全局 smartLink 候选总数（普通映射行附言 + 特殊字段 `_link` 行的 smartLink 设置）——
+ *  总数 > 1 时 `_link` 编译为 push 数组候选（多行 `_link` / 多候选不互相覆盖），否则单候选字符串形态 */
+function linkCandidateCount(mappings: ColumnMapping[]): number {
+  let n = 0;
+  for (const m of mappings ?? []) {
+    for (const s of m.settings ?? []) {
+      if (s.group === 'link' && s.op === 'smartLink') n++;
+    }
+  }
+  return n;
+}
+
+/** `_link` 行：settings 中每个 smartLink（D133 专属/默认设置）产一条 _link set（依赖 _hash）。
+ *  D136：accumulate（多候选）时产 `push _link (smartLink …)` 数组累积（push 兼容未定义起始 → [x]），
+ *  反编译按 `ipro:specialrow:_link` + push/set 形态还原为独立 _link 行。 */
+function linkRowLines(m: ColumnMapping, accumulate: boolean): string[] {
   if (m.type === 'ignore' || m.rule) return [];
   const links = (m.settings ?? []).filter(
     (s): s is Extract<MappingSetting, { group: 'link'; op: 'smartLink' }> =>
@@ -1641,9 +1709,10 @@ function linkRowLines(m: ColumnMapping): string[] {
   );
   const out: string[] = [];
   for (const l of links) {
-    out.push(
-      `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(l.target)} ${hbQuote(l.fallback)})}}{{/if}}`
-    );
+    const setExpr = accumulate
+      ? `{{#if (isNotEmpty _hash)}}{{set "_link" (push _link (smartLink _hash ${hbQuote(l.target)} ${hbQuote(l.fallback)}))}}{{/if}}`
+      : `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(l.target)} ${hbQuote(l.fallback)})}}{{/if}}`;
+    out.push(setExpr);
   }
   return out;
 }
@@ -1654,12 +1723,12 @@ function linkRowLines(m: ColumnMapping): string[] {
  * 每行前加 `{{!-- ipro:specialrow:<target> --}}` 标记行——反编译据此无歧义还原为独立特殊字段行
  * （与普通映射行的 warn/link 附言（无标记、紧跟其行）区分，D133 实现口径）。
  */
-function specialRowLines(m: ColumnMapping): string[] {
+function specialRowLines(m: ColumnMapping, accumulate: boolean): string[] {
   const t = m.target || m.source;
   let lines: string[] = [];
   if (t === '_status') lines = statusRowLines(m);
   else if (t === '_warnings') lines = warningsRowLines(m);
-  else if (t === '_link') lines = linkRowLines(m);
+  else if (t === '_link') lines = linkRowLines(m, accumulate);
   else return []; // _skip/_folder/_fileName：由 row-filter/output 段承载
   if (lines.length === 0) return [];
   return [`{{!-- ipro:specialrow:${t} --}}`, ...lines];
@@ -1667,23 +1736,25 @@ function specialRowLines(m: ColumnMapping): string[] {
 
 /** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set`；
  *  D119 附言紧跟其行；D132/D133 特殊字段真实行（_status/_warnings/_link）同表混排、按 cfg.mappings
- *  顺序产行（D130：行顺序 = 段内 set 行序） */
+ *  顺序产行（D130：行顺序 = 段内 set 行序）；D136：_link 多候选全局累计判断（push 数组形态） */
 function mappingBody(mappings: ColumnMapping[]): string {
   const lines: string[] = [];
+  // D136：存在多个 smartLink 候选（_link 多行/多候选）→ push 数组累积，避免互相覆盖
+  const linkMulti = linkCandidateCount(mappings) > 1;
   for (const m of mappings) {
     if (m.rule || m.type === 'ignore') continue;
     const target = m.target || m.source;
     // D132：目标为可配置特殊字段（_status/_warnings/_link）→ 特殊字段行编译
     if (target && isSpecialFieldTarget(target)) {
       if (isLinkedSpecialField(target)) continue; // 视图行不应出现在 cfg.mappings（防御）
-      for (const l of specialRowLines(m)) lines.push(l);
+      for (const l of specialRowLines(m, linkMulti)) lines.push(l);
       continue;
     }
     const built = mappingRowExpr(m);
     if (!built) continue;
     // 源列存在才 set（复制/链均要求源列存在）
     lines.push(`{{#if (has this ${hbQuote(m.source)})}}{{set ${built.target} ${built.expr}}}{{/if}}`);
-    for (const p of mappingPostLines(m)) lines.push(p);
+    for (const p of mappingPostLines(m, linkMulti)) lines.push(p);
   }
   // D127：不输出字段清单持久化标记——'none' 行照常产 set 但不进任何笔记对象，段内无法还原归属 → 显式记录目标字段
   const none = mappingNoneTargets(mappings);
@@ -1833,12 +1904,17 @@ function outputBody(output?: { folder: string; noteName: string }): string {
 }
 
 /** 整套配置 → 段体映射（无内容段省略；D113：列侧仅产出 column-mapping，格式化/处理并入映射行设置链；
- *  D122/D123：行清洗（clean）为跨行引擎开关，不产编译段——由 frontmatter row.clean 承载；
- *  D129：output 段位于 derived 与 note-output 之间） */
+ *  D136：行清洗（clean）开关编译为 row-clean / row-header-dup 段（开关决定是否产段），frontmatter row.clean
+ *  仍保留为开关（双写）；D129：output 段位于 derived 与 note-output 之间） */
 export function configToSegments(cfg: DataTransformConfig): Partial<Record<IproSegment, string>> {
   const seg: Partial<Record<IproSegment, string>> = {};
+  // D136：行清洗 Handlebars 化——removeEmpty → row-clean 段、removeDuplicateHeader → row-header-dup 段
+  const cleanA = rowCleanBody(cfg.clean?.removeEmpty === true);
+  if (cleanA !== '') seg['row-clean'] = cleanA;
   const filter = rowFilterBody(cfg.filters);
   if (filter !== '') seg['row-filter'] = filter;
+  const dupA = rowHeaderDupBody(cfg.clean?.removeDuplicateHeader === true);
+  if (dupA !== '') seg['row-header-dup'] = dupA;
   const mapping = mappingBody(cfg.mappings);
   if (mapping !== '') seg['column-mapping'] = mapping;
   const derived = derivedBody(cfg.mappings);
@@ -1958,8 +2034,20 @@ function filterCondToRule(cond: string): RowFilterRule | null {
   }
 }
 
-function decodeFilterBody(body: string): RowFilterRule[] {
-  const out: RowFilterRule[] = [];
+/** 反编译行筛选段体为**多组**（D136）：每组 = 组内 AND 规则、组间 OR。
+ *  - 单组形态 `unless(条件)` / `unless(and …)` → 单组；多组形态 `unless(or (and …) (and …))` → 每组 = 一个 or 参数；
+ *  - 空/无法识别行忽略；返回组数组（RowFilterRule[][]），空段 = []。
+ */
+function decodeFilterBody(body: string): RowFilterRule[][] {
+  const groups: RowFilterRule[][] = [];
+  const pushRules = (target: RowFilterRule[][], conds: string[]): void => {
+    const rules: RowFilterRule[] = [];
+    for (const c of conds) {
+      const rule = filterCondToRule(c);
+      if (rule) rules.push(rule);
+    }
+    if (rules.length > 0) target.push(rules);
+  };
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t) continue;
@@ -1967,13 +2055,20 @@ function decodeFilterBody(body: string): RowFilterRule[] {
     if (!m) continue;
     const condText = m[1].trim();
     const call = parseParenCall(condText);
-    const conds = call && call.name === 'and' ? call.args : [condText];
-    for (const c of conds) {
-      const rule = filterCondToRule(c);
-      if (rule) out.push(rule);
+    if (call && call.name === 'or') {
+      // 多组：or 的每参数 = 一组（编译时统一 (and …) 包裹）
+      for (const a of call.args) {
+        const gc = parseParenCall(a);
+        const conds = gc && gc.name === 'and' ? gc.args : [a];
+        pushRules(groups, conds);
+      }
+    } else if (call && call.name === 'and') {
+      pushRules(groups, call.args);
+    } else {
+      pushRules(groups, [condText]);
     }
   }
-  return out;
+  return groups;
 }
 
 /** 解析一条 `{{set "k" EXPR}}`（可含 `{{#if COND}}` 守护） */
@@ -2064,6 +2159,23 @@ export function foldLegacyColumnOps(
     else if (r.op === 'fillDefault') pushSetting(row, { group: 'process', op: 'fillDefault', param: r.param, param2: '' });
   }
   return Array.from(map.values());
+}
+
+/** 从 `_link` set 表达式解析 smartLink 设置（D136：单候选 `(smartLink _hash "t" "f")` 与多候选
+ *  `(push _link (smartLink _hash "t" "f"))` 数组累积形态统一还原为一个链接设置；反编译用） */
+function decodeLinkSetting(expr: string): { target: string; fallback: string } | null {
+  const pc = parseParenCall(String(expr ?? '').trim());
+  if (!pc) return null;
+  if (pc.name === 'smartLink') {
+    return { target: stripQuotes(pc.args[1] ?? ''), fallback: stripQuotes(pc.args[2] ?? '') };
+  }
+  if (pc.name === 'push') {
+    const inner = parseParenCall(pc.args[1] ?? '');
+    if (inner && inner.name === 'smartLink') {
+      return { target: stripQuotes(inner.args[1] ?? ''), fallback: stripQuotes(inner.args[2] ?? '') };
+    }
+  }
+  return null;
 }
 
 /** 反编译单条 column-mapping 行（D113 值管线：copy / 单步直调 / pipe；D119 条件计算 ternary）→ 统一映射行 */
@@ -2298,9 +2410,11 @@ function decodeMappingBody(body: string): ColumnMapping[] {
     if (!t) continue;
     // D127：不输出清单标记行（`{{!-- ipro:none:目标A,目标B --}}`）仅作元信息，跳过（回填统一在 handlebarsToConfig 末尾）
     if (/^\{\{!-- ipro:none:/.test(t)) continue;
-    // D132：独立特殊字段行标记
+    // D132：独立特殊字段行标记——每个标记 = 一个特殊字段行的起点（D136：`_link` 多候选每行一标记，
+    // 相邻同字段标记须各自成行，故重置 last 使下一条 set 新建行）
     const spM = /^\{\{!-- ipro:specialrow:([A-Za-z_]+) --\}\}$/.exec(t);
     if (spM) {
+      last = null;
       pendingSpecial = spM[1];
       continue;
     }
@@ -2340,16 +2454,12 @@ function decodeMappingBody(body: string): ColumnMapping[] {
     }
     const set0 = parseSetLine(t);
     if (!set0) continue;
-    // link：`{{set "_link" (smartLink _hash "目标" "回退")}}`（可含 `{{#if (isNotEmpty _hash)}}` 守卫）
-    if (set0.key === '_link' && set0.expr.startsWith('(smartLink')) {
-      const sc = parseParenCall(set0.expr);
-      if (!sc || sc.name !== 'smartLink') continue;
-      const ls: MappingSetting = {
-        group: 'link',
-        op: 'smartLink',
-        target: stripQuotes(sc.args[1] ?? ''),
-        fallback: stripQuotes(sc.args[2] ?? '')
-      };
+    // link：`{{set "_link" (smartLink _hash "目标" "回退")}}` 或 D136 多候选 `(push _link (smartLink …))`
+    //（可含 `{{#if (isNotEmpty _hash)}}` 守卫）
+    if (set0.key === '_link' && (set0.expr.startsWith('(smartLink') || set0.expr.startsWith('(push'))) {
+      const ls0 = decodeLinkSetting(set0.expr);
+      if (!ls0) continue;
+      const ls: MappingSetting = { group: 'link', op: 'smartLink', target: ls0.target, fallback: ls0.fallback };
       const L = last;
       const isPlainLast = !!L && !!L.target && !L.rule && !isSpecialFieldTarget(L.target);
       // 归属：`ipro:specialrow:_link` 标记或非普通行之后 → 独立 _link 特殊行；否则 → 挂最近普通映射行（D119）
@@ -2650,14 +2760,22 @@ function decodeOutputSegment(body: string): { folder?: string; noteName?: string
 export function handlebarsToConfig(preprocess: string): DataTransformConfig {
   const seg = extractSegments(preprocess);
   const cfg = emptyTransform();
+  // D136：row-clean / row-header-dup 段反编译回填行清洗开关（往返一致；frontmatter row.clean 由 scanner 双写）
+  if (seg['row-clean']) cfg.clean = { ...(cfg.clean ?? {}), removeEmpty: true };
+  if (seg['row-header-dup']) cfg.clean = { ...(cfg.clean ?? {}), removeDuplicateHeader: true };
   if (seg['row-filter']) {
     cfg.filters = decodeFilterBody(seg['row-filter']);
-    // D122：旧「去除空行」预置筛选规则 → 行清洗 removeEmpty（引擎开关），不再保留为普通筛选规则
-    const presetIdx = cfg.filters.findIndex((f) => isPresetEmptyFilter(f));
-    if (presetIdx >= 0) {
-      cfg.filters.splice(presetIdx, 1);
-      cfg.clean = { ...(cfg.clean ?? {}), removeEmpty: true };
+    // D122/D136：旧「去除空行」预置筛选规则（任意列 非空）→ 行清洗 removeEmpty（引擎开关），
+    // 不再保留为普通筛选规则（D136 起 removeEmpty 编译为 row-clean 段，此处仅兼容旧 row-filter 预置遗留）
+    let removedPreset = false;
+    const groups: RowFilterRule[][] = [];
+    for (const g of cfg.filters) {
+      const kept = g.filter((f) => !isPresetEmptyFilter(f));
+      if (kept.length !== g.length) removedPreset = true;
+      if (kept.length > 0) groups.push(kept);
     }
+    if (removedPreset) cfg.clean = { ...(cfg.clean ?? {}), removeEmpty: true };
+    cfg.filters = groups;
   }
   if (seg['column-mapping']) cfg.mappings = decodeMappingBody(seg['column-mapping']);
   // 旧 column-format / column-process 段 → 折叠为映射行设置链（先于映射行执行，等价旧「格式化→映射」顺序）
@@ -2704,14 +2822,17 @@ export interface PreprocessRenderer {
 }
 
 /**
- * 以真实 Handlebars 执行 Step 3 配置（D98）：按规范顺序把编译段拆成两阶段，
- * 行清洗引擎开关按 D124 修订顺序执行。
+ * 以真实 Handlebars 执行 Step 3 配置（D98/D136）：按判定遍 / 渲染遍两遍编排（向导表格类），
+ * 行清洗（过滤空行/重复表头）与行筛选一致地以 Handlebars 段执行（D136）。
  * 返回保留原始行号的变换结果；`_skip` 行被过滤。
- * D124：opts.promoteHeader（表格类向导链路，rawRows 占位列名、表头未定）执行链 =
- *   空行（removeEmptyRows）→ 阶段 A 行筛选（占位列名）→ 重复表头
- *   （removeDuplicateHeaderRows，基准 = 清洗+筛选后剩余第一行）→ 表头提升（promoteHeaderRow，
- *   剩余第一行提升为列名并从数据移除）；阶段 B（列映射/派生/note-output）基于提升后的最终列名执行。
- *   非表格链路（promoteHeader=false，表头已解析为列名）维持 applyRowCleaning（值==列名，一次完成）。
+ * - opts.promoteHeader（表格类向导链路，rawRows 占位列名、表头未定）执行链（D136）：
+ *   **判定遍**（占位列名）row-clean 段（过滤空行）→ row-filter 段（行筛选，多组）定 `_skip`
+ *   → 过滤 `_skip` → **表头定位与提升**（promoteHeaderRow 结构性原语：剩余第一行提升为列名并从
+ *   数据移除，返回 `_header` 快照）→ 注入 `_header` 快照 → **渲染遍** row-header-dup 段（过滤
+ *   重复表头，`isDuplicateHeader this _header` 判定）→ column-mapping / derived / output / note-output。
+ *   判定遍不执行 row-header-dup（_header 未定）；渲染遍不执行 row-clean/row-filter（判定已固化、列名已提升）。
+ * - 非表格链路（promoteHeader=false，表头已解析为列名）维持 applyRowCleaning（值==列名 + 空行，
+ *   一次完成、行筛选之前），row-clean / row-header-dup 段不渲染（开关已由 applyRowCleaning 消费）。
  */
 export async function applyWizardTransform(
   engine: PreprocessRenderer,
@@ -2720,63 +2841,47 @@ export async function applyWizardTransform(
   opts: { promoteHeader?: boolean } = {}
 ): Promise<TransformRow[]> {
   const seg = configToSegments(cfg);
-  // D113：列侧收敛为单一 column-mapping 段（含行内设置链）；D120：note-output 随阶段 B 执行；
-  // D129：output 段（derived 之后、note-output 之前，可引用派生字段与 _hash）随阶段 B 执行
-  const phaseA = segmentsToPreprocess({
-    'row-filter': seg['row-filter']
-  });
-  const phaseB = segmentsToPreprocess({
-    'column-mapping': seg['column-mapping'],
-    derived: seg.derived,
-    output: seg.output,
-    'note-output': seg['note-output']
-  });
+  // D91/D98：逐行渲染辅助（过滤 `_skip`；空模板原样返回）
+  const renderPhase = async (template: string, list: TransformRow[]): Promise<TransformRow[]> => {
+    if (template === '') return list;
+    const kept: TransformRow[] = [];
+    for (const t of list) {
+      const out = await engine.renderPreprocess(template, t.row);
+      if (out && (out as DataRecord)._skip) continue;
+      kept.push({ src: t.src, row: (out as DataRecord) ?? t.row });
+    }
+    return kept;
+  };
 
   // 附加原始行号（引擎保留字段 _index，template-schema §3）
   let rows: TransformRow[] = records.map((r, i) => ({ src: i + 1, row: { ...r, _index: i + 1 } }));
+  // D136：表头基准行快照（row-header-dup 段基准；仅表格类渲染遍注入）
+  let headerSnap: DataRecord | null = null;
 
-  // 行清洗（跨行引擎开关，语义 core/row-clean.ts）：
-  // D124 表格类（promoteHeader，rawRows 表头未定）——先仅空行（removeEmptyRows），
-  // 重复表头（removeDuplicateHeaderRows）后移至阶段 A 行筛选之后、表头提升之前执行
-  // （基准 = 清洗+筛选后剩余第一行）；非表格/默认解析路径（表头已解析为列名）
-  // 维持 applyRowCleaning（值==列名 + 空行，一次完成、行筛选之前）。
   if (opts.promoteHeader) {
-    rows = removeEmptyRows(
-      rows.map((t) => t.row),
-      cfg.clean?.removeEmpty === true
-    ).map((r) => ({ src: Number(r._index) || 0, row: r }));
+    // D136 判定遍：row-clean（过滤空行，含第一行）→ row-filter（行筛选多组；占位列名 `列N` 匹配，D123）
+    const determine = segmentsToPreprocess({
+      'row-clean': seg['row-clean'],
+      'row-filter': seg['row-filter']
+    });
+    rows = await renderPhase(determine, rows);
+    // 表头定位与提升（引擎结构性原语；无剩余行/无数据列 → 原样返回、无快照）
+    const promoted = promoteHeaderRow(rows.map((t) => t.row));
+    if (promoted) {
+      rows = promoted.rows.map((r) => ({ src: Number(r._index) || 0, row: r }));
+      // 仅需过滤重复表头（row-header-dup 段存在）时注入 _header 快照
+      headerSnap = seg['row-header-dup'] ? promoted.snapshot : null;
+    }
   } else {
+    // 非表格/默认解析路径：行清洗（值==列名 + 空行，一次完成）→ row-filter 段
     rows = applyRowCleaning(
       rows.map((t) => t.row),
       cfg.clean
     ).map((r) => ({ src: Number(r._index) || 0, row: r }));
-  }
-
-  // 阶段 A：行筛选（逐行 Handlebars；表格类按占位列名 `列N` 匹配，D123）
-  if (phaseA !== '') {
-    const kept: TransformRow[] = [];
-    for (const t of rows) {
-      const out = await engine.renderPreprocess(phaseA, t.row);
-      if (out && (out as DataRecord)._skip) continue;
-      kept.push({ src: t.src, row: (out as DataRecord) ?? t.row });
-    }
-    rows = kept;
-  }
-
-  // D124：表格类重复表头过滤——行筛选之后执行，以清洗+筛选后剩余第一行（将成为表头的行）为基准
-  if (opts.promoteHeader) {
-    rows = removeDuplicateHeaderRows(
-      rows.map((t) => t.row),
-      cfg.clean?.removeDuplicateHeader === true
-    ).map((r) => ({ src: Number(r._index) || 0, row: r }));
-  }
-
-  // D123：表头提升——剩余第一行提升为列名并从数据移除（其后列映射/派生/笔记条件基于最终列名）
-  if (opts.promoteHeader) {
-    const promoted = promoteHeaderRow(rows.map((t) => t.row));
-    if (promoted) {
-      rows = promoted.rows.map((r) => ({ src: Number(r._index) || 0, row: r }));
-    }
+    rows = await renderPhase(
+      segmentsToPreprocess({ 'row-filter': seg['row-filter'] }),
+      rows
+    );
   }
 
   // D119/D120/D129：链接附言与多笔记默认命名 / output 段文件命名依赖派生 `_hash`（运行时 derive 在 preprocess
@@ -2792,14 +2897,36 @@ export async function applyWizardTransform(
     });
   }
 
-  // 阶段 B：列映射（含行内设置链）→ 派生（逐行 Handlebars）
-  if (phaseB !== '') {
-    const done: TransformRow[] = [];
-    for (const t of rows) {
-      const out = await engine.renderPreprocess(phaseB, t.row);
-      done.push({ src: t.src, row: (out as DataRecord) ?? t.row });
-    }
-    rows = done;
+  // D136 渲染遍：注入 `_header` 快照（row-header-dup 判定基准）后，row-header-dup（过滤重复表头）→
+  // column-mapping（含行内设置链）→ derived → output → note-output（提升后的最终列名）
+  if (headerSnap) {
+    rows = rows.map((t) => ({ src: t.src, row: { ...t.row, _header: headerSnap as DataRecord } }));
+  }
+  const phaseB = segmentsToPreprocess(
+    opts.promoteHeader
+      ? {
+          'row-header-dup': seg['row-header-dup'],
+          'column-mapping': seg['column-mapping'],
+          derived: seg.derived,
+          output: seg.output,
+          'note-output': seg['note-output']
+        }
+      : {
+          'column-mapping': seg['column-mapping'],
+          derived: seg.derived,
+          output: seg.output,
+          'note-output': seg['note-output']
+        }
+  );
+  rows = await renderPhase(phaseB, rows);
+  // D136：_header 仅为渲染遍内部基准快照，消费后从结果行剔除（不进入导入/预览数据）
+  if (headerSnap) {
+    rows = rows.map((t) => {
+      const row = t.row as DataRecord & { _header?: unknown };
+      const { _header: _omit, ...rest } = row;
+      void _omit;
+      return { src: t.src, row: rest };
+    });
   }
 
   return rows;
