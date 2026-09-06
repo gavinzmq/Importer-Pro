@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.35.0"
+version: "1.36.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -300,6 +300,7 @@ export interface IValidator {
 | **能力补齐对齐 EXAMPLES（D118–D121；D118 于 D125 废弃删除）** | 校验规则（D118）→ **D125 废弃删除**（frontmatter `validation` 契约一并移除）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120；D125 映射行 `noteType` 增「所有笔记」）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
 | **配置增强（D126–D129，2026-09-06 已实现）** | ① **条件校验（D126）**——「添加设置」增「条件校验」组：布尔 Helper 校验表达式（validateID/isEmail/isPhone/isNumber/isDate/inRange/matchesRegex/isNotEmpty/isEmpty）+ 真/假值（**固定值**或**字段引用** `(lookup this "列名")`），编译整链替换式 `(ternary (校验fn 值 …) 真 假)`（同 D119 口径）；② **输出到「不输出」（D127）**——noteType `'none'`：字段仅作预处理中间值（照常产 `set`），不进入任何笔记渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填），与「类型=忽略」不产 set 区别；③ **数组/Object 提取（D128）**——「添加设置」增「提取」组 + 新公开 Helper `itemAt`（37 → 38，类别「集合」；数组 0-based 索引/负数自末尾、Object 键名，越界缺键返 `''`；阶段白名单增 `itemAt`）；④ **输出位置编译段化（D129）**——区块 3 输出位置/命名编译进新段 `output`（derived 之后、note-output 之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（D112 求值保留兜底）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented） |
 | **顺序编排与特殊字段（D130–D134，2026-09-06 已实现）** | ① **行顺序调整（D130）**——区块 5 操作列 `↑/↓` + `⋮⋮` 拖拽重排映射行：**行顺序 = 编译后段内 `set` 行顺序 = 内容模板（正文 content 段）字段呈现顺序**（D98 渲染顺序即代码顺序；只影响同段内顺序，跨段按段清单——UI 同段限制、`moveMappingRow` 纯函数）；行序随 preprocess 代码顺序自然持久化、反编译按 set 行序回填；② **设置顺序调整（D131）**——行下设置面板每项 `↑/↓` + 拖拽：**设置顺序 = 值管线执行顺序（管道顺序）**（`moveRowSetting`；受限集 `isReorderableSetting`：附言 warn/link、条件校验、条件计算、固定值不可重排；`类型` 隐含转换不在 settings 数组、恒首步）；③ **特殊字段行（D132）**——`_skip`/`_folder`/`_fileName`/`_status`/`_warnings`/`_link` 为保留字段**可配置子集**（`_index`/`_hash`/`_notes` 排除，template-schema §3）：`_skip`/`_folder`/`_fileName` = 区块 4/3 **联动视图行**（数据源 filters/output，不入 cfg.mappings、区块 3/4 权威、双向同步、✕ 复位）；`_status`/`_warnings`/`_link` = **真实行**（入 cfg.mappings，source 可空、type=text、输出到禁用、编译带 `ipro:specialrow` 标记无歧义还原）；目标字段控件 = 输入 + 下拉（「特殊字段」分组）、**每字段唯一**；④ **专属/默认设置（D133）**——`_status`=固定值（`MappingSetting.special.fixed`）、`_warnings`=条件警告（复用 compute.warn，比较基准=行来源列）、`_link`=smartLink；新建特殊行自动加入 `defaultSpecialSetting`；⑤ **保存到内容模板（D134）**——区块 3 按钮行第四枚 [💾 保存到内容模板]：按 `mainNoteContentFields(mappings)`（主笔记字段序）经 `saveContentTemplate`/`applyContentLayout` 写回所选模板正文 content 段（仅主笔记布局、仅写正文；手写正文按 `{{字段}}` 单引用行识别重排、保留无法识别内容、新增字段用默认布局行）。决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented） |
+| **区块 5 列收敛与特殊字段面板（D135，2026-09-06 已实现）** | ① **「设置」列**——「添加设置」列更名「设置」：分组下拉**留列内**（不放入已添加设置面板）；操作列 `⏵/⏷` 显隐按钮与数量徽标移入本列、**徽标 0 也不隐藏**（修订 D117）；② **特殊字段入口移入类型下拉**（修订 D132）——目标字段下拉移除，「类型」下拉增「特殊字段」分组（选项=中文名：跳过记录/目标文件夹/文件名/状态/警告列表/智能链接，每字段唯一）；选中后该行**从普通映射表挪移到区块 5「特殊字段面板」**（真实特殊字段行不参与普通行排序段，D130 段内顺序口径不变）；③ **特殊字段面板行列**——来源（可修改）/ 类型（不可修改、中文名）/ 目标字段（不可修改、含说明）/ 设置（`⏵/⏷` 弹出已设置面板 + 徽标）/ 操作（删除按钮）；说明（中文名+用途）作为已添加设置面板的说明项；④ **设置下拉合并**（修订 D133）——特殊字段行「设置」下拉 = 普通设置（七组）+ 特殊字段设置（条件/输出表达式/固定值/条件警告/smartLink），不再独立专属下拉；⑤ **排序与拖拽**——特殊字段列表不需要 `↑/↓` 排序按钮；行拖拽把手 `⋮⋮` 移表格首列、已添加设置拖拽把手置设置项首列；⑥ **笔记类型面板**（修订 D120，§5.6.2）——生成条件列下拉选择**列映射目标列**（非来源）、「文件名后缀」更名「文件名」。决策见 decisions/2026-09-06-step3-block5-settings-special-fields-panel.md（v1.1.0 implemented） |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
@@ -604,7 +605,12 @@ interface TemplateNoteSpec {
  *   前三者为区块 4/3 联动视图行——filters/output 权威、不入 cfg.mappings，后三者为真实行，
  *   编译带 `ipro:specialrow` 标记反编译无歧义还原），区块 3「保存到内容模板」按
  *   `mainNoteContentFields` 行序写模板正文 content 段（D134）；
- *   决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。）
+ *   决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。
+ *   （D135，2026-09-06 已实现：特殊字段入口从目标字段下拉移入「类型」下拉（选项=中文名），
+ *   选中后该行从普通映射表挪移到区块 5 特殊字段面板（数据模型仍入 cfg.mappings，仅 UI 分区）；
+ *   「添加设置」列更名「设置」、⏵/⏷ 显隐按钮与徽标移入本列（0 也显示）、行与已添加设置拖拽把手置首列、
+ *   特殊字段行设置下拉合并普通+特殊设置、笔记类型生成条件选映射目标列、「文件名后缀」更名「文件名」；
+ *   决策见 decisions/2026-09-06-step3-block5-settings-special-fields-panel.md（v1.1.0 implemented）。）
  */
 
 /** 行筛选操作（D96，Excel 式筛选，包含式保留） */
@@ -817,4 +823,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.35.0 | 最后更新: 2026-09-06（D130–D134 已实现：区块 5 行顺序 ↑/↓+拖拽（内容模板顺序，段内限制 moveMappingRow）/ 设置顺序 ↑/↓+拖拽（管道顺序，受限集 moveRowSetting）/ 特殊字段行（`_skip`/`_folder`/`_fileName` 联动视图行 ↔ 区块 4/3 权威、`_status`/`_warnings`/`_link` 真实行 + 专属默认设置 + `ipro:specialrow` 反编译）/ 区块 3 第四枚 [💾 保存到内容模板]（`mainNoteContentFields` → `saveContentTemplate`/`applyContentLayout` 写正文 content 段，仅主笔记布局）；type-check 0 错、全量 Vitest 202 全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。前序：1.33.0 D126–D129 已实现（条件校验 / 输出到「不输出」/ itemAt 提取 / 输出位置编译段化）；1.31.0 过时内容清理）_
+_版本: 1.36.0 | 最后更新: 2026-09-06（D130–D134 已实现：区块 5 行顺序 ↑/↓+拖拽（内容模板顺序，段内限制 moveMappingRow）/ 设置顺序 ↑/↓+拖拽（管道顺序，受限集 moveRowSetting）/ 特殊字段行（`_skip`/`_folder`/`_fileName` 联动视图行 ↔ 区块 4/3 权威、`_status`/`_warnings`/`_link` 真实行 + 专属默认设置 + `ipro:specialrow` 反编译）/ 区块 3 第四枚 [💾 保存到内容模板]（`mainNoteContentFields` → `saveContentTemplate`/`applyContentLayout` 写正文 content 段，仅主笔记布局）；type-check 0 错、全量 Vitest 202 全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。**区块 5 列收敛与特殊字段面板（D135，2026-09-06 已实现）**：`添加设置` 列更名 `设置`（下拉留列内、`⏵/⏷` 与徽标移入、0 也显示）；特殊字段入口移入「类型」下拉（中文名）→ 选中后该行挪移特殊字段面板（来源可修改/类型中文名/目标字段含说明/设置/操作）；特殊字段设置下拉 = 普通 + 特殊设置、列表无排序按钮；行与已添加设置拖拽把手置首列；笔记类型生成条件选映射目标列、「文件名后缀」更名「文件名」；type-check 0 错、全量 Vitest 203 全绿，见 decisions/2026-09-06-step3-block5-settings-special-fields-panel.md（v1.1.0 implemented）。前序：1.33.0 D126–D129 已实现（条件校验 / 输出到「不输出」/ itemAt 提取 / 输出位置编译段化）；1.31.0 过时内容清理）_

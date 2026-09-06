@@ -96,14 +96,15 @@ export const NONE_NOTE_TYPE = 'none';
 export const SPECIAL_FIELDS = ['_skip', '_folder', '_fileName', '_status', '_warnings', '_link'] as const;
 export type SpecialField = (typeof SPECIAL_FIELDS)[number];
 
-/** 特殊字段可读标签（UI 目标下拉「特殊字段」分组） */
-export const SPECIAL_FIELD_LABELS: ReadonlyArray<{ value: SpecialField; label: string; hint: string }> = [
-  { value: '_skip', label: '_skip', hint: '跳过该条数据（行筛选联动）' },
-  { value: '_folder', label: '_folder', hint: '目标文件夹（区块 3 联动）' },
-  { value: '_fileName', label: '_fileName', hint: '文件名（区块 3 联动）' },
-  { value: '_status', label: '_status', hint: '状态字段（固定值，模板可写）' },
-  { value: '_warnings', label: '_warnings', hint: '警告列表（条件警告）' },
-  { value: '_link', label: '_link', hint: '智能链接文本' }
+/** 特殊字段可读标签（D135：`name` = 中文名，用于「类型」下拉「特殊字段」分组选项与面板类型/说明展示；
+ *  `label` = 保留字段原名；`hint` = 用途说明） */
+export const SPECIAL_FIELD_LABELS: ReadonlyArray<{ value: SpecialField; label: string; name: string; hint: string }> = [
+  { value: '_skip', label: '_skip', name: '跳过记录', hint: '跳过该条数据（行筛选联动）' },
+  { value: '_folder', label: '_folder', name: '目标文件夹', hint: '目标文件夹（区块 3 联动）' },
+  { value: '_fileName', label: '_fileName', name: '文件名', hint: '文件名（区块 3 联动）' },
+  { value: '_status', label: '_status', name: '状态', hint: '状态字段（固定值，模板可写）' },
+  { value: '_warnings', label: '_warnings', name: '警告列表', hint: '警告列表（条件警告）' },
+  { value: '_link', label: '_link', name: '智能链接', hint: '智能链接文本' }
 ];
 
 /** 是否为可配置特殊字段目标名 */
@@ -1006,7 +1007,7 @@ export function isSpecialFieldRow(m: ColumnMapping): boolean {
   return isSpecialFieldTarget(t) && !isLinkedSpecialField(t as SpecialField);
 }
 
-/** cfg.mappings 中已使用的特殊字段真实行目标集（D132 唯一性：UI 目标下拉灰置「已配置」） */
+/** cfg.mappings 中已使用的特殊字段真实行目标集（D132/D135 唯一性：「类型」下拉特殊字段分组灰置「已配置」） */
 export function specialTargetsInUse(mappings: ColumnMapping[]): Set<string> {
   const s = new Set<string>();
   for (const m of mappings ?? []) {

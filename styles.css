@@ -190,13 +190,7 @@
 .ipw-target-box .ipw-input {
   min-width: 60px;
 }
-.ipw-special-sel {
-  flex: 0 0 auto;
-  width: 34px;
-  font-size: 12px;
-  padding: 0 2px;
-}
-/* D132：特殊字段「特殊」标签（保留字段行，引擎消费） */
+/* D132/D135：特殊字段「特殊」标签（保留字段行，引擎消费） */
 .ipw-chip-special {
   border-color: var(--color-purple, #8b5cf6);
   background: color-mix(in srgb, var(--color-purple, #8b5cf6) 14%, transparent);
@@ -531,8 +525,9 @@
 }
 .ipw-map-head,
 .ipw-map-row {
-  /* D113/D117：来源 / 目标字段 / 类型 / 添加设置(链) / 操作；D120：插入「输出到」列 */
-  grid-template-columns: 15% 18% 12% 13% minmax(0, 1fr) auto;
+  /* D113/D117：来源 / 目标字段 / 类型 / 输出到 / 添加设置(链) / 操作；D120：插入「输出到」列；
+     D135：首列 = 行拖拽把手，末列设置列（原「添加设置」更名，⏵/⏷ 与徽标移入） */
+  grid-template-columns: 24px 15% 18% 12% 13% minmax(0, 1fr) auto;
 }
 .ipw-derive-head,
 .ipw-derive-row {
@@ -547,10 +542,6 @@
 .ipw-map-row .ipw-select,
 .ipw-derive-row .ipw-select {
   width: 100%;
-}
-.ipw-map-row .ipw-select.ipw-special-sel {
-  /* D132：目标字段「特殊字段」小下拉（输入 + 下拉组合），不受通用 width:100% 影响 */
-  width: 36px;
 }
 
 /* D113：列映射行「添加设置」chips 与内联编辑器 */
@@ -606,7 +597,48 @@
   min-width: 90px;
 }
 
-/* D132/D133：区块 4/3 联动的特殊字段视图行（_skip/_folder/_fileName） */
+/* D132/D133/D135：区块 5「特殊字段面板」（视图行 _skip/_folder/_fileName + 真实行 _status/_warnings/_link） */
+.ipw-special-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 2px;
+  padding: 8px;
+  border: 1px dashed var(--color-purple, #8b5cf6);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-purple, #8b5cf6) 6%, transparent);
+}
+.ipw-special-panel-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ipw-special-head,
+.ipw-special-row {
+  /* D135：来源 / 类型（中文名）/ 目标字段（含说明）/ 设置 / 操作 */
+  grid-template-columns: 18% 14% 18% minmax(0, 1fr) auto;
+}
+.ipw-special-head {
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 2px;
+}
+.ipw-special-row {
+  padding: 2px 0;
+}
+.ipw-special-row .ipw-select {
+  width: 100%;
+}
+.ipw-special-summary {
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ipw-map-desc-item .ipw-chip {
+  cursor: default;
+}
+/* 兼容旧类（遗留） */
 .ipw-linked-special {
   display: flex;
   flex-direction: column;
@@ -624,9 +656,21 @@
   flex-wrap: wrap;
 }
 
-/* D117：列映射行「添加设置」下拉 + 行下设置面板（已添加设置列表 / 参数编辑 / 草稿） */
+/* D117/D135：列映射行「设置」列（原「添加设置」：分组下拉留列内 + ⏵/⏷ 显隐 + 徽标恒显） */
 .ipw-add-setting-cell {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ipw-add-setting-cell .ipw-select.ipw-add-setting-sel {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ipw-add-setting-cell .ipw-icon-btn,
+.ipw-add-setting-cell .ipw-settings-count {
+  flex: 0 0 auto;
 }
 .ipw-add-setting-sel {
   width: 100%;
@@ -900,7 +944,9 @@
     max-width: 100%;
   }
   .ipw-map-row,
-  .ipw-derive-row {
+  .ipw-derive-row,
+  .ipw-special-head,
+  .ipw-special-row {
     grid-template-columns: 1fr 1fr;
   }
   .ipw-footer {

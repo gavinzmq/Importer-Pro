@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.35.0"
+version: "1.36.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -177,6 +177,8 @@ arcmesh:
 >
 > **区块 5 顺序编排 + 特殊字段行 + 保存到内容模板（D130–D134，2026-09-06 已实现；decisions/2026-09-06-step3-row-order-special-fields-content-template.md v1.1.0 implemented）**：① **行顺序调整（D130）**——区块 5 操作列 `↑/↓` + `⋮⋮` 拖拽重排映射行：**行顺序 = 编译后段内 `set` 行序 = 内容模板（正文 content 段）字段呈现顺序**（同段限制 `moveMappingRow`）；随 preprocess 代码顺序自然持久化、反编译按行序回填；② **设置顺序调整（D131）**——行下设置面板每项 `↑/↓` + 拖拽：**设置顺序 = 值管线执行顺序（管道顺序）**（`moveRowSetting`；受限集 `isReorderableSetting` = 附言 warn/link、条件校验、条件计算、固定值不可重排；类型隐含转换不在 settings 恒首步）；③ **特殊字段行（D132）**——`_skip`/`_folder`/`_fileName`/`_status`/`_warnings`/`_link` 为保留字段可配置子集：**`_skip`/`_folder`/`_fileName` 为区块 4/3 联动视图行**（filters/output 权威、不入 cfg.mappings、双向同步、✕ 复位）、**`_status`/`_warnings`/`_link` 为真实行**（source 可空、类型与「输出到」禁用、`ipro:specialrow` 标记反编译）；目标字段控件 = 输入 + 下拉（「特殊字段」分组）、每字段**唯一**；④ **联动与专属设置（D133）**——`_folder`/`_fileName` ↔ 区块 3 输出位置/命名（D129 同源）、`_skip` ↔ 区块 4 行筛选（规则集共享）双向同步；「添加设置」增特殊字段**专属设置**（`_status`=固定值 / `_warnings`=条件警告 / `_link`=smartLink），新建特殊字段自动加入**默认设置**（`defaultSpecialSetting`）；⑤ **保存到内容模板（D134）**——区块 3 按钮行增第四枚 [💾 保存到内容模板]：按 `mainNoteContentFields`（主笔记字段序）经 `saveContentTemplate`/`applyContentLayout` 写回所选模板正文 content 段（与 [💾 保存到模板] 独立、仅写正文；手写正文按 `{{字段}}` 单引用行识别重排、保留无法识别内容、新增字段用默认布局行）。落点：wizard-data（行/设置顺序纯函数、SPECIAL_FIELDS/默认与专属设置、specialrow 编译反编译）、template-scanner（applyContentLayout/saveContentTemplate）、import-modal（区块 5 操作/特殊字段/联动、区块 3 按钮）、styles.css；type-check 0 错、全量 Vitest **202 例全绿**（wizard-data +11、template-scanner +8）。蓝图同步：architecture 1.35.0 / ui/layout 1.28.0 / template-schema 1.21.0 / glossary 1.16.0 / CHANGELOG 1.29.0 / project 1.35.0。
 >
+> **区块 5 列收敛与特殊字段面板（D135，2026-09-06 已实现；decisions/2026-09-06-step3-block5-settings-special-fields-panel.md v1.1.0 implemented）**：① **设置列**——「添加设置」列更名「设置」：分组下拉留列内（不进已添加设置面板），操作列 `⏵/⏷` 显隐按钮与数量徽标移入本列、**徽标恒显（0 也不隐藏）**；② **特殊字段入口（修订 D132）**——目标字段的「特殊字段」下拉移除、入口并入「类型」下拉「特殊字段」分组（选项 = **中文名**：跳过记录/目标文件夹/文件名/状态/警告列表/智能链接，每字段唯一、已配置者灰置「已配置」），选中即把该行**挪移到「特殊字段面板」**（真实特殊字段行不参与普通行排序段，D130 口径不变）；③ **特殊字段面板**——行列 = **来源（可修改）/ 类型（不可修改、中文名）/ 目标字段（不可修改、含说明）/ 设置（可弹出已设置面板 + 徽标）/ 操作（删除）**：`_skip`/`_folder`/`_fileName` 为区块 4/3 联动视图行（来源 —、设置列显示联动摘要、✕ 清除上方区块配置并复位）、`_status`/`_warnings`/`_link` 为真实行（cfg.mappings + `ipro:specialrow`）；④ **设置下拉合并**——特殊字段行「设置」下拉 = 普通设置（七组）+ 特殊字段专属设置（不再独立专属下拉），特殊字段**说明项（中文名 + 用途）**入「已添加设置」面板；⑤ 特殊字段列表不需 `↑/↓` 排序按钮；⑥ **拖拽首列**——映射行把手 `⋮⋮` 置表格首列、已添加设置把手置设置项首列；⑦ **笔记类型面板（修订 D120）**——生成条件下拉 = 列映射**目标列**（`mappingTargetColumns`）、「文件名后缀」更名「文件名」。落点：wizard-data（`SPECIAL_FIELD_LABELS` 增中文 `name`）、import-modal（renderMappingCard 列收敛 + 类型特殊分组、`renderSpecialFieldsPanel`/`renderSpecialViewRow`/`renderSpecialRealRow`/`renderSpecialRowAddSelect`、设置列重组、settings 面板说明项）、styles.css；type-check 0 错、全量 Vitest **203 例全绿**（wizard-data +1）。蓝图同步：architecture 1.36.0 / ui/layout 1.29.0 / CHANGELOG 1.30.0 / project 1.36.0。
+>
 > 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
 ## 5. 里程碑
@@ -225,4 +227,4 @@ arcmesh:
 
 ---
 
-*版本: 1.35.0 | 最后更新: 2026-09-06（D130–D134 已实现：区块 5 行顺序 ↑/↓+拖拽（内容模板顺序，段内 moveMappingRow）/ 设置顺序 ↑/↓+拖拽（管道顺序，受限集 moveRowSetting）/ 特殊字段行（`_skip`/`_folder`/`_fileName` 联动视图行 ↔ 区块 4/3、`_status`/`_warnings`/`_link` 真实行 + 专属默认设置）/ 区块 3 [💾 保存到内容模板]（`mainNoteContentFields` → `saveContentTemplate`/`applyContentLayout` 写正文 content 段），type-check 0 错、全量 Vitest 202 全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。前序 1.33.0：D126–D129 已实现，Vitest 183 例全绿，见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））*
+*版本: 1.36.0 | 最后更新: 2026-09-06（D135 已实现：区块 5 列收敛与特殊字段面板——设置列更名 + `⏵/⏷`/徽标移入（0 也显）、特殊字段入口入「类型」下拉（中文名）→ 挪移独立特殊字段面板（来源/类型/目标字段/设置/操作五列，视图行 + 真实行）、特殊字段设置下拉合并普通 + 专属、拖拽把手置首列、笔记类型生成条件目标列 + 「文件名」更名，type-check 0 错、全量 Vitest 203 全绿，见 decisions/2026-09-06-step3-block5-settings-special-fields-panel.md（v1.1.0 implemented）。前序 1.35.0：D130–D134 已实现，Vitest 202 例全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。前序 1.33.0：D126–D129 已实现，Vitest 183 例全绿，见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））*

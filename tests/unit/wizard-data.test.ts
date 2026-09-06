@@ -1609,6 +1609,23 @@ describe('D132/D133：特殊字段真实行（_status/_warnings/_link）', () =>
     expect(SPECIAL_FIELD_LABELS.map((s) => s.value)).toEqual(['_skip', '_folder', '_fileName', '_status', '_warnings', '_link']);
   });
 
+  it('D135：SPECIAL_FIELD_LABELS 中文名 name 齐备且唯一（类型下拉「特殊字段」分组 / 面板类型列展示用）', () => {
+    const names = SPECIAL_FIELD_LABELS.map((s) => s.name);
+    expect(names.length).toBe(6);
+    expect(new Set(names).size).toBe(6); // 每字段中文名唯一
+    expect(SPECIAL_FIELD_LABELS.every((s) => s.name.trim() !== '' && s.hint.trim() !== '' && s.label === s.value)).toBe(true);
+    // 中文名与蓝图/决策 ② 口径一致（_skip=跳过记录 … _link=智能链接）
+    const byValue = Object.fromEntries(SPECIAL_FIELD_LABELS.map((s) => [s.value, s.name]));
+    expect(byValue).toEqual({
+      _skip: '跳过记录',
+      _folder: '目标文件夹',
+      _fileName: '文件名',
+      _status: '状态',
+      _warnings: '警告列表',
+      _link: '智能链接'
+    });
+  });
+
   it('defaultSpecialSetting：_status=固定值、_warnings=条件警告、_link=smartLink；_skip 等视图行返回 null', () => {
     expect(defaultSpecialSetting('_status')).toEqual([{ group: 'special', op: 'fixed', value: '' }]);
     expect(defaultSpecialSetting('_warnings')?.[0]).toMatchObject({ group: 'compute', op: 'warn' });

@@ -1344,7 +1344,7 @@ export class ImportModal extends Modal {
     stat.setText(`保留「全部规则均匹配」的行（AND），筛选后 ${formatCount(kept)} / ${formatCount(this.parsed.length)} 行`);
   }
 
-  /** D132：已配置的联动视图特殊字段集（目标字段下拉灰置「已配置」；数据源 = filters / output） */
+  /** D132/D135：已配置的联动视图特殊字段集（「类型」下拉特殊字段分组灰置「已配置」；数据源 = filters / output） */
   private specialViewConfigured(): Set<string> {
     const s = new Set<string>();
     if ((this.transform.filters ?? []).length > 0) s.add('_skip');
@@ -1354,8 +1354,9 @@ export class ImportModal extends Modal {
     return s;
   }
 
-  /** D132/D133：目标字段下拉选中某特殊字段的处理（每字段唯一；联动字段 _skip/_folder/_fileName
-   *  引导到区块 4/3 权威入口；真实字段 _status/_warnings/_link 新建/切换并自动加入默认设置） */
+  /** D132/D133/D135：「类型」下拉「特殊字段」分组选中某特殊字段的处理（每字段唯一；D135 入口由目标字段
+   *  下拉移入类型下拉——联动字段 _skip/_folder/_fileName 引导到区块 4/3 权威入口；真实字段 _status/_warnings/_link
+   *  将当前行转为特殊字段真实行并挪移到「特殊字段面板」，自动加入默认设置） */
   private applySpecialFieldToRow(index: number, value: string): void {
     if (!isSpecialFieldTarget(value)) return;
     const mp = this.transform.mappings[index];
@@ -1366,20 +1367,22 @@ export class ImportModal extends Modal {
       return;
     }
     if (isLinkedSpecialField(value)) {
-      // _skip/_folder/_fileName：视图行（上方区块权威），仅提示入口
+      // _skip/_folder/_fileName：联动视图行（上方区块权威），仅提示入口
       if (viewSpec.has(value)) {
-        new Notice(`${value} 已配置并显示于本区块底部特殊字段区（在上方区块 3/4 编辑）`);
+        new Notice(`${value} 已配置并显示于「特殊字段面板」（在上方区块 3/4 编辑）`);
       } else {
+        const meta = this.specialFieldMeta(value);
         const guide =
           value === '_skip'
-            ? '请到区块 4「行筛选」添加规则——配置后 _skip 将显示为特殊字段行'
-            : `请在区块 3「输出${value === '_folder' ? '文件夹' : '文件命名'}」输入表达式——配置后 ${value} 将显示为特殊字段行`;
+            ? `「${meta?.name}」请到区块 4「行筛选」添加规则——配置后 _skip 将显示为特殊字段行`
+            : `「${meta?.name}」请在区块 3「输出${value === '_folder' ? '文件夹' : '文件命名'}」输入表达式——配置后 ${value} 将显示为特殊字段行`;
         new Notice(guide);
       }
       return;
     }
     if (mp.target === value) return;
-    // 普通/派生行 → 转为特殊字段真实行（source/noteType 清空、type=text、settings = 专属默认设置，D133）
+    // 普通/派生行 → 转为特殊字段真实行并挪移特殊字段面板（source/noteType 清空、type=text、settings = 专属默认设置，D133）
+    const meta = this.specialFieldMeta(value);
     mp.rule = undefined;
     mp.source = '';
     mp.target = value;
@@ -1387,56 +1390,270 @@ export class ImportModal extends Modal {
     mp.noteType = undefined;
     mp.settings = defaultSpecialSetting(value) ?? undefined;
     this.mappingPanelsOpen.add(index);
+    new Notice(`已把该行设为特殊字段「${meta?.name}（${value}）」并挪移至「特殊字段面板」（可改来源/加设置，面板 ✕ 删除）`);
     this.refreshStep3Blocks(['columns']);
   }
 
-  /** D132/D133：区块 4/3 联动特殊字段视图行（_skip ↔ 行筛选；_folder/_fileName ↔ 输出位置及命名）。
-   *  数据源 = transform.filters / output——不入 cfg.mappings；✕ = 清除对应上方区块配置并复位。 */
-  private renderLinkedSpecialViews(host: HTMLElement): void {
-    const hasSkip = (this.transform.filters ?? []).length > 0;
+  /** D135：特殊字段标签元数据（中文名 name + 原名字段 value + 用途 hint） */
+  private specialFieldMeta(value: string): { value: string; label: string; name: string; hint: string } | undefined {
+    return SPECIAL_FIELD_LABELS.find((s) => s.value === value);
+  }
+
+  /** D132/D133/D135：区块 5「特殊字段面板」（独立于普通映射表；面板行列 = 来源/类型/目标字段/设置/操作）。
+   *  - 视图行 `_skip`/`_folder`/`_fileName`：数据源 = transform.filters / output（区块 4/3 权威、不入 cfg.mappings）——
+   *    来源不适用（—）、类型/目标只读、设置列显示联动摘要、操作 ✕ = 清除对应上方区块配置并复位；
+   *  - 真实行 `_status`/`_warnings`/`_link`：入 cfg.mappings（ipro:specialrow 反编译还原）——来源可修改、
+   *    类型/目标只读（含说明）、设置 = 合并下拉（普通七组 + 专属设置）弹出已设置面板 + 徽标、操作 ✕ = 删除。
+   *  D135：列表按 SPECIAL_FIELDS 规范序展示，不需排序按钮（无 ↑/↓/拖拽）。 */
+  private renderSpecialFieldsPanel(host: HTMLElement): void {
     const folder = (this.outputFolder ?? '').trim();
     const noteName = (this.outputNoteName ?? '').trim();
+    const hasSkip = (this.transform.filters ?? []).length > 0;
     const hasFolder = folder !== '';
     const hasFileName = noteName !== '' && noteName !== '{{_hash}}';
-    if (!hasSkip && !hasFolder && !hasFileName) return;
-    const box = host.createDiv({ cls: 'ipw-linked-special' });
-    box.createDiv({ cls: 'ipw-muted ipw-note', text: '🧷 特殊字段（与上方区块联动、每字段唯一；由引擎消费，不进笔记正文）' });
-    if (hasSkip) {
-      const r = box.createDiv({ cls: 'ipw-linked-special-row' });
-      r.createSpan({ cls: 'ipw-chip ipw-chip-special', text: '_skip' });
-      r.createSpan({ cls: 'ipw-muted', text: `行筛选 ${(this.transform.filters ?? []).length} 条规则（区块 4 为权威入口）` });
-      const del = r.createEl('button', { cls: 'ipw-icon-btn', text: '✕', attr: { title: '移除 _skip（清空区块 4 行筛选规则）' } });
-      del.addEventListener('click', () => {
-        this.transform.filters = [];
-        this.refreshStep3Blocks(['rows', 'columns']);
-      });
+    const realRows = this.transform.mappings
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => isSpecialFieldRow(m));
+    if (!hasSkip && !hasFolder && !hasFileName && realRows.length === 0) return;
+
+    const panel = host.createDiv({ cls: 'ipw-special-panel' });
+    const title = panel.createDiv({ cls: 'ipw-special-panel-title' });
+    title.createSpan({
+      text: '🧷 特殊字段（保留字段，每字段唯一；由引擎消费、不进笔记正文；「类型」下拉「特殊字段」分组可新建/挪移，详见说明）'
+    });
+    const head = panel.createDiv({ cls: 'ipw-grid ipw-grid-head ipw-special-head' });
+    head.createSpan({ text: '来源' });
+    head.createSpan({ text: '类型' });
+    head.createSpan({ text: '目标字段' });
+    head.createSpan({ text: '设置' });
+    head.createSpan({ text: '操作' });
+
+    for (const value of ['_skip', '_folder', '_fileName', '_status', '_warnings', '_link'] as const) {
+      const meta = this.specialFieldMeta(value);
+      if (!meta) continue;
+      // 视图行（区块 4/3 联动）
+      if (value === '_skip' && hasSkip) {
+        this.renderSpecialViewRow(panel, meta, `区块 4 行筛选 ${(this.transform.filters ?? []).length} 条规则（权威编辑）`, () => {
+          this.transform.filters = [];
+          this.refreshStep3Blocks(['rows', 'columns']);
+        });
+        continue;
+      }
+      if (value === '_folder' && hasFolder) {
+        this.renderSpecialViewRow(panel, meta, `区块 3 输出表达式 ${folder}（权威编辑）`, () => {
+          this.outputFolder = '';
+          this.syncTransformOutput();
+          this.refreshStep3Blocks(['template', 'columns']);
+        });
+        continue;
+      }
+      if (value === '_fileName' && hasFileName) {
+        this.renderSpecialViewRow(panel, meta, `区块 3 输出表达式 ${noteName}（权威编辑）`, () => {
+          this.outputNoteName = '{{_hash}}';
+          this.syncTransformOutput();
+          this.refreshStep3Blocks(['template', 'columns']);
+        });
+        continue;
+      }
+      // 真实行（cfg.mappings）
+      const real = realRows.find((r) => (r.m.target || r.m.source) === value);
+      if (real) {
+        this.renderSpecialRealRow(panel, real.m, real.i, meta);
+      }
     }
-    if (hasFolder) {
-      const r = box.createDiv({ cls: 'ipw-linked-special-row' });
-      r.createSpan({ cls: 'ipw-chip ipw-chip-special', text: '_folder' });
-      r.createSpan({ cls: 'ipw-muted', text: `输出表达式 ${folder}（区块 3 为权威入口）` });
-      const del = r.createEl('button', { cls: 'ipw-icon-btn', text: '✕', attr: { title: '移除 _folder（清除区块 3 输出文件夹表达式）' } });
-      del.addEventListener('click', () => {
-        this.outputFolder = '';
-        this.syncTransformOutput();
-        this.refreshStep3Blocks(['template', 'columns']);
-      });
+  }
+
+  /** D135：特殊字段面板·联动视图行（_skip/_folder/_fileName）——来源不适用、类型/目标只读（含说明）、
+   *  设置列显示上方区块联动摘要、操作 ✕ 清除对应区块配置并复位 */
+  private renderSpecialViewRow(
+    panel: HTMLElement,
+    meta: { value: string; name: string; hint: string },
+    summary: string,
+    onClear: () => void
+  ): void {
+    const row = panel.createDiv({ cls: 'ipw-grid ipw-special-row' });
+    row.createSpan({ cls: 'ipw-muted', text: '—' }); // 来源不适用
+    row.createSpan({ cls: 'ipw-chip ipw-chip-special', text: meta.name, attr: { title: `${meta.value}：${meta.hint}` } });
+    row.createSpan({ cls: 'ipw-chip ipw-chip-special', text: meta.value, attr: { title: `${meta.hint}（与区块 4/3 联动）` } });
+    row.createSpan({ cls: 'ipw-muted ipw-special-summary', text: summary });
+    const del = row.createEl('button', {
+      cls: 'ipw-icon-btn',
+      text: '✕',
+      attr: { title: `移除 ${meta.value}（${meta.hint}；清除对应上方区块配置）` }
+    });
+    del.addEventListener('click', onClear);
+  }
+
+  /** D135：特殊字段面板·真实行（_status/_warnings/_link，cfg.mappings）——来源可修改、类型/目标只读、
+   *  设置 = 合并下拉 + ⏵/⏷ + 徽标（弹出已设置面板）、操作 ✕ 删除 */
+  private renderSpecialRealRow(panel: HTMLElement, m: ColumnMapping, arrIndex: number, meta: { value: string; name: string; hint: string }): void {
+    const row = panel.createDiv({ cls: 'ipw-grid ipw-special-row' });
+    // 来源（可修改：_warnings 条件警告比较基准 = 行来源列；可选任意列或留空）
+    const src = row.createEl('select', { cls: 'ipw-select' });
+    src.createEl('option', { value: '', text: '(无来源)' });
+    for (const c of this.columns()) src.createEl('option', { value: c, text: c });
+    src.value = m.source;
+    src.addEventListener('change', () => {
+      const mp = this.transform.mappings[arrIndex];
+      if (mp) mp.source = src.value;
+      this.refreshStep3Blocks(['columns']); // L2：条件警告/值管线依赖来源
+    });
+    // 类型（不可修改、中文名）
+    row.createSpan({ cls: 'ipw-chip ipw-chip-special', text: meta.name, attr: { title: `${meta.value}：${meta.hint}` } });
+    // 目标字段（不可修改、含说明）
+    row.createSpan({ cls: 'ipw-chip ipw-chip-special', text: meta.value, attr: { title: `${meta.name}：${meta.hint}` } });
+    // 设置（合并下拉 + ⏵/⏷ + 徽标恒显）
+    const settingCell = row.createDiv({ cls: 'ipw-add-setting-cell' });
+    this.renderSpecialRowAddSelect(settingCell, arrIndex, m);
+    const count = m.settings?.length ?? 0;
+    const open = this.mappingPanelsOpen.has(arrIndex);
+    const toggle = settingCell.createEl('button', {
+      cls: 'ipw-icon-btn',
+      text: open ? '⏷' : '⏵',
+      attr: { title: open ? '隐藏已添加设置' : '显示已添加设置' }
+    });
+    toggle.addEventListener('click', () => {
+      if (this.mappingPanelsOpen.has(arrIndex)) this.mappingPanelsOpen.delete(arrIndex);
+      else this.mappingPanelsOpen.add(arrIndex);
+      this.refreshStep3Blocks(['columns']);
+    });
+    settingCell.createEl('span', { cls: 'ipw-settings-count', text: `${count}` }); // D135：徽标恒显（0 也显示）
+    // 操作（删除该特殊字段行 → 移除配置、回落引擎默认）
+    const del = row.createEl('button', {
+      cls: 'ipw-icon-btn',
+      text: '✕',
+      attr: { title: `删除 ${meta.value} 特殊字段行（${meta.hint}；回落引擎默认）` }
+    });
+    del.addEventListener('click', () => {
+      this.transform.mappings.splice(arrIndex, 1);
+      this.mappingPanelsOpen.delete(arrIndex);
+      this.pendingSettingDraft = null;
+      this.refreshStep3Blocks(['columns']);
+    });
+    // 行下已添加设置面板（展开时渲染，grid-column 1/-1）
+    if (open) {
+      this.renderMappingSettingsPanel(row, m, arrIndex);
     }
-    if (hasFileName) {
-      const r = box.createDiv({ cls: 'ipw-linked-special-row' });
-      r.createSpan({ cls: 'ipw-chip ipw-chip-special', text: '_fileName' });
-      r.createSpan({ cls: 'ipw-muted', text: `输出表达式 ${noteName}（区块 3 为权威入口）` });
-      const del = r.createEl('button', {
-        cls: 'ipw-icon-btn',
-        text: '✕',
-        attr: { title: '移除 _fileName（复位区块 3 文件命名为 {{_hash}}）' }
-      });
-      del.addEventListener('click', () => {
-        this.outputNoteName = '{{_hash}}';
-        this.syncTransformOutput();
-        this.refreshStep3Blocks(['template', 'columns']);
-      });
+  }
+
+  /** D135：特殊字段真实行「设置」下拉——合并普通设置（七组）+ 特殊字段专属设置（不再独立专属下拉） */
+  private renderSpecialRowAddSelect(cell: HTMLElement, index: number, m: ColumnMapping): void {
+    const sel = cell.createEl('select', { cls: 'ipw-select ipw-add-setting-sel' });
+    sel.createEl('option', { value: '', text: '＋ 添加设置…' });
+    const gFmt = sel.createEl('optgroup', { attr: { label: '列格式化' } });
+    for (const o of FORMAT_OP_LABELS) gFmt.createEl('option', { value: o.value, text: o.label });
+    const gPrc = sel.createEl('optgroup', { attr: { label: '列处理' } });
+    for (const o of PROCESS_OP_LABELS) gPrc.createEl('option', { value: o.value, text: o.label });
+    const gDer = sel.createEl('optgroup', { attr: { label: '列派生' } });
+    for (const p of DERIVED_PRESETS) gDer.createEl('option', { value: p.id, text: p.label });
+    const gCmp = sel.createEl('optgroup', { attr: { label: '计算' } });
+    for (const o of COMPUTE_ARITH_LABELS) gCmp.createEl('option', { value: o.value, text: o.label });
+    for (const o of COMPUTE_COND_LABELS) gCmp.createEl('option', { value: o.value, text: o.label });
+    const gLnk = sel.createEl('optgroup', { attr: { label: '链接' } });
+    for (const o of LINK_OP_LABELS) gLnk.createEl('option', { value: o.value, text: o.label });
+    const gVal = sel.createEl('optgroup', { attr: { label: '条件校验' } });
+    for (const o of VALIDATE_FN_LABELS) gVal.createEl('option', { value: o.value, text: o.label });
+    const gExt = sel.createEl('optgroup', { attr: { label: '提取' } });
+    gExt.createEl('option', { value: 'itemAt', text: '提取 · itemAt（数组第 N 个 / Object 键值）' });
+    // D135：专属设置合并进同一下拉（_status=固定值 / _warnings=条件警告 / _link=smartLink）
+    const target = m.target || m.source || '';
+    const meta = this.specialFieldMeta(target);
+    const gSp = sel.createEl('optgroup', { attr: { label: '特殊字段' } });
+    if (target === '_status') {
+      gSp.createEl('option', { value: 'fixed', text: '固定值（_status 字符串常量）' });
+    } else if (target === '_warnings') {
+      gSp.createEl('option', { value: 'warn', text: '条件警告（来源列比较 → 追加警告文本）' });
+    } else if (target === '_link') {
+      gSp.createEl('option', { value: 'smartLink', text: '智能链接（目标/回退文件夹）' });
+    } else {
+      gSp.createEl('option', { value: '', text: meta?.name ?? target, attr: { disabled: 'true' } });
     }
+    sel.addEventListener('change', () => {
+      const val = sel.value;
+      sel.value = '';
+      if (!val) return;
+      const mp = this.transform.mappings[index];
+      const isDerived = !!mp?.rule;
+      // 专属设置：fixed（_status）直接走固定值草稿
+      if (val === 'fixed') {
+        this.pendingSettingDraft = { index, group: 'special', op: 'fixed' };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      // 专属/普通 warn、smartLink：与普通行同语义（附言/链接），warn 需来源列
+      if (val === 'warn' || val === 'smartLink') {
+        if (isDerived) {
+          new Notice('条件警告 / 智能链接仅适用于普通映射行');
+          return;
+        }
+        if (val === 'warn' && !mp?.source) {
+          new Notice('请先在该行「来源」选择一个比较列，再添加条件警告');
+          return;
+        }
+        this.pendingSettingDraft =
+          val === 'warn' ? { index, group: 'compute', op: 'warn' } : { index, group: 'link', op: 'smartLink' };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      if (DERIVED_PRESETS.some((p) => p.id === val)) {
+        this.applyDerivePreset(index, val as DerivedRuleId);
+        return;
+      }
+      const arith = COMPUTE_ARITH_LABELS.find((o) => o.value === val);
+      if (arith) {
+        this.pendingSettingDraft = { index, group: 'compute', op: arith.value };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      if (VALIDATE_FN_LABELS.some((o) => o.value === val)) {
+        if (isDerived) {
+          new Notice('条件校验仅适用于普通映射行');
+          return;
+        }
+        this.pendingSettingDraft = { index, group: 'validate', op: val as ValidateFnOp };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      if (val === 'itemAt') {
+        this.pendingSettingDraft = { index, group: 'extract', op: 'itemAt' };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      if (val === 'condition') {
+        if (isDerived) {
+          new Notice('条件计算仅适用于普通映射行');
+          return;
+        }
+        this.pendingSettingDraft = { index, group: 'compute', op: 'condition' };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      const fmt = FORMAT_OP_LABELS.some((o) => o.value === val);
+      const prc = PROCESS_OP_LABELS.some((o) => o.value === val);
+      const group: 'format' | 'process' | null = fmt ? 'format' : prc ? 'process' : null;
+      if (!group) return;
+      const spec = settingParamSpec(({ group, op: val, param: '', param2: '' } as unknown) as MappingSetting);
+      if (spec.needParam) {
+        this.pendingSettingDraft = { index, group, op: val };
+        this.mappingPanelsOpen.add(index);
+        this.refreshStep3Blocks(['columns']);
+        return;
+      }
+      mp.settings = mp.settings ?? [];
+      const setting: MappingSetting =
+        group === 'format'
+          ? ({ group: 'format', op: val, param: '' } as unknown as MappingSetting)
+          : ({ group: 'process', op: val, param: ',', param2: val === 'merge' ? ' ' : '' } as unknown as MappingSetting);
+      mp.settings.push(setting);
+      this.mappingPanelsOpen.add(index);
+      this.refreshStep3Blocks(['columns']);
+    });
   }
 
   /** D134：[💾 保存到内容模板]——按区块 5 行顺序与字段集写所选模板正文 content 段（只写正文、不动 preprocess/frontmatter） */
@@ -1466,23 +1683,24 @@ export class ImportModal extends Modal {
 
   /**
    * 区块 5：列映射（列级，D105/D108/D113 收敛，D117 统一管线 UI）：单一「列映射」表（映射与派生合并；
-   * 「类型」= FrontMatter 类型；「添加设置」下拉 = 列格式化 / 列处理 / 列派生；行下设置面板可编辑/显隐。
+   * 「类型」= FrontMatter 类型 + 「特殊字段」分组（D135，选中即挪移特殊字段面板）；「设置」列（原「添加设置」
+   *  更名）下拉 = 列格式化 / 列处理 / 列派生…；行下设置面板可编辑/显隐。
    * 不再有独立列格式化/列处理卡；旧模板 column-format/column-process 段读取时折叠为行设置链。
    * D125：「输出到」增「所有笔记」；来源变更 → 目标字段自动清洗（去全部空白）。
-   * D130–D133：行顺序 ↑/↓+拖拽、设置顺序 ↑/↓+拖拽、特殊字段行（目标下拉/唯一/默认与专属设置/联动视图行）。
+   * D130–D135：行顺序 ↑/↓+拖拽（把手置首列）、设置顺序（把手置项首列）、特殊字段面板（视图行 + 真实行）。
    */
   private renderColumnsBlock(el: HTMLElement): void {
     const wrap = el.createDiv({ cls: 'ipw-block' });
     this.s3Wrap.columns = wrap; // D91：记录区块容器，供 L2 局部刷新原位重建
-    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 类型 + 输出到 + 添加设置链 + 多笔记）' });
+    wrap.createEl('h5', { text: '⚙️ 列映射（映射 / 派生 / 类型 + 输出到 + 设置链 + 多笔记 + 特殊字段）' });
     const cols = this.columns();
 
     const mapCard = wrap.createDiv({ cls: 'ipw-card' });
     mapCard.createDiv({
       cls: 'ipw-card-title',
       text:
-        '📋 列映射与派生（「类型」= FrontMatter 类型；「输出到」= 字段归属笔记（D120/D125/D127：附加类型 · 所有笔记 · 不输出）；' +
-        '「添加设置」= 格式化/处理/派生/计算/链接/条件校验/提取）'
+        '📋 列映射与派生（「类型」= FrontMatter 类型 + 特殊字段分组；「输出到」= 字段归属笔记（D120/D125/D127：附加类型 · 所有笔记 · 不输出）；' +
+        '「设置」= 格式化/处理/派生/计算/链接/条件校验/提取）'
     });
     this.renderMappingCard(mapCard, cols);
 
@@ -1523,157 +1741,42 @@ export class ImportModal extends Modal {
   }
 
   /**
-   * 区块 5「列映射」卡片（D117 统一管线 UI）：列 = 来源 / 目标字段 / 类型(FrontMatter) / 输出到 / 添加设置(下拉) / 操作(⏵显隐设置 + ✕)。
-   * 行模型 = cfg.mappings 统一行：rule 有值=派生（经「添加设置 · 列派生」下拉创建/切换）；settings = 格式化/处理设置链；
+   * 区块 5「列映射」卡片（D117 统一管线 UI；D135 列收敛）：列 = 首列拖拽把手 / 来源 / 目标字段 / 类型(FrontMatter + 特殊字段分组) /
+   *  输出到 / 设置（原「添加设置」：分组下拉留列内 + ⏵/⏷ + 徽标恒显）/ 操作（自动标签 + ↑/↓ + ✕）。
+   * 行模型 = cfg.mappings 统一行：rule 有值=派生（经「设置 · 列派生」下拉创建/切换）；settings = 格式化/处理设置链；
    * 「类型」= FrontMatter 类型（文本/数字/日期/布尔/忽略，数字·日期·布尔隐含转换）；origin='auto'=自动映射生成。
    * D125：来源变更 → 目标字段自动清洗（去全部空白，L1 预览）；「输出到」含「所有笔记」。
-   * 每行下方「设置面板」列出已添加设置（派生预设 + 格式化/处理，可编辑参数/删除），由操作列 ⏵/⏷ 显隐。
+   * 每行下方「设置面板」列出已添加设置（派生预设 + 格式化/处理，可编辑参数/删除），由「设置」列 ⏵/⏷ 显隐。
+   * 特殊字段真实行（_status/_warnings/_link）不在此表——渲染于 renderSpecialFieldsPanel（D135）。
    */
   private renderMappingCard(host: HTMLElement, cols: string[]): void {
     const head = host.createDiv({ cls: 'ipw-grid ipw-grid-head ipw-map-head' });
+    head.createSpan({ text: '' }); // D135：首列 = 行拖拽把手占位
     head.createSpan({ text: '来源' });
     head.createSpan({ text: '目标字段' });
     head.createSpan({ text: '类型' });
     head.createSpan({ text: '输出到' });
-    head.createSpan({ text: '添加设置' });
+    head.createSpan({ text: '设置' }); // D135：原「添加设置」更名；⏵/⏷ 与徽标移入本列
     head.createSpan({ text: '操作' });
 
-    if (this.transform.mappings.length === 0) {
+    // D135：特殊字段真实行（_status/_warnings/_link）显示于下方「特殊字段面板」，不入普通映射表
+    const regularMappings = this.transform.mappings.filter((m) => !isSpecialFieldRow(m));
+    if (regularMappings.length === 0) {
       host.createDiv({
         cls: 'ipw-muted ipw-note',
         text:
-          '（暂无映射，将保留全部列；「添加设置」下拉可为行加入 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取 步骤——选「列派生」即成为派生计算行）'
+          '（暂无映射，将保留全部列；「设置」下拉可为行加入 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取 步骤——选「列派生」即成为派生计算行）'
       });
     }
 
     this.transform.mappings.forEach((m, i) => {
+      // D135：特殊字段真实行不在此表渲染（见 renderSpecialFieldsPanel）
+      if (isSpecialFieldRow(m)) return;
       const isDerived = !!m.rule;
-      // D132：特殊字段真实行（_status/_warnings/_link 在 cfg.mappings；_skip/_folder/_fileName 为区块 3/4 联动视图行）
-      const isSpecial = isSpecialFieldRow(m);
       const preset = isDerived ? DERIVED_PRESETS.find((p) => p.id === m.rule) : undefined;
       const row = host.createDiv({ cls: 'ipw-grid ipw-map-row' });
 
-      // ── 来源（D132：特殊字段行来源可留空，供 _warnings 条件选列；不自动填充） ──
-      const src = row.createEl('select', { cls: 'ipw-select' });
-      if (isDerived || isSpecial) {
-        // 派生行/特殊字段行可重复读取任意列；无源预设（时间戳/年份）/特殊字段提供「(无来源)」可留空
-        if ((isDerived && preset && !preset.needsSource) || isSpecial) {
-          src.createEl('option', { value: '', text: '(无来源)' });
-        }
-        for (const c of cols) src.createEl('option', { value: c, text: c });
-      } else {
-        // 纯映射行仅可从「未消费源列」+ 自身当前来源中选
-        for (const c of [...unmappedColumns(cols, this.transform.mappings), m.source]) {
-          src.createEl('option', { value: c, text: c });
-        }
-      }
-      if (src.options.length > 0) {
-        src.value = m.source;
-        if (src.value === '' && !isSpecial) {
-          // 普通/派生行空来源自动取首项（既有行为）；特殊字段行保留空来源
-          const fb = src.options[0].value;
-          this.transform.mappings[i].source = fb;
-          src.value = fb;
-        }
-      }
-      src.addEventListener('change', () => {
-        const mp = this.transform.mappings[i];
-        mp.source = src.value;
-        // D125：来源变更 → 目标字段自动清洗（去全部空白：空格/制表符/换行/回车）；目标可再手动改名
-        // D132：特殊字段行（来源可留空，值由默认设置/设置链产出）不做自动清洗
-        if (!isSpecial) {
-          target.value = sourceToTargetName(mp.source);
-          mp.target = target.value;
-        }
-        this.refreshPreviewOnly(); // D91/D125：L1 预览（目标输入框就地更新，不重建区块、不丢焦点）
-      });
-
-      // ── 目标字段（D132：输入 + 「特殊字段」下拉；选 _xxx 即设特殊字段行（每字段唯一）） ──
-      const targetBox = row.createDiv({ cls: 'ipw-target-box' });
-      const target = targetBox.createEl('input', {
-        cls: 'ipw-input',
-        type: 'text',
-        placeholder: isDerived ? '产出字段名' : isSpecial ? '特殊字段' : '模板字段名'
-      });
-      target.value = m.target;
-      target.readOnly = isSpecial; // 特殊字段行目标由保留字段语义固定（删除重建 / 下拉切换）
-      if (isSpecial) {
-        targetBox.createSpan({
-          cls: 'ipw-chip ipw-chip-special',
-          text: '特殊',
-          attr: { title: '保留字段行（引擎消费，不进笔记渲染数据）' }
-        });
-      }
-      target.addEventListener('input', () => {
-        this.transform.mappings[i].target = target.value;
-        this.refreshPreviewOnly(); // D91 L1：目标字段名影响预览表头
-      });
-      // 「特殊字段」下拉（新建/切换特殊字段行；已配置者灰置「已配置」）
-      const specSel = targetBox.createEl('select', { cls: 'ipw-select ipw-special-sel', attr: { title: '设为特殊字段行' } });
-      specSel.createEl('option', { value: '', text: '…' });
-      const usedSpec = specialTargetsInUse(this.transform.mappings);
-      const viewSpec = this.specialViewConfigured();
-      const spGroup = specSel.createEl('optgroup', { attr: { label: '特殊字段' } });
-      for (const s of SPECIAL_FIELD_LABELS) {
-        const occupied = usedSpec.has(s.value) || viewSpec.has(s.value);
-        const opt = spGroup.createEl('option', {
-          value: s.value,
-          text: occupied && m.target !== s.value ? `${s.value}（已配置）` : s.value,
-          attr: { title: occupied && m.target !== s.value ? `${s.hint}（已配置，每字段唯一）` : s.hint }
-        });
-        if (occupied && m.target !== s.value) opt.disabled = true;
-      }
-      specSel.disabled = isSpecial; // 特殊字段行目标已固定（删除重建 / 下拉切换）
-      specSel.value = '';
-      specSel.addEventListener('change', () => {
-        const v = specSel.value;
-        specSel.value = '';
-        if (!v) return;
-        this.applySpecialFieldToRow(i, v);
-      });
-
-      // ── 类型（D117：FrontMatter 类型；数字/日期/布尔隐含转换；身份证移除→「添加设置·列格式化」；
-      //    D132：特殊字段行禁用——保留字段类型由引擎语义固定） ──
-      const typeSel = row.createEl('select', { cls: 'ipw-select' });
-      for (const o of MAPPING_TYPE_LABELS) typeSel.createEl('option', { value: o.value, text: o.label });
-      typeSel.value = isSpecial ? 'text' : m.type;
-      typeSel.disabled = isSpecial;
-      typeSel.addEventListener('change', () => {
-        const mp = this.transform.mappings[i];
-        mp.type = typeSel.value as MappingType;
-        this.refreshStep3Blocks(['columns']); // D91：L2 + 预览刷新（忽略=不产出）
-      });
-
-      // ── 输出到（D120：字段归属笔记类型下拉；D125 增「所有笔记」= 主笔记 + 全部附加类型；
-      //    D132：特殊字段行禁用——保留字段由引擎消费、不写入任何笔记渲染数据） ──
-      const noteSel = row.createEl('select', { cls: 'ipw-select' });
-      noteSel.createEl('option', { value: '', text: isSpecial ? '—' : '主笔记' });
-      for (const t of this.transform.noteTypes ?? []) {
-        noteSel.createEl('option', { value: t.id, text: t.name || t.id });
-      }
-      noteSel.createEl('option', { value: ALL_NOTE_TYPES, text: '所有笔记' });
-      // D127：不输出——字段不进任何笔记渲染数据（仅作预处理中间值）
-      noteSel.createEl('option', { value: NONE_NOTE_TYPE, text: '不输出（仅预处理中间值）' });
-      noteSel.value = '';
-      noteSel.disabled = isSpecial;
-      noteSel.addEventListener('change', () => {
-        const mp = this.transform.mappings[i];
-        const v = noteSel.value;
-        mp.noteType = v === '' || v === 'main' ? undefined : v;
-        this.refreshStep3Blocks(['columns']); // D91：L2（字段归属变化影响 note-output）+ 预览刷新
-      });
-
-      // ── 添加设置（D117 下拉：列格式化 / 列处理 / 列派生；D133 特殊字段行走专属「特殊字段」组） ──
-      const addCell = row.createDiv({ cls: 'ipw-add-setting-cell' });
-      if (isSpecial) this.renderSpecialAddSelect(addCell, i, m);
-      else this.renderMappingAddSelect(addCell, i);
-
-      // ── 操作（独立单元格容器：D130 顺序操作 + ⏵/⏷ 面板显隐 + 自动标记 + 删除行） ──
-      const cellOps = row.createDiv({ cls: 'ipw-cell-ops' });
-      if (m.origin === 'auto') {
-        cellOps.createSpan({ cls: 'ipw-origin', text: '自动' });
-      }
-      // D130：行顺序 ↑/↓（仅同段内可移动——纯映射 / 派生 / 真实特殊行各自成段，段间顺序由段清单固定）
+      // D130 行顺序 ↑/↓（仅同段内可移动——纯映射 / 派生各自成段，段间顺序由段清单固定）
       const sameSeg = (a: ColumnMapping | undefined, b: ColumnMapping): boolean => !!a && !!a.rule === !!b.rule;
       const upOk = i > 0 && sameSeg(this.transform.mappings[i - 1], m);
       const downOk = i < this.transform.mappings.length - 1 && sameSeg(this.transform.mappings[i + 1], m);
@@ -1686,22 +1789,9 @@ export class ImportModal extends Modal {
         this.transform.mappings = next;
         this.refreshStep3Blocks(['columns']); // D91 L2 + 预览
       };
-      const btnUp = cellOps.createEl('button', {
-        cls: 'ipw-move',
-        text: '↑',
-        attr: { title: '上移（行顺序 = 内容模板顺序；跨段不可移）' }
-      });
-      btnUp.disabled = !upOk;
-      btnUp.addEventListener('click', () => moveRow(i, i - 1));
-      const btnDown = cellOps.createEl('button', {
-        cls: 'ipw-move',
-        text: '↓',
-        attr: { title: '下移（行顺序 = 内容模板顺序；跨段不可移）' }
-      });
-      btnDown.disabled = !downOk;
-      btnDown.addEventListener('click', () => moveRow(i, i + 1));
-      // D130：拖拽把手（同段内 drop）
-      const grip = cellOps.createEl('span', {
+
+      // D135：行拖拽把手 ⋮⋮ 移至表格首列（D130 同段拖拽语义不变）
+      const grip = row.createEl('span', {
         cls: 'ipw-grip',
         text: '⋮⋮',
         attr: { title: '拖拽调整行顺序（同段内）', draggable: 'true' }
@@ -1722,9 +1812,102 @@ export class ImportModal extends Modal {
         this.dragRowIndex = null;
         if (from !== null && from !== i) moveRow(from, i);
       });
+
+      // ── 来源 ──
+      const src = row.createEl('select', { cls: 'ipw-select' });
+      if (isDerived) {
+        // 派生行可重复读取任意列；无源预设（时间戳/年份）提供「(无来源)」可留空
+        if (preset && !preset.needsSource) {
+          src.createEl('option', { value: '', text: '(无来源)' });
+        }
+        for (const c of cols) src.createEl('option', { value: c, text: c });
+      } else {
+        // 纯映射行仅可从「未消费源列」+ 自身当前来源中选
+        for (const c of [...unmappedColumns(cols, this.transform.mappings), m.source]) {
+          src.createEl('option', { value: c, text: c });
+        }
+      }
+      if (src.options.length > 0) {
+        src.value = m.source;
+        if (src.value === '') {
+          const fb = src.options[0].value;
+          this.transform.mappings[i].source = fb;
+          src.value = fb;
+        }
+      }
+      src.addEventListener('change', () => {
+        const mp = this.transform.mappings[i];
+        mp.source = src.value;
+        // D125：来源变更 → 目标字段自动清洗（去全部空白：空格/制表符/换行/回车）；目标可再手动改名
+        target.value = sourceToTargetName(mp.source);
+        mp.target = target.value;
+        this.refreshPreviewOnly(); // D91/D125：L1 预览（目标输入框就地更新，不重建区块、不丢焦点）
+      });
+
+      // ── 目标字段（D135：移除「特殊字段」下拉——入口并入「类型」下拉特殊字段分组） ──
+      const targetBox = row.createDiv({ cls: 'ipw-target-box' });
+      const target = targetBox.createEl('input', {
+        cls: 'ipw-input',
+        type: 'text',
+        placeholder: isDerived ? '产出字段名' : '模板字段名'
+      });
+      target.value = m.target;
+      target.addEventListener('input', () => {
+        this.transform.mappings[i].target = target.value;
+        this.refreshPreviewOnly(); // D91 L1：目标字段名影响预览表头
+      });
+
+      // ── 类型（D117：FrontMatter 类型；数字/日期/布尔隐含转换；身份证移除→「设置·列格式化」；
+      //    D135：增「特殊字段」分组（中文名、每字段唯一）——选中即把该行挪移特殊字段面板） ──
+      const typeSel = row.createEl('select', { cls: 'ipw-select' });
+      for (const o of MAPPING_TYPE_LABELS) typeSel.createEl('option', { value: o.value, text: o.label });
+      const usedSpec = specialTargetsInUse(this.transform.mappings);
+      const viewSpec = this.specialViewConfigured();
+      const spGroup = typeSel.createEl('optgroup', { attr: { label: '特殊字段' } });
+      for (const s of SPECIAL_FIELD_LABELS) {
+        const occupied = usedSpec.has(s.value) || viewSpec.has(s.value);
+        const opt = spGroup.createEl('option', {
+          value: s.value,
+          text: occupied ? `${s.name}（已配置）` : s.name,
+          attr: { title: occupied ? `${s.hint}（已配置，每字段唯一）` : s.hint }
+        });
+        if (occupied) opt.disabled = true;
+      }
+      typeSel.value = m.type;
+      typeSel.addEventListener('change', () => {
+        const v = typeSel.value;
+        if (isSpecialFieldTarget(v)) {
+          typeSel.value = m.type; // 复位：applySpecialFieldToRow 把该行挪移特殊字段面板
+          this.applySpecialFieldToRow(i, v);
+          return;
+        }
+        const mp = this.transform.mappings[i];
+        mp.type = v as MappingType;
+        this.refreshStep3Blocks(['columns']); // D91：L2 + 预览刷新（忽略=不产出）
+      });
+
+      // ── 输出到（D120：字段归属笔记类型下拉；D125 增「所有笔记」；D127 增「不输出」） ──
+      const noteSel = row.createEl('select', { cls: 'ipw-select' });
+      noteSel.createEl('option', { value: '', text: '主笔记' });
+      for (const t of this.transform.noteTypes ?? []) {
+        noteSel.createEl('option', { value: t.id, text: t.name || t.id });
+      }
+      noteSel.createEl('option', { value: ALL_NOTE_TYPES, text: '所有笔记' });
+      noteSel.createEl('option', { value: NONE_NOTE_TYPE, text: '不输出（仅预处理中间值）' });
+      noteSel.value = m.noteType ?? '';
+      noteSel.addEventListener('change', () => {
+        const mp = this.transform.mappings[i];
+        const v = noteSel.value;
+        mp.noteType = v === '' || v === 'main' ? undefined : v;
+        this.refreshStep3Blocks(['columns']); // D91：L2（字段归属变化影响 note-output）+ 预览刷新
+      });
+
+      // ── 设置列（D135：原「添加设置」更名；分组下拉留列内 + ⏵/⏷ 显隐 + 数量徽标恒显[0 也显示]） ──
+      const addCell = row.createDiv({ cls: 'ipw-add-setting-cell' });
+      this.renderMappingAddSelect(addCell, i);
       const itemCount = (isDerived ? 1 : 0) + (m.settings?.length ?? 0);
       const open = this.mappingPanelsOpen.has(i);
-      const toggle = cellOps.createEl('button', {
+      const toggle = addCell.createEl('button', {
         cls: 'ipw-icon-btn',
         text: open ? '⏷' : '⏵',
         attr: { title: open ? '隐藏已添加设置' : '显示已添加设置' }
@@ -1734,13 +1917,32 @@ export class ImportModal extends Modal {
         else this.mappingPanelsOpen.add(i);
         this.refreshStep3Blocks(['columns']);
       });
-      if (!open && itemCount > 0) {
-        cellOps.createSpan({ cls: 'ipw-settings-count', text: `${itemCount}` });
+      // D135：徽标恒显（0 也不隐藏）
+      addCell.createEl('span', { cls: 'ipw-settings-count', text: `${itemCount}` });
+
+      // ── 操作（D135：自动标签 + ↑/↓ + ✕；⏵/⏷ 与徽标已移入「设置」列） ──
+      const cellOps = row.createDiv({ cls: 'ipw-cell-ops' });
+      if (m.origin === 'auto') {
+        cellOps.createSpan({ cls: 'ipw-origin', text: '自动' });
       }
+      const btnUp = cellOps.createEl('button', {
+        cls: 'ipw-move',
+        text: '↑',
+        attr: { title: '上移（行顺序 = 内容模板顺序；跨段不可移）' }
+      });
+      btnUp.disabled = !upOk;
+      btnUp.addEventListener('click', () => moveRow(i, i - 1));
+      const btnDown = cellOps.createEl('button', {
+        cls: 'ipw-move',
+        text: '↓',
+        attr: { title: '下移（行顺序 = 内容模板顺序；跨段不可移）' }
+      });
+      btnDown.disabled = !downOk;
+      btnDown.addEventListener('click', () => moveRow(i, i + 1));
       const del = cellOps.createEl('button', {
         cls: 'ipw-icon-btn',
         text: '✕',
-        attr: { title: isSpecial ? '删除该特殊字段行' : isDerived ? '删除该派生行' : '删除该映射行' }
+        attr: { title: isDerived ? '删除该派生行' : '删除该映射行' }
       });
       del.addEventListener('click', () => {
         this.transform.mappings.splice(i, 1);
@@ -1755,9 +1957,8 @@ export class ImportModal extends Modal {
       }
     });
 
-    // ── D132/D133：区块 4/3 联动的特殊字段视图行（_skip ↔ 行筛选；_folder/_fileName ↔ 输出位置及命名，
-    //    不入 cfg.mappings——数据源为 transform.filters / output，上方区块为权威编辑入口） ──
-    this.renderLinkedSpecialViews(host);
+    // ── D132/D133/D135：区块 5「特殊字段面板」（视图行 _skip/_folder/_fileName + 真实行 _status/_warnings/_link） ──
+    this.renderSpecialFieldsPanel(host);
 
     // ── 按钮行：添加映射行 / 自动映射 / 删除所有自动映射 / 清除所有 ──
     const ops = host.createDiv({ cls: 'ipw-form-row' });
@@ -1798,14 +1999,13 @@ export class ImportModal extends Modal {
       cls: 'ipw-muted ipw-note',
       text:
         `💡 可用源列: ${freeCols.join(' / ') || '(无未映射列)'}。` +
-        `「类型」为目标字段的 FrontMatter 类型（数字/日期/布尔自动转换，忽略=不产出）；` +
-        `「添加设置」下拉加入 列格式化/列处理/列派生/计算/链接/条件校验/提取 步骤（选「列派生」即按预设计算该字段；` +
+        `「类型」为目标字段的 FrontMatter 类型（数字/日期/布尔自动转换，忽略=不产出），其「特殊字段」分组（中文名）可将该行设为特殊字段行并挪移下方特殊字段面板（_skip/_folder/_fileName/_status/_warnings/_link，每字段唯一，D135）；` +
+        `「设置」下拉加入 列格式化/列处理/列派生/计算/链接/条件校验/提取 步骤（选「列派生」即按预设计算该字段；` +
         `计算=加减乘除/条件计算/条件警告，链接=智能链接，条件与链接仅适用于普通映射行；` +
         `条件校验=布尔校验该行值→真/假值（可固定值或引用字段），提取=数组/Object 取第 N 个/键值）；` +
         `「输出到·不输出」= 字段仅作预处理中间值、不进任何笔记；` +
-        `操作列 ↑/↓（或 ⋮⋮ 拖拽）调整行顺序 = 内容模板（正文）字段顺序（D130）；` +
-        `行下设置面板每项 ↑/↓（或 ⋮⋮ 拖拽）调整设置顺序 = 值管线/管道执行顺序（D131）；` +
-        `目标字段右侧「…」下拉可设特殊字段行（_skip/_folder/_fileName/_status/_warnings/_link，每字段唯一，D132）；` +
+        `行首 ⋮⋮ 拖拽（或操作列 ↑/↓）调整行顺序 = 内容模板（正文）字段顺序（D130）；` +
+        `行下设置面板每项拖拽把手（或 ↑/↓）调整设置顺序 = 值管线/管道执行顺序（D131）；` +
         `标记「自动」的行由 🧹自动映射 生成，「🗑 删除所有自动映射」仅删除此类行。`
     });
   }
@@ -1854,7 +2054,18 @@ export class ImportModal extends Modal {
     });
   }
 
-  /** 渲染单个附加笔记类型行（名称/模板/文件夹/文件名后缀/生成条件） */
+  /** D135⑦：笔记类型「生成条件」可选列 = 列映射中的目标列（目标字段，非来源列）；排除忽略/特殊字段 */
+  private mappingTargetColumns(): string[] {
+    const out: string[] = [];
+    for (const m of this.transform.mappings) {
+      const t = m.target || m.source;
+      if (!t || m.type === 'ignore' || isSpecialFieldTarget(t)) continue;
+      if (!out.includes(t)) out.push(t);
+    }
+    return out;
+  }
+
+  /** 渲染单个附加笔记类型行（名称/模板/文件夹/文件名/生成条件；D135⑦：生成条件选目标列、「文件名后缀」更名「文件名」） */
   private renderNoteTypeRow(host: HTMLElement, idx: number, t: NoteTypeConfig): void {
     const box = host.createDiv({ cls: 'ipw-note-type' });
     const row1 = box.createDiv({ cls: 'ipw-form-row' });
@@ -1898,19 +2109,19 @@ export class ImportModal extends Modal {
       const cur = (this.transform.noteTypes ?? [])[idx];
       if (cur) cur.folder = folderInput.value.trim();
     });
-    row2.createSpan({ cls: 'ipw-label ipw-label-gap', text: '文件名后缀:' });
+    row2.createSpan({ cls: 'ipw-label ipw-label-gap', text: '文件名:' }); // D135⑦：原「文件名后缀」
     const nameSuffix = row2.createEl('input', { cls: 'ipw-input', type: 'text', value: t.noteName ?? '', attr: { placeholder: '如 _联系方式（缺省 _类型名）' } });
     nameSuffix.addEventListener('input', () => {
       const cur = (this.transform.noteTypes ?? [])[idx];
       if (cur) cur.noteName = nameSuffix.value.trim();
     });
 
-    // 生成条件（复用行筛选 AND 语义；可选）
+    // 生成条件（复用行筛选 AND 语义；可选；D135⑦：列下拉 = 列映射目标列，非来源列）
     const row3 = box.createDiv({ cls: 'ipw-form-row' });
     row3.createSpan({ cls: 'ipw-label', text: '生成条件:' });
     const cCol = row3.createEl('select', { cls: 'ipw-select' });
     cCol.createEl('option', { value: ANY_COLUMN, text: '任意列' });
-    for (const c of this.columns()) cCol.createEl('option', { value: c, text: c });
+    for (const c of this.mappingTargetColumns()) cCol.createEl('option', { value: c, text: c });
     const cOp = row3.createEl('select', { cls: 'ipw-select' });
     for (const o of ROW_FILTER_OP_LABELS) cOp.createEl('option', { value: o.value, text: o.label });
     const cVal = row3.createEl('input', { cls: 'ipw-input', type: 'text', placeholder: '值（为空/非空无需）' });
@@ -1959,45 +2170,8 @@ export class ImportModal extends Modal {
     });
   }
 
-  /** D133：特殊字段真实行的「添加设置」专属下拉（独立「特殊字段」组；非特殊行点选时提示走 renderMappingAddSelect）。
-   *  _status → 固定值；_warnings → 条件警告（以行来源列为比较基准）；_link → smartLink。 */
-  private renderSpecialAddSelect(cell: HTMLElement, index: number, m: ColumnMapping): void {
-    const sel = cell.createEl('select', { cls: 'ipw-select ipw-add-setting-sel' });
-    sel.createEl('option', { value: '', text: '＋ 添加设置…' });
-    const target = m.target || m.source || '';
-    const meta = SPECIAL_FIELD_LABELS.find((s) => s.value === target);
-    const og = sel.createEl('optgroup', { attr: { label: '特殊字段' } });
-    if (target === '_status') {
-      og.createEl('option', { value: 'fixed', text: '固定值（字符串常量）' });
-    } else if (target === '_warnings') {
-      og.createEl('option', { value: 'warn', text: '条件警告（来源列比较 → 追加警告文本）' });
-    } else if (target === '_link') {
-      og.createEl('option', { value: 'smartLink', text: '智能链接（目标/回退文件夹）' });
-    } else {
-      og.createEl('option', { value: '', text: meta?.label ?? target, attr: { disabled: 'true' } });
-    }
-    sel.addEventListener('change', () => {
-      const v = sel.value;
-      sel.value = '';
-      if (!v) return;
-      if (v === 'fixed') {
-        this.pendingSettingDraft = { index, group: 'special', op: 'fixed' };
-      } else if (v === 'smartLink') {
-        this.pendingSettingDraft = { index, group: 'link', op: 'smartLink' };
-      } else if (v === 'warn') {
-        const mp = this.transform.mappings[index];
-        if (!mp?.source) {
-          new Notice('请先在该行「来源」选择一个比较列，再添加条件警告');
-          return;
-        }
-        this.pendingSettingDraft = { index, group: 'compute', op: 'warn' };
-      }
-      this.mappingPanelsOpen.add(index);
-      this.refreshStep3Blocks(['columns']);
-    });
-  }
-
-  /** D117/D119：渲染行「添加设置」下拉（五组：列格式化 / 列处理 / 列派生 / 计算 / 链接）；参数类步骤进入面板草稿 */
+  /** D117/D119/D135：渲染行「设置」下拉（普通映射行；七组：列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取）；
+   *  参数类步骤进入面板草稿；特殊字段真实行走 renderSpecialRowAddSelect（合并普通 + 专属设置） */
   private renderMappingAddSelect(cell: HTMLElement, index: number): void {
     const sel = cell.createEl('select', { cls: 'ipw-select ipw-add-setting-sel' });
     sel.createEl('option', { value: '', text: '＋ 添加设置…' });
@@ -2130,6 +2304,16 @@ export class ImportModal extends Modal {
     }
 
     const list = panel.createDiv({ cls: 'ipw-map-settings-list' });
+    // D135：特殊字段行的「说明项」（中文名 + 用途）随默认设置放入「已添加设置」面板
+    if (isSpecial) {
+      const target = m.target || m.source || '';
+      const meta = this.specialFieldMeta(target);
+      if (meta) {
+        const desc = list.createDiv({ cls: 'ipw-map-setting-item ipw-map-desc-item' });
+        const chip = desc.createDiv({ cls: 'ipw-chip ipw-chip-special', attr: { title: '说明（不可编辑）' } });
+        chip.createSpan({ text: `说明 · ${meta.name}（${meta.value}）：${meta.hint}` });
+      }
+    }
     if (m.rule) {
       const preset = DERIVED_PRESETS.find((p) => p.id === m.rule);
       const item = list.createDiv({ cls: 'ipw-map-setting-item' });
@@ -2155,24 +2339,11 @@ export class ImportModal extends Modal {
     };
     settings.forEach((s, j) => {
       const item = list.createDiv({ cls: 'ipw-map-setting-item' });
-      // D131：设置顺序（仅可重排的值链项显示 ↑/↓ + 拖拽把手）
+      // D131/D135：设置顺序（仅可重排的值链项显示拖拽把手 + ↑/↓；把手放设置项首列）
       if (reorderable(s)) {
         const upOk = j > 0 && reorderable(settings[j - 1]);
         const downOk = j < settings.length - 1 && reorderable(settings[j + 1]);
-        const bUp = item.createEl('button', {
-          cls: 'ipw-move ipw-move-sm',
-          text: '↑',
-          attr: { title: '上移（设置顺序 = 值管线/管道执行顺序）' }
-        });
-        bUp.disabled = !upOk;
-        bUp.addEventListener('click', () => moveSetting(j, j - 1));
-        const bDown = item.createEl('button', {
-          cls: 'ipw-move ipw-move-sm',
-          text: '↓',
-          attr: { title: '下移（设置顺序 = 值管线/管道执行顺序）' }
-        });
-        bDown.disabled = !downOk;
-        bDown.addEventListener('click', () => moveSetting(j, j + 1));
+        // D135：拖拽把手置于设置项首列
         const grip = item.createEl('span', {
           cls: 'ipw-grip ipw-grip-sm',
           text: '⋮⋮',
@@ -2194,6 +2365,20 @@ export class ImportModal extends Modal {
           this.dragSetting = null;
           if (ds && ds.row === index && ds.from !== null && ds.from !== j) moveSetting(ds.from, j);
         });
+        const bUp = item.createEl('button', {
+          cls: 'ipw-move ipw-move-sm',
+          text: '↑',
+          attr: { title: '上移（设置顺序 = 值管线/管道执行顺序）' }
+        });
+        bUp.disabled = !upOk;
+        bUp.addEventListener('click', () => moveSetting(j, j - 1));
+        const bDown = item.createEl('button', {
+          cls: 'ipw-move ipw-move-sm',
+          text: '↓',
+          attr: { title: '下移（设置顺序 = 值管线/管道执行顺序）' }
+        });
+        bDown.disabled = !downOk;
+        bDown.addEventListener('click', () => moveSetting(j, j + 1));
       }
       const chip = item.createDiv({ cls: 'ipw-chip' });
       chip.createSpan({ text: mappingSettingLabel(s) });
@@ -2213,8 +2398,8 @@ export class ImportModal extends Modal {
       list.createDiv({
         cls: 'ipw-muted ipw-note',
         text: isSpecial
-          ? '（该特殊字段未配置设置——回落引擎默认；用上方「添加设置」加入其专属设置，如 _status 固定值）'
-          : '（未添加任何设置——用上方「添加设置」下拉选择 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取）'
+          ? '（该特殊字段未配置设置——回落引擎默认；用本行「设置」下拉加入其专属设置，如 _status 固定值）'
+          : '（未添加任何设置——用本行「设置」下拉选择 列格式化 / 列处理 / 列派生 / 计算 / 链接 / 条件校验 / 提取）'
       });
     }
     // D133：_warnings 行条件警告需要比较列——缺来源提示
