@@ -1,7 +1,7 @@
 ---
 title: "模板 Schema 组件"
 type: "component"
-version: "1.19.0"
+version: "1.21.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -50,6 +50,8 @@ status: "active"
 | `_index` | number | 解析后原始行号（1-based，D98 引擎注入，供模板 preprocess 引用） | DataPipeline |
 
 > **D125（2026-09-06 已实现）**：校验规则功能废弃删除——保留字段 `_valid` / `_errors` 移除（不再由引擎回填）；`_warnings` 保留（D119 条件警告附言写入）；`_status` 保留为模板可写字段（不再由校验自动回填，仍可用于输出命名表达式 `{{_status}}`）。
+
+> **D132/D133（2026-09-06 已实现；decisions/2026-09-06-step3-row-order-special-fields-content-template.md v1.1.0 implemented）**：保留字段**可配置子集** = `_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link`——Step 3 区块 5 以**特殊字段行**显示与配置（目标字段下拉选择、每字段**唯一**）；`_folder`/`_fileName` 与区块 3 输出位置/命名（output 段，D129）同源共享表达式、`_skip` 与区块 4 行筛选（row-filter 段）同源共享规则集——三者是**区块 4/3 联动视图行**（数据源 `filters`/`output`，不入 `mappings`，上方区块为权威编辑入口、双向同步、`✕` 复位）；`_status`/`_warnings`/`_link` 为**真实行**（入 `mappings`，source 可空、type=text、输出到禁用，编译进 `column-mapping` 段并在行前置 `{{!-- ipro:specialrow:<target> --}}` 标记，反编译据此无歧义还原为独立特殊字段行）；`_index`（引擎注入只读）、`_hash`（引擎/派生生成）、`_notes`（note-output 段管理）不在此列。特殊字段行同样产 `{{set "_xxx" …}}`（`_folder`/`_fileName` → output 段、`_skip` → row-filter 段由上方区块承载，不重复产段）。
 | `_folder` | string | 目标文件夹 | NoteGenerator |
 | `_status` | string | 状态字段（模板可写，如 valid / warning / error；D125 起不再由校验自动回填） | DataPipeline |
 | `_hash` | string | 哈希值（默认文件名） | NoteGenerator |
@@ -213,6 +215,15 @@ status: "active"
 >
 > 决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md。
 
+> **D130–D134 编译口径注记（2026-09-06 已实现）**：
+>
+> - **行顺序 = 段内 set 行序（D130）**：区块 5 映射行重排（`moveMappingRow`，↑/↓ + `⋮⋮` 拖拽、同段限制）直接决定编译后**同一段内** `{{set}}` 行顺序（渲染顺序即代码顺序，D98），即**内容模板（正文 content 段）字段呈现顺序**；跨段顺序仍由段清单决定；行序无额外元数据——持久化即段内代码顺序、反编译按 set 行序回填。
+> - **设置顺序 = 值管线步骤序（D131）**：每行设置链重排（`moveRowSetting`）直接决定编译产物中直调步骤顺序与 `(pipe 源 (stage …) …)` 阶段顺序（**管道顺序**）；`类型` 隐含转换恒为首步（不在 settings 数组、不参与重排）；**受限集已定（`isReorderableSetting`）**：条件校验（D126）/ 条件计算 / warn、link（D119）附言 / 固定值（D133）不可重排。
+> - **特殊字段行（D132/D133）**：目标字段可取保留字段可配置子集（§3 注记）——`_folder`/`_fileName`/`_skip` 随 `output`/`row-filter` 段持久化（区块 3/4 同源联动视图行）；`_status`/`_warnings`/`_link` 真实行进 `column-mapping` 段、行前置 `{{!-- ipro:specialrow:<target> --}}` 标记（反编译无歧义还原为独立特殊字段行）；每个特殊字段唯一（UI 下拉灰置 + Notice；`ipro:specialrow` 使往返保持行身份）。
+> - **保存到内容模板（D134）**：区块 3 [💾 保存到内容模板] 按区块 5 行序与字段集写模板**正文 content 段**（内容模板）——不涉及 preprocess 段与 frontmatter（`saveContentTemplate`）；content 段已有手写内容时按「`{{字段}}` 单引用行」识别重排（`applyContentLayout`：前缀原行 + 按序字段布局 + 后缀无法识别内容；无字段行则保留手写并追加默认布局），仅主笔记字段（`mainNoteContentFields`）。
+>
+> 决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。
+
 **读写规则**：
 
 - **写入**：内存编译不落盘；[💾 保存到模板] 时将各区块标记段**替换/插入** preprocess 块（保留段外用户手写代码与未涉及区块的段）；仅写 `paths.templates` 目录（STANDARDS §7）；序列化/写入失败抛 `TEMPLATE_005`（新增错误码），向导内联提示。
@@ -223,4 +234,4 @@ status: "active"
 
 ---
 
-*版本: 1.19.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」；D126–D129 已实现：条件校验 / 不输出 / itemAt / output 编译段）*
+*版本: 1.21.0 | 最后更新: 2026-09-06（D125 已实现：`validation` 契约废弃删除、保留字段收敛、noteType 增「所有笔记」；D126–D129 已实现：条件校验 / 不输出 / itemAt / output 编译段；D130–D134 已实现：行顺序 = 段内 set 行序（内容模板顺序）/ 设置顺序 = pipe 阶段序（受限集 isReorderableSetting）/ 特殊字段行（§3 可配置子集：联动视图行 + 真实行 `ipro:specialrow` 标记）/ 保存到内容模板（applyContentLayout，仅主笔记字段），见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*

@@ -1,7 +1,7 @@
 ---
 title: "术语表"
 type: "reference"
-version: "1.14.0"
+version: "1.16.0"
 last_updated: "2026-09-06"
 status: "active"
 ---
@@ -24,7 +24,7 @@ status: "active"
 
 ### 保留字段 (Reserved Field)
 
-预处理模板中以 `_` 开头的系统字段（`_skip`、`_valid`、`_folder`、`_hash`、`_notes` 等），由模板设置、由引擎消费，权威清单见 [template-schema.md](system-repo/components/template-schema.md)。
+预处理模板中以 `_` 开头的系统字段（`_skip`、`_folder`、`_hash`、`_notes` 等），由模板设置、由引擎消费，权威清单见 [template-schema.md](system-repo/components/template-schema.md)。**可配置子集（D132/D133，2026-09-06 已实现）**：`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类可在 Step 3 区块 5 以**特殊字段行**显示与配置（目标字段下拉选择、每个唯一；`_folder`/`_fileName` 与区块 3 输出位置/命名、`_skip` 与区块 4 行筛选双向联动同源共享——三者是联动视图行、不入 mappings；`_status`/`_warnings`/`_link` 为真实行、编译带 `ipro:specialrow` 标记反编译无歧义还原；「添加设置」增专属设置、新建即附默认设置）；`_index`（引擎注入只读）、`_hash`（引擎/派生生成）、`_notes`（note-output 段管理）不在此列。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md。
 
 ---
 
@@ -40,7 +40,7 @@ Step 3 向导配置保存时编译进模板 preprocess 块的 **Handlebars 代�
 
 ### 内容模板 (Content Template)
 
-Handlebars 模板的第二阶段，将预处理后的数据渲染为最终的 Markdown 笔记内容。
+Handlebars 模板的第二阶段，将预处理后的数据渲染为最终的 Markdown 笔记内容（模板文件正文 `content` 段）。**D130/D134（2026-09-06 已实现）**：内容模板中字段的呈现顺序 = Step 3 区块 5 列映射**行顺序**（操作列 `↑/↓` + `⋮⋮` 拖拽重排；编译后段内 `set` 行序即正文顺序）；区块 3 第四枚 [💾 保存到内容模板] 按钮把该行序与字段集（`mainNoteContentFields`，仅主笔记）写回模板正文 content 段（`applyContentLayout` 识别 `{{字段}}` 单引用行重排、保留手写；与 [💾 保存到模板]（preprocess 段 + frontmatter）相互独立）。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md。
 
 ---
 
@@ -300,6 +300,10 @@ Step 2 单一文件列表中的**会话条目**（`ImportFileEntry`），选择�
 
 区块 5「添加设置」分组之一（D128 已实现）——公开 Helper `itemAt` 从数组（0-based 索引，负数自末尾）或 Object（键名）提取单个值；越界/缺键/非数组非对象返回空串；入阶段白名单供 ≥2 步 pipe（编译 1 步直调 / ≥2 步 `(stage "itemAt" …)`）。
 
+### 特殊字段 (Special Field)
+
+保留字段的**可配置子集**（D132/D133，2026-09-06 已实现）——`_skip` / `_folder` / `_fileName` / `_status` / `_warnings` / `_link` 六类，在 Step 3 区块 5 以特殊字段行显示与配置（目标字段输入 + 下拉「特殊字段」分组选择、**每个唯一**、来源可空、类型与「输出到」禁用；`_skip`/`_folder`/`_fileName` 为联动视图行、`_status`/`_warnings`/`_link` 为真实行）；与上方区块双向联动（`_folder`/`_fileName` ↔ 区块 3 输出位置/命名、`_skip` ↔ 区块 4 行筛选，上方区块为权威编辑入口）；「添加设置」增专属设置（`_status`=固定值/`_warnings`=条件警告/`_link`=smartLink），新建即自动加入默认设置；删除该行 = 回落引擎默认语义。见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md。
+
 ---
 
 ## W
@@ -394,4 +398,4 @@ Step 3 区块 4「行配置」中的**跨行引擎开关**（D122/D123/D124，�
 
 ---
 
-*版本: 1.14.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃；D126–D129 已实现：条件校验 / 不输出 / 提取词条 + 编译段清单补 output）*
+*版本: 1.16.0 | 最后更新: 2026-09-06（D125 已实现：校验规则词条废弃；D126–D129 已实现：条件校验 / 不输出 / 提取词条 + 编译段清单补 output；D130–D134 已实现：保留字段·内容模板词条可配置子集（联动视图行 + 真实行 ipro:specialrow）与行顺序/保存到内容模板口径、T 节特殊字段词条，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented））*

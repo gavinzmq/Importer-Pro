@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 系统架构"
 type: "architecture"
-version: "1.33.0"
+version: "1.35.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -291,7 +291,7 @@ export interface IValidator {
 | :--- | :--- |
 | **Handlebars 唯一逻辑载体（D98）** | UI Step 3 的所有配置**编译为模板 preprocess 的 Handlebars 代码段**（`{{!-- ipro:begin:<区块> --}}` / `{{!-- ipro:end:<区块> --}}` 标记包裹）；导入与预览统一走 `TemplateEngine.renderPreprocess` 渲染，**不调用 JS 变换函数**；筛选编译为写 `_skip` 的条件块，列映射（含行内设置链：列格式化/列处理）/ 派生 / 多笔记输出（note-output）编译为 `{{set}}` + 内置 Helper；`_index`（原始行号）由引擎注入每条记录；**唯一例外**：行清洗（过滤空行/过滤重复表头，跨行结构操作，D124 起二者拆为独立原语 `removeEmptyRows`/`removeDuplicateHeaderRows` 按序执行）与表头提升为引擎开关（core/row-clean.ts，D122/D123/D124） |
 | **配置写回模板** | Step 3 全部配置经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写模板——保存 = 编译进 preprocess 标记段（内存编译不落盘，仅保存时写回）；读取 = 从标记段反编译回填各区块；字段规范见 template-schema.md §2/§9；写入仅限 `paths.templates` 目录 |
-| **[💾 保存到模板] 按钮** | Step 3 区块 3 模板元信息操作行 [📝 编辑模板代码] [➕ 新建模板] [💾 保存到模板]（D94/D95）——点击「保存到模板」即把 Step 3 全部配置编译并写回所选模板 preprocess 块；未选模板时禁用并提示先新建/选择；写入失败抛 `TEMPLATE_005` 内联提示；保存成功仅 Notice 不刷新页面 |
+| **[💾 保存到模板] 按钮** | Step 3 区块 3 模板元信息操作行 [📝 编辑模板代码] [➕ 新建模板] [💾 保存到模板]（D94/D95；**D134 起增第四枚 [💾 保存到内容模板]**，已实现）——点击「保存到模板」即把 Step 3 全部配置编译并写回所选模板 preprocess 块；「保存到内容模板」= 把区块 5 行顺序/字段集写回正文 content 段（`saveContentTemplate`，仅写正文）；未选模板时禁用并提示先新建/选择；写入失败抛 `TEMPLATE_005` 内联提示；保存成功仅 Notice 不刷新页面 |
 | **UI 只调用** | 行筛选/列变换/派生等编译逻辑、标记段解析、模板配置读写全部为纯函数（`wizard-data.ts` 编译/反编译层）与核心服务（`TemplateScanner`）；`import-modal.ts` 仅渲染控件与调用，不内联业务逻辑、不直接读写文件或 frontmatter（见 STANDARDS §1.2.3） |
 | **区块归类** | Step 3 按影响粒度编排 **6 区块**（D108/D113/D117/D123，布局权威见 ui/layout.md §5.1）：区块 1 文件信息条 → 区块 2 数据表单选择（多 Sheet 时显示）→ 区块 3 模板元信息（模板级，含输出位置及命名规则 + 编辑/新建/保存按钮）→ 区块 4 行配置（行级：行清洗 + 行筛选；D125 起无校验卡）→ 区块 5 列映射与派生（列级，合并单表）→ 区块 6 预览区 |
 | **行清洗与表头（D122/D123/D124，2026-09-06 已实现）** | 跨行引擎开关（不产编译段）：过滤空行（含第一行，trim 判定）/ 过滤重复表头；语义权威 core/row-clean.ts（API 值==列名 `applyRowCleaning`；向导 rawRows 原语 `removeEmptyRows`/`removeDuplicateHeaderRows`）；**表头 = 空行+行筛选+重复表头后剩余第一行**（promoteHeaderRow，占位 rawRows 列名 → 最终列名，行移除）；**D124 执行顺序**（向导表格类）= 过滤空行 → 行筛选 → 过滤重复表头[基准 = 清洗+筛选后剩余第一行] → 表头提升 → 列映射，随 frontmatter `row.clean` 保存；**原删除行 / 去重 / 过滤无效数据 / 合并行 / headerRow 已废弃删除** |
@@ -299,6 +299,7 @@ export interface IValidator {
 | **多步值型 set → pipe（D99–D101，已实现）** | 值型 `set` 目标值含 **≥2 个变换阶段**时，编译层统一产 pipe 形态 `(pipe 源 (stage "阶段名" 固定参数…) …)`（`md5Short`/`currentYear` 等派生预设受益）；单阶段保持直调 `(helper 源)`；`pipe`/`stage` 为内置运行时 Helper（阶段 = 返回一元函数的工厂，经 `PipeStages` 注册表白名单查找，外部 Helper 不入注册表）；pipe 为纯值链、空值守卫在外层 `#if`；旧嵌套括号写法兼容可反编译 |
 | **能力补齐对齐 EXAMPLES（D118–D121；D118 于 D125 废弃删除）** | 校验规则（D118）→ **D125 废弃删除**（frontmatter `validation` 契约一并移除）；计算/条件/链接 → column-mapping 段步骤与**行附言**（D119）；多笔记 → 新段 `note-output`（`push _notes`，derived 段之后；未定义附加类型不产段，D120；D125 映射行 `noteType` 增「所有笔记」）；输出策略 → frontmatter `output` 两字段 + `match.priority`（D121）。段清单见 template-schema §9 |
 | **配置增强（D126–D129，2026-09-06 已实现）** | ① **条件校验（D126）**——「添加设置」增「条件校验」组：布尔 Helper 校验表达式（validateID/isEmail/isPhone/isNumber/isDate/inRange/matchesRegex/isNotEmpty/isEmpty）+ 真/假值（**固定值**或**字段引用** `(lookup this "列名")`），编译整链替换式 `(ternary (校验fn 值 …) 真 假)`（同 D119 口径）；② **输出到「不输出」（D127）**——noteType `'none'`：字段仅作预处理中间值（照常产 `set`），不进入任何笔记渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填），与「类型=忽略」不产 set 区别；③ **数组/Object 提取（D128）**——「添加设置」增「提取」组 + 新公开 Helper `itemAt`（37 → 38，类别「集合」；数组 0-based 索引/负数自末尾、Object 键名，越界缺键返 `''`；阶段白名单增 `itemAt`）；④ **输出位置编译段化（D129）**——区块 3 输出位置/命名编译进新段 `output`（derived 之后、note-output 之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（D112 求值保留兜底）。决策见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented） |
+| **顺序编排与特殊字段（D130–D134，2026-09-06 已实现）** | ① **行顺序调整（D130）**——区块 5 操作列 `↑/↓` + `⋮⋮` 拖拽重排映射行：**行顺序 = 编译后段内 `set` 行顺序 = 内容模板（正文 content 段）字段呈现顺序**（D98 渲染顺序即代码顺序；只影响同段内顺序，跨段按段清单——UI 同段限制、`moveMappingRow` 纯函数）；行序随 preprocess 代码顺序自然持久化、反编译按 set 行序回填；② **设置顺序调整（D131）**——行下设置面板每项 `↑/↓` + 拖拽：**设置顺序 = 值管线执行顺序（管道顺序）**（`moveRowSetting`；受限集 `isReorderableSetting`：附言 warn/link、条件校验、条件计算、固定值不可重排；`类型` 隐含转换不在 settings 数组、恒首步）；③ **特殊字段行（D132）**——`_skip`/`_folder`/`_fileName`/`_status`/`_warnings`/`_link` 为保留字段**可配置子集**（`_index`/`_hash`/`_notes` 排除，template-schema §3）：`_skip`/`_folder`/`_fileName` = 区块 4/3 **联动视图行**（数据源 filters/output，不入 cfg.mappings、区块 3/4 权威、双向同步、✕ 复位）；`_status`/`_warnings`/`_link` = **真实行**（入 cfg.mappings，source 可空、type=text、输出到禁用、编译带 `ipro:specialrow` 标记无歧义还原）；目标字段控件 = 输入 + 下拉（「特殊字段」分组）、**每字段唯一**；④ **专属/默认设置（D133）**——`_status`=固定值（`MappingSetting.special.fixed`）、`_warnings`=条件警告（复用 compute.warn，比较基准=行来源列）、`_link`=smartLink；新建特殊行自动加入 `defaultSpecialSetting`；⑤ **保存到内容模板（D134）**——区块 3 按钮行第四枚 [💾 保存到内容模板]：按 `mainNoteContentFields(mappings)`（主笔记字段序）经 `saveContentTemplate`/`applyContentLayout` 写回所选模板正文 content 段（仅主笔记布局、仅写正文；手写正文按 `{{字段}}` 单引用行识别重排、保留无法识别内容、新增字段用默认布局行）。决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented） |
 
 > 决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D98）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
 >
@@ -597,6 +598,13 @@ interface TemplateNoteSpec {
  * 经 `ITemplateScanner.readTemplateConfig` / `saveTemplateConfig` 读写，编译为 preprocess 标记段写回模板。
  * （D94 时期蓝图曾定义 TemplateRowConfig / TemplateColumnConfig / TemplateTransformConfig，已随
  *   D98 编译段化、D113 列侧收敛、D122–D124 行清洗收敛废弃删除；权威口径见 template-schema.md §2/§9。）
+ * （D130–D134，2026-09-06 已实现：`mappings` 数组序 = 内容模板顺序（段内 set 行序）、
+ *   每行 `settings` 数组序 = 值管线/管道顺序（D131）；目标字段可取值含特殊字段
+ *   `_skip`/`_folder`/`_fileName`/`_status`/`_warnings`/`_link`（唯一，D132/D133；
+ *   前三者为区块 4/3 联动视图行——filters/output 权威、不入 cfg.mappings，后三者为真实行，
+ *   编译带 `ipro:specialrow` 标记反编译无歧义还原），区块 3「保存到内容模板」按
+ *   `mainNoteContentFields` 行序写模板正文 content 段（D134）；
+ *   决策见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。）
  */
 
 /** 行筛选操作（D96，Excel 式筛选，包含式保留） */
@@ -809,4 +817,4 @@ Obsidian 桌面端为 **Electron renderer**：插件模块求值时 `window` 与
 
 ---
 
-_版本: 1.33.0 | 最后更新: 2026-09-06（D125 已实现：区块 5 来源→目标自动清洗 + 输出到「所有笔记」+ 校验规则功能废弃删除；1.31.0 过时内容清理：§2.7/§7 接口对齐代码 `Step3TemplateSnapshot`、删 TemplateRowConfig/TemplateColumnConfig/TemplateTransformConfig 旧口径、§2.10/§3 对齐当前 6 区块与编译段清单、§6 目录树对齐实际仓库、补 MatchRule.priority/TemplateNoteSpec/ValidationResult；1.32.0 D126–D129 设计定稿；1.33.0 D126–D129 已实现：条件校验 / 输出到「不输出」（noneFields 过滤）/ itemAt 提取（公开 38）/ 输出位置编译段化（output 段 + frontmatter 固定引用），见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））_
+_版本: 1.35.0 | 最后更新: 2026-09-06（D130–D134 已实现：区块 5 行顺序 ↑/↓+拖拽（内容模板顺序，段内限制 moveMappingRow）/ 设置顺序 ↑/↓+拖拽（管道顺序，受限集 moveRowSetting）/ 特殊字段行（`_skip`/`_folder`/`_fileName` 联动视图行 ↔ 区块 4/3 权威、`_status`/`_warnings`/`_link` 真实行 + 专属默认设置 + `ipro:specialrow` 反编译）/ 区块 3 第四枚 [💾 保存到内容模板]（`mainNoteContentFields` → `saveContentTemplate`/`applyContentLayout` 写正文 content 段，仅主笔记布局）；type-check 0 错、全量 Vitest 202 全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。前序：1.33.0 D126–D129 已实现（条件校验 / 输出到「不输出」/ itemAt 提取 / 输出位置编译段化）；1.31.0 过时内容清理）_

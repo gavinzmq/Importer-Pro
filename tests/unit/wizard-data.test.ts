@@ -47,8 +47,19 @@ import {
   unmappedColumns,
   upsertSegments,
   emptyTransform,
+  defaultSpecialSetting,
+  isLinkedSpecialField,
+  isReorderableSetting,
+  isSpecialFieldRow,
+  isSpecialFieldTarget,
+  mainNoteContentFields,
+  moveMappingRow,
+  moveRowSetting,
+  SPECIAL_FIELD_LABELS,
+  specialTargetsInUse,
   type ColumnMapping,
   type DataTransformConfig,
+  type MappingSetting,
   type RowFilterRule
 } from '../../src/ui/wizard-data';
 
@@ -1513,6 +1524,222 @@ describe('D129：输出位置及命名规则编译段（output）', () => {
     expect(row._fileName).toBeDefined();
     expect(String(row._fileName).endsWith('_档案')).toBe(true);
     expect(String(row._fileName).length).toBe(13); // 10 位 _hash + `_档案`
+  });
+});
+
+describe('D130/D131：行顺序（内容模板顺序）与设置顺序（管道顺序）移动', () => {
+  it('moveMappingRow：同段（纯映射）可移动，返回新数组且不改原数组', () => {
+    const rows: ColumnMapping[] = [
+      { source: 'A', target: 'A', type: 'text' },
+      { source: 'B', target: 'B', type: 'text' },
+      { source: 'C', target: 'C', type: 'text' }
+    ];
+    const next = moveMappingRow(rows, 0, 2);
+    expect(next.map((m) => m.target)).toEqual(['B', 'C', 'A']);
+    expect(rows.map((m) => m.target)).toEqual(['A', 'B', 'C']); // 原数组不变
+  });
+
+  it('moveMappingRow：派生行（rule）同段可移动；跨段（纯映射 ↔ 派生）拒绝返回原数组', () => {
+    const rows: ColumnMapping[] = [
+      { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' },
+      { source: 'A', target: 'A', type: 'text' }
+    ];
+    expect(moveMappingRow(rows, 0, 1)).toBe(rows); // 跨段拒绝
+    const next = moveMappingRow(rows, 1, 0);
+    expect(next).toBe(rows);
+    // 派生行同段：两派生行可换位
+    const rows2: ColumnMapping[] = [
+      { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' },
+      { source: '身份证号', target: '生日', type: 'text', rule: 'birthFromID' }
+    ];
+    const n2 = moveMappingRow(rows2, 0, 1);
+    expect(n2.map((m) => m.target)).toEqual(['生日', '性别']);
+  });
+
+  it('D130 编译：column-mapping 段内 set 行序 = cfg.mappings 行序（重排即改变段内代码顺序）', () => {
+    const mk = (order: string[]): DataTransformConfig => ({
+      filters: [],
+      clean: {},
+      mappings: order.map((t) => ({ source: t, target: t, type: 'text' }))
+    });
+    const hbA = configToHandlebars(mk(['A', 'B', 'C']));
+    const hbB = configToHandlebars(mk(['C', 'A', 'B']));
+    const body = (hb: string): string => hb.slice(hb.indexOf('ipro:begin:column-mapping'), hb.indexOf('ipro:end:column-mapping'));
+    expect(body(hbA).indexOf('"A"')).toBeLessThan(body(hbA).indexOf('"B"'));
+    expect(body(hbB).indexOf('"C"')).toBeLessThan(body(hbB).indexOf('"A"'));
+    expect(body(hbB).indexOf('"A"')).toBeLessThan(body(hbB).indexOf('"B"'));
+    // 反编译按 set 行序回填
+    expect(handlebarsToConfig(hbB).mappings.map((m) => m.target)).toEqual(['C', 'A', 'B']);
+  });
+
+  it('moveRowSetting：可重排值链项内部移动；受限（warn 附言/条件校验/条件计算/固定值）拒绝', () => {
+    const mk = (): MappingSetting[] => [
+      { group: 'format', op: 'trim', param: '' },
+      { group: 'format', op: 'substring', param: '1,3' },
+      { group: 'compute', op: 'warn', compare: 'eq', operand: 'x', text: '注意' }
+    ];
+    const s = mk();
+    const next = moveRowSetting(s, 0, 1);
+    expect(next?.[0]).toMatchObject({ group: 'format', op: 'substring' });
+    // 附言不可移动：尝试与附言交换被拒绝
+    const s2 = mk();
+    expect(moveRowSetting(s2, 1, 2)).toBe(s2);
+    // 条件校验（整链替换末步）不可移动
+    const s3: MappingSetting[] = [
+      { group: 'format', op: 'trim', param: '' },
+      { group: 'validate', op: 'isEmail', param: '', truthy: { kind: 'fixed', value: 'ok' }, falsy: { kind: 'fixed', value: '' } }
+    ];
+    expect(moveRowSetting(s3, 0, 1)).toBe(s3);
+    expect(isReorderableSetting(s3[0])).toBe(true);
+    expect(isReorderableSetting(s3[1])).toBe(false);
+  });
+});
+
+describe('D132/D133：特殊字段真实行（_status/_warnings/_link）', () => {
+  it('SPECIAL_FIELDS 清单与类别判定（_skip/_folder/_fileName 为联动视图行、其余为真实行）', () => {
+    expect(isSpecialFieldTarget('_status')).toBe(true);
+    expect(isSpecialFieldTarget('_skip')).toBe(true);
+    expect(isSpecialFieldTarget('姓名')).toBe(false);
+    expect(isLinkedSpecialField('_skip')).toBe(true);
+    expect(isLinkedSpecialField('_folder')).toBe(true);
+    expect(isLinkedSpecialField('_fileName')).toBe(true);
+    expect(isLinkedSpecialField('_status')).toBe(false);
+    expect(isSpecialFieldRow({ source: '', target: '_status', type: 'text' })).toBe(true);
+    expect(isSpecialFieldRow({ source: 'A', target: 'A', type: 'text' })).toBe(false);
+    expect(SPECIAL_FIELD_LABELS.map((s) => s.value)).toEqual(['_skip', '_folder', '_fileName', '_status', '_warnings', '_link']);
+  });
+
+  it('defaultSpecialSetting：_status=固定值、_warnings=条件警告、_link=smartLink；_skip 等视图行返回 null', () => {
+    expect(defaultSpecialSetting('_status')).toEqual([{ group: 'special', op: 'fixed', value: '' }]);
+    expect(defaultSpecialSetting('_warnings')?.[0]).toMatchObject({ group: 'compute', op: 'warn' });
+    expect(defaultSpecialSetting('_link')?.[0]).toMatchObject({ group: 'link', op: 'smartLink' });
+    expect(defaultSpecialSetting('_skip')).toBeNull();
+  });
+
+  it('_status 行：编译 set + ipro:specialrow 标记；往返还原为特殊字段行；真实渲染 _status=固定值', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '', target: '_status', type: 'text', settings: [{ group: 'special', op: 'fixed', value: 'valid' }] }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('{{!-- ipro:specialrow:_status --}}');
+    expect(hb).toContain('{{set "_status" "valid"}}');
+    const back = handlebarsToConfig(hb);
+    const row = back.mappings.find((m) => m.target === '_status');
+    expect(row?.source).toBe('');
+    expect(row?.settings?.[0]).toEqual({ group: 'special', op: 'fixed', value: 'valid' });
+    const rows = await applyWizardTransform(engine, [{ 姓名: '张三' }], cfg);
+    expect(rows[0].row._status).toBe('valid');
+  });
+
+  it('_warnings 行：来源列 + 条件警告编译 push 附言行（带标记）；往返还原为 _warnings 行；真实渲染追加 _warnings', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '进度', target: '进度', type: 'text' },
+        {
+          source: '进度',
+          target: '_warnings',
+          type: 'text',
+          settings: [{ group: 'compute', op: 'warn', compare: 'lt', operand: '60', text: '进度偏低' }]
+        }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('{{!-- ipro:specialrow:_warnings --}}');
+    expect(hb).toContain('{{set "_warnings" (push _warnings "进度偏低")}}');
+    const back = handlebarsToConfig(hb);
+    const row = back.mappings.find((m) => m.target === '_warnings');
+    expect(row?.source).toBe('进度');
+    expect(row?.settings?.[0]).toMatchObject({ group: 'compute', op: 'warn', text: '进度偏低' });
+    const rows = await applyWizardTransform(engine, [{ 进度: '50' }], cfg);
+    expect(rows[0].row._warnings).toEqual(['进度偏低']);
+  });
+
+  it('_warnings 行：数值比较操作数（D119 语义：数字常数/列名）命中 → push _warnings', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '进度', target: '进度', type: 'text' },
+        {
+          source: '进度',
+          target: '_warnings',
+          type: 'text',
+          settings: [{ group: 'compute', op: 'warn', compare: 'lt', operand: '60', text: '进度偏低' }]
+        }
+      ]
+    };
+    const warn = await applyWizardTransform(engine, [{ 进度: '50' }], cfg);
+    expect(warn[0].row._warnings).toEqual(['进度偏低']);
+    const ok = await applyWizardTransform(engine, [{ 进度: '90' }], cfg);
+    expect(ok[0].row._warnings ?? []).toEqual([]);
+  });
+
+  it('_link 行：smartLink 编译（带标记）；往返还原为 _link 行；真实渲染写入 _link', async () => {
+    const engine = new TemplateEngine();
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        { source: '姓名', target: '姓名', type: 'text' },
+        { source: '', target: '_link', type: 'text', settings: [{ group: 'link', op: 'smartLink', target: '人员档案', fallback: '待建档案' }] }
+      ]
+    };
+    const hb = configToHandlebars(cfg);
+    expect(hb).toContain('{{!-- ipro:specialrow:_link --}}');
+    expect(hb).toContain('{{set "_link" (smartLink _hash "人员档案" "待建档案")}}');
+    const back = handlebarsToConfig(hb);
+    const row = back.mappings.find((m) => m.target === '_link');
+    expect(row?.settings?.[0]).toMatchObject({ group: 'link', op: 'smartLink', target: '人员档案' });
+    const rows = await applyWizardTransform(engine, [{ 姓名: '张三' }], cfg);
+    expect(String(rows[0].row._link ?? '')).not.toBe('');
+  });
+
+  it('普通映射行的 warn/link 附言（无标记）仍还原挂普通行——D119 兼容不回归', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      mappings: [
+        {
+          source: '姓名',
+          target: '姓名',
+          type: 'text',
+          settings: [{ group: 'compute', op: 'warn', compare: 'eq', operand: '张三', text: '提示' }]
+        }
+      ]
+    };
+    const back = handlebarsToConfig(configToHandlebars(cfg));
+    const row = back.mappings.find((m) => m.target === '姓名');
+    expect(row?.settings?.[0]).toMatchObject({ group: 'compute', op: 'warn', text: '提示' });
+    expect(back.mappings.find((m) => m.target === '_warnings')).toBeUndefined();
+  });
+
+  it('唯一性与主笔记正文字段序列：mainNoteContentFields 排除 特殊/ignore/不输出/附加类型；specialTargetsInUse', () => {
+    const cfg: DataTransformConfig = {
+      filters: [],
+      clean: {},
+      noteTypes: [{ id: 'contact', name: '联系方式' }],
+      mappings: [
+        { source: 'A', target: 'A', type: 'text' },
+        { source: 'B', target: 'B', type: 'text', noteType: 'all' },
+        { source: 'C', target: 'C', type: 'text', noteType: 'contact' },
+        { source: 'D', target: 'D', type: 'text', noteType: 'none' },
+        { source: 'E', target: 'E', type: 'ignore' },
+        { source: '', target: '_status', type: 'text' },
+        { source: '身份证号', target: '性别', type: 'text', rule: 'genderFromID' }
+      ]
+    };
+    expect(mainNoteContentFields(cfg.mappings)).toEqual(['A', 'B', '性别']);
+    expect(specialTargetsInUse(cfg.mappings)).toEqual(new Set(['_status']));
   });
 });
 

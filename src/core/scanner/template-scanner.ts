@@ -32,6 +32,13 @@ export interface ITemplateScanner {
   readTemplateConfig(templateId: string): Promise<Step3TemplateSnapshot | null>;
   /** D95/D98：把 Step 3 全部配置编译进模板 preprocess 标记段并写回（模板即配置源；写入仅限 paths.templates 目录） */
   saveTemplateConfig(templateId: string, config: Step3TemplateSnapshot): Promise<void>;
+  /**
+   * D134：把区块 5 的行顺序与字段集写回模板**正文 content 段（内容模板）**（[💾 保存到内容模板]）。
+   * 与 saveTemplateConfig（preprocess 段 + frontmatter，不动正文）相互独立：仅重写正文第二个 handlebars
+   * 代码块（content），不动 preprocess/frontmatter；正文含手写内容时按 `{{字段}}` 引用行识别重排、
+   * 保留无法识别内容（applyContentLayout）；写入仅限 paths.templates 目录，失败抛 TEMPLATE_005。
+   */
+  saveContentTemplate(templateId: string, fields: string[]): Promise<void>;
 }
 
 export interface ParsedTemplate {
@@ -144,6 +151,38 @@ export class TemplateScanner implements ITemplateScanner {
       throw new ImporterProError(
         ERROR_CODES.TEMPLATE_CONFIG_WRITE_FAILED,
         `保存模板配置失败: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  /**
+   * D134：[💾 保存到内容模板]——把区块 5 行顺序与字段集写回模板正文 content 段。
+   * 仅重写正文第二个 handlebars 代码块（content），不动 preprocess/frontmatter；
+   * 手写正文经 applyContentLayout 按 `{{字段}}` 引用行识别重排（保留无法识别内容）。
+   */
+  async saveContentTemplate(templateId: string, fields: string[]): Promise<void> {
+    const parsed = this.getParsed(templateId);
+    if (!parsed) {
+      throw new ImporterProError(ERROR_CODES.TEMPLATE_NOT_FOUND, `模板不存在: ${templateId}`);
+    }
+    const withinTemplates = this.folders.some((f) => {
+      if (f === '') return true;
+      return parsed.info.path === f || parsed.info.path.startsWith(f + '/');
+    });
+    if (!withinTemplates) {
+      throw new ImporterProError(ERROR_CODES.SECURITY_PATH_OUTSIDE, `仅允许写入模板目录: ${parsed.info.path}`);
+    }
+    try {
+      const file = this.app.vault.getAbstractFileByPath(parsed.info.path) as TFile;
+      const raw = await this.app.vault.read(file);
+      const next = applyContentLayoutToRaw(raw, fields);
+      await this.app.vault.process(file, () => next);
+      await this.refresh(templateId); // 重新解析并入索引
+    } catch (e) {
+      if (e instanceof ImporterProError) throw e;
+      throw new ImporterProError(
+        ERROR_CODES.TEMPLATE_CONFIG_WRITE_FAILED,
+        `保存内容模板失败: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
@@ -613,4 +652,105 @@ export function composeStep3Snapshot(rawContent: string, snap: Step3TemplateSnap
   const newBody = withPreprocess(body, preprocess);
   const yaml = stringifyYaml(next).replace(/\n+$/, '');
   return `---\n${yaml}\n---${newBody}`;
+}
+
+/* ── D134 保存到内容模板（正文 content 段，纯函数可单测） ── */
+
+/** 提取正文中第 N 个 handlebars 代码块内容（index 0=preprocess、1=content） */
+function nthHandlebarBlock(body: string, index: number): string {
+  const m = Array.from(body.matchAll(/```handlebars\r?\n([\s\S]*?)```/g))[index];
+  return m ? m[1] : '';
+}
+
+/** 提取正文第二个 handlebars 代码块（content 段）内容；不足两块返回 '' */
+function contentBlockOf(body: string): string {
+  return nthHandlebarBlock(body, 1);
+}
+
+/** 以新 content 替换正文第二个 handlebars 代码块（保留其余正文/代码块）；无第二块则末尾追加 */
+function withContentBlock(body: string, content: string): string {
+  const blocks = Array.from(body.matchAll(/```handlebars\r?\n([\s\S]*?)```/g));
+  const b = blocks[1];
+  const newBlock = `\`\`\`handlebars\n${content}\`\`\``;
+  if (!b) return `${body.trimEnd()}\n\n${newBlock}\n`;
+  return body.slice(0, b.index) + newBlock + body.slice(b.index + b[0].length);
+}
+
+/**
+ * 识别 content 行是否为「单 `{{字段}}` 引用」的字段布局行（D134）：
+ * 整行**恰好一个** `{{字段}}` 变量引用（可含前后固定修饰文本，如 `- 姓名: {{姓名}}`），
+ * 且字段 ∈ targets、非块/注释（`{{#`/`{{/`/`{{!--`）与 [ ] 转义；否则返回 null。
+ */
+export function contentFieldLineOf(line: string, fields: string[]): string | null {
+  const t = String(line ?? '');
+  const open = t.indexOf('{{');
+  if (open === -1) return null;
+  if (t.indexOf('{{', open + 2) !== -1) return null; // 多引用 → 非单字段行
+  const close = t.indexOf('}}', open + 2);
+  if (close === -1) return null;
+  const inner = t.slice(open + 2, close).trim();
+  if (inner.startsWith('#') || inner.startsWith('/') || inner.startsWith('!') || inner.startsWith('[')) return null;
+  if (!/^[A-Za-z_\u00C0-\uFFFF][\w\u00C0-\uFFFF-]*$/.test(inner)) return null;
+  return (fields ?? []).includes(inner) ? inner : null;
+}
+
+/** 新字段的默认布局行（与 D92 骨架一致：`- 字段名: {{字段名}}`） */
+export function defaultContentFieldLine(field: string): string {
+  return `- ${field}: ${hbExpr(field)}`;
+}
+
+/**
+ * D134：把目标字段序列（主笔记正文字段，顺序 = 区块 5 行顺序）应用到 content 段文本：
+ * - 若 content 中存在已识别字段布局行 → 「前缀（首个字段行之前原行）+ 按序字段布局 + 后缀（其后
+ *   无法识别/非字段行，剔除已识别字段行避免重复）」——已存在字段行继承原格式、新增字段用默认行；
+ * - 若 content 无任何已识别字段布局行（全新/纯手写无 `{{字段}}` 布局）→ 保留手写原样、末尾追加
+ *   标准字段布局（与骨架风格一致）。
+ * 无法识别内容（段落、含块/多引用行、删除字段的残留引用等）保留于前/后缀原位。
+ */
+export function applyContentLayout(content: string, fields: string[]): string {
+  const targets = (fields ?? []).filter((f) => !!f && !f.startsWith('_'));
+  if (targets.length === 0) return content;
+  const lines = String(content ?? '').split('\n');
+  let firstIdx = -1;
+  const existing = new Map<string, string>(); // 字段 → 该字段首个代表行（原格式）
+  for (let i = 0; i < lines.length; i++) {
+    const f = contentFieldLineOf(lines[i], targets);
+    if (f) {
+      if (!existing.has(f)) existing.set(f, lines[i]);
+      if (firstIdx === -1) firstIdx = i;
+    }
+  }
+  const ordered = targets.map((f) => existing.get(f) ?? defaultContentFieldLine(f));
+  if (firstIdx === -1) {
+    const base = String(content ?? '').trimEnd();
+    return base === '' ? `${ordered.join('\n')}\n` : `${base}\n\n${ordered.join('\n')}\n`;
+  }
+  const prefix: string[] = [];
+  const suffix: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i < firstIdx) {
+      prefix.push(lines[i]);
+      continue;
+    }
+    // 首个字段行之后：剔除已识别字段行（由重排块承载），保留无法识别内容
+    if (contentFieldLineOf(lines[i], targets)) continue;
+    suffix.push(lines[i]);
+  }
+  const head = prefix.join('\n').trim();
+  const tail = suffix.join('\n').trim();
+  const parts: string[] = [];
+  if (head !== '') parts.push(head);
+  parts.push(ordered.join('\n'));
+  if (tail !== '') parts.push(tail);
+  return `${parts.join('\n')}\n`;
+}
+
+/** D134：对完整模板原始内容应用 content 布局（frontmatter 原样保留，仅重写 content 块） */
+export function applyContentLayoutToRaw(raw: string, fields: string[]): string {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  const body = m ? raw.slice(m[0].length) : raw;
+  const content = contentBlockOf(body);
+  const next = applyContentLayout(content, fields);
+  const newBody = withContentBlock(body, next);
+  return m ? raw.slice(0, m[0].length) + newBody : newBody;
 }

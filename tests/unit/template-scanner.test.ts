@@ -7,8 +7,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  applyContentLayout,
+  applyContentLayoutToRaw,
   compareRuleMatch,
   composeStep3Snapshot,
+  contentFieldLineOf,
+  defaultContentFieldLine,
   nextAvailableFileName,
   newTemplateId,
   parseStep3Snapshot,
@@ -319,5 +323,94 @@ validation:
     const next = composeStep3Snapshot(LEGACY, snap);
     expect(next).not.toContain('validation:');
     expect(next).not.toContain('id-card');
+  });
+});
+
+describe('D134：保存到内容模板（content 段字段行识别 / 重排 / 生成，纯函数）', () => {
+  it('contentFieldLineOf：识别单 `{{字段}}` 引用行；多引用/块/注释/[ ] 转义/非目标字段 → null', () => {
+    expect(contentFieldLineOf('- 姓名: {{姓名}}', ['姓名', '部门'])).toBe('姓名');
+    expect(contentFieldLineOf('{{姓名}} 与 {{部门}}', ['姓名', '部门'])).toBeNull(); // 多引用
+    expect(contentFieldLineOf('{{#if 姓名}}x{{/if}}', ['姓名'])).toBeNull(); // 块
+    expect(contentFieldLineOf('{{!-- 注释 --}}', ['姓名'])).toBeNull();
+    expect(contentFieldLineOf('- 员工 ID: {{[员工 ID]}}', ['员工 ID'])).toBeNull(); // [ ] 转义
+    expect(contentFieldLineOf('- 电话: {{电话}}', ['姓名'])).toBeNull(); // 非目标字段
+    expect(contentFieldLineOf('无引用的普通行', ['姓名'])).toBeNull();
+  });
+
+  it('defaultContentFieldLine：默认布局行（与 D92 骨架一致；特殊字符 [ ] 转义）', () => {
+    expect(defaultContentFieldLine('姓名')).toBe('- 姓名: {{姓名}}');
+    expect(defaultContentFieldLine('员工 ID')).toBe('- 员工 ID: {{[员工 ID]}}');
+  });
+
+  it('applyContentLayout：空 content → 按序生成标准字段布局', () => {
+    expect(applyContentLayout('', ['姓名', '部门'])).toBe('- 姓名: {{姓名}}\n- 部门: {{部门}}\n');
+  });
+
+  it('applyContentLayout：重排既有字段行（保留头部注释/无法识别内容、剔除重复字段行；新字段用默认行）', () => {
+    const content = [
+      '{{!-- 内容模板：员工档案 --}}',
+      '- 部门: {{部门}}',
+      '- 姓名: {{姓名}}',
+      '',
+      '> 自定义备注段落（不识别，保留）',
+      ''
+    ].join('\n');
+    // 目标顺序 = 区块 5 行序：姓名 → 部门 → 电话（电话为新增字段）
+    const out = applyContentLayout(content, ['姓名', '部门', '电话']);
+    expect(out).toContain('{{!-- 内容模板：员工档案 --}}');
+    expect(out.indexOf('- 姓名: {{姓名}}')).toBeLessThan(out.indexOf('- 部门: {{部门}}'));
+    expect(out).toContain('- 电话: {{电话}}');
+    expect(out).toContain('> 自定义备注段落（不识别，保留）');
+    // 重排后各字段行仅出现一次
+    const count = (s: string): number => out.split(s).length - 1;
+    expect(count('- 姓名: {{姓名}}')).toBe(1);
+    expect(count('- 部门: {{部门}}')).toBe(1);
+  });
+
+  it('applyContentLayout：继承既有字段行格式（如 **加粗** 前缀），不统一重写', () => {
+    const content = ['- **部门**: {{部门}}', '- **姓名**: {{姓名}}'].join('\n');
+    const out = applyContentLayout(content, ['姓名', '部门']);
+    expect(out).toContain('- **姓名**: {{姓名}}');
+    expect(out).toContain('- **部门**: {{部门}}');
+    expect(out.indexOf('- **姓名**')).toBeLessThan(out.indexOf('- **部门**'));
+  });
+
+  it('applyContentLayout：无任何已识别字段行（纯手写无 `{{字段}}` 布局）→ 保留手写并末尾追加标准布局', () => {
+    const out = applyContentLayout('## 员工信息\n（无字段引用）', ['姓名']);
+    expect(out).toContain('## 员工信息');
+    expect(out).toContain('（无字段引用）');
+    expect(out.trimEnd().endsWith('- 姓名: {{姓名}}')).toBe(true);
+  });
+
+  it('applyContentLayoutToRaw：仅重写正文第二个 handlebars 块（content），frontmatter 与 preprocess 原样保留', () => {
+    const raw = [
+      '---',
+      "name: '员工模板'",
+      'template_id: tpl_x',
+      '---',
+      '',
+      '```handlebars',
+      '{{!-- ipro:begin:column-mapping --}}',
+      '{{set "姓名" (lookup this "姓名")}}',
+      '{{!-- ipro:end:column-mapping --}}',
+      '```',
+      '',
+      '```handlebars',
+      '- 部门: {{部门}}',
+      '- 姓名: {{姓名}}',
+      '```',
+      ''
+    ].join('\n');
+    const out = applyContentLayoutToRaw(raw, ['姓名', '部门']);
+    // frontmatter + preprocess 保留
+    expect(out).toContain("name: '员工模板'");
+    expect(out).toContain('ipro:begin:column-mapping');
+    // 两个 handlebars 块仍在
+    expect(out.match(/```handlebars/g) ?? []).toHaveLength(2);
+    // content 块按序重排（姓名在部门前）且无重复
+    const contentStart = out.lastIndexOf('```handlebars');
+    const contentBlock = out.slice(contentStart);
+    expect(contentBlock.indexOf('- 姓名: {{姓名}}')).toBeLessThan(contentBlock.indexOf('- 部门: {{部门}}'));
+    expect((contentBlock.match(/- 姓名: {{姓名}}/g) ?? []).length).toBe(1);
   });
 });

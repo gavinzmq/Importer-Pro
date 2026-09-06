@@ -1,7 +1,7 @@
 ---
 title: "Importer Pro 项目概览"
 type: "project"
-version: "1.33.0"
+version: "1.35.0"
 last_updated: "2026-09-06"
 status: "active"
 owner: "core-team"
@@ -175,6 +175,8 @@ arcmesh:
 >
 > **Step 3 配置增强（D126–D129，2026-09-06 已实现；decisions/2026-09-06-step3-mapping-output-enhancements.md v1.1.0 implemented）**：① **条件校验（D126）**——「添加设置」增「条件校验」组（布尔 Helper 校验表达式 + 真/假值：固定值或字段引用），编译整链替换式 `(ternary (校验fn 值 …) 真 假)`（同 D119 条件计算口径）；② **输出到「不输出」（D127）**——映射行 noteType `'none'`：字段照常产 `set`（预处理中间值）但不进入任何笔记渲染数据（`DataPipeline.shard` 按 `ctx.noneFields` 过滤，清单经 column-mapping 段 `ipro:none:` 标记持久化/读取回填；与「类型=忽略」不产 set 区别）；③ **数组/Object 提取（D128）**——「添加设置」增「提取」组 + 新公开 Helper `itemAt`（37 → 38，类别「集合」；阶段白名单增 `itemAt`）；④ **输出位置编译段化（D129）**——区块 3 输出位置/命名编译进 preprocess 新段 `output`（derived 之后、note-output 之前），frontmatter `output.folder`/`note_name` 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（D112 运行时求值保留为兜底）。落点：builtin（itemAt/expr）、wizard-data（validate/extract/none/output 段编译·反编译）、template-scanner（固定引用 + noneFields）、pipeline/import-service/api（noneFields 过滤）、import-modal（7 组下拉 + 不输出 + 草稿表单）。验证：全量 Vitest **183 例全绿**、type-check 0 错。蓝图同步：architecture 1.33.0 / ui/layout 1.26.0 / template-schema 1.19.0 / template-engine 1.10.0 / api-layer 1.10.0 / glossary 1.14.0 / CHANGELOG 1.27.0 / project 1.33.0。
 >
+> **区块 5 顺序编排 + 特殊字段行 + 保存到内容模板（D130–D134，2026-09-06 已实现；decisions/2026-09-06-step3-row-order-special-fields-content-template.md v1.1.0 implemented）**：① **行顺序调整（D130）**——区块 5 操作列 `↑/↓` + `⋮⋮` 拖拽重排映射行：**行顺序 = 编译后段内 `set` 行序 = 内容模板（正文 content 段）字段呈现顺序**（同段限制 `moveMappingRow`）；随 preprocess 代码顺序自然持久化、反编译按行序回填；② **设置顺序调整（D131）**——行下设置面板每项 `↑/↓` + 拖拽：**设置顺序 = 值管线执行顺序（管道顺序）**（`moveRowSetting`；受限集 `isReorderableSetting` = 附言 warn/link、条件校验、条件计算、固定值不可重排；类型隐含转换不在 settings 恒首步）；③ **特殊字段行（D132）**——`_skip`/`_folder`/`_fileName`/`_status`/`_warnings`/`_link` 为保留字段可配置子集：**`_skip`/`_folder`/`_fileName` 为区块 4/3 联动视图行**（filters/output 权威、不入 cfg.mappings、双向同步、✕ 复位）、**`_status`/`_warnings`/`_link` 为真实行**（source 可空、类型与「输出到」禁用、`ipro:specialrow` 标记反编译）；目标字段控件 = 输入 + 下拉（「特殊字段」分组）、每字段**唯一**；④ **联动与专属设置（D133）**——`_folder`/`_fileName` ↔ 区块 3 输出位置/命名（D129 同源）、`_skip` ↔ 区块 4 行筛选（规则集共享）双向同步；「添加设置」增特殊字段**专属设置**（`_status`=固定值 / `_warnings`=条件警告 / `_link`=smartLink），新建特殊字段自动加入**默认设置**（`defaultSpecialSetting`）；⑤ **保存到内容模板（D134）**——区块 3 按钮行增第四枚 [💾 保存到内容模板]：按 `mainNoteContentFields`（主笔记字段序）经 `saveContentTemplate`/`applyContentLayout` 写回所选模板正文 content 段（与 [💾 保存到模板] 独立、仅写正文；手写正文按 `{{字段}}` 单引用行识别重排、保留无法识别内容、新增字段用默认布局行）。落点：wizard-data（行/设置顺序纯函数、SPECIAL_FIELDS/默认与专属设置、specialrow 编译反编译）、template-scanner（applyContentLayout/saveContentTemplate）、import-modal（区块 5 操作/特殊字段/联动、区块 3 按钮）、styles.css；type-check 0 错、全量 Vitest **202 例全绿**（wizard-data +11、template-scanner +8）。蓝图同步：architecture 1.35.0 / ui/layout 1.28.0 / template-schema 1.21.0 / glossary 1.16.0 / CHANGELOG 1.29.0 / project 1.35.0。
+>
 > 前序 **D122 行清洗重构（2026-09-05 已实现；decisions/2026-09-05-row-clean-rework.md）**：删除「删除行」/「去重」/「过滤无效数据」并重做行清洗（当时含合并行，D123 已再删）；修复空行 trim 判定。蓝图同步：architecture 1.27.0 / ui/layout 1.21.0 / template-schema 1.14.0 / CHANGELOG 1.21.0 / glossary 1.9.0。
 
 ## 5. 里程碑
@@ -223,4 +225,4 @@ arcmesh:
 
 ---
 
-*版本: 1.33.0 | 最后更新: 2026-09-06（D126–D129 已实现：条件校验 / 输出到「不输出」/ itemAt 提取 / 输出位置编译段化，Vitest 183 例全绿，见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））*
+*版本: 1.35.0 | 最后更新: 2026-09-06（D130–D134 已实现：区块 5 行顺序 ↑/↓+拖拽（内容模板顺序，段内 moveMappingRow）/ 设置顺序 ↑/↓+拖拽（管道顺序，受限集 moveRowSetting）/ 特殊字段行（`_skip`/`_folder`/`_fileName` 联动视图行 ↔ 区块 4/3、`_status`/`_warnings`/`_link` 真实行 + 专属默认设置）/ 区块 3 [💾 保存到内容模板]（`mainNoteContentFields` → `saveContentTemplate`/`applyContentLayout` 写正文 content 段），type-check 0 错、全量 Vitest 202 全绿，见 decisions/2026-09-06-step3-row-order-special-fields-content-template.md（v1.1.0 implemented）。前序 1.33.0：D126–D129 已实现，Vitest 183 例全绿，见 decisions/2026-09-06-step3-mapping-output-enhancements.md（v1.1.0 implemented））*

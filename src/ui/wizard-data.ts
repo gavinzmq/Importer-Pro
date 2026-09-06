@@ -84,6 +84,38 @@ export const ALL_NOTE_TYPES = 'all';
  */
 export const NONE_NOTE_TYPE = 'none';
 
+/* ── D132/D133 特殊字段行（保留字段可配置子集） ───────────────── */
+
+/** 特殊字段候选清单（D132：template-schema §3 保留字段可配置子集；
+ *  排除 `_index`（引擎注入只读）/ `_hash`（引擎/派生生成）/ `_notes`（note-output 段管理）、
+ *  已移除的 `_valid`/`_errors`（D125））。
+ *  - `_skip`/`_folder`/`_fileName` 与上方区块（行筛选 / 输出位置命名）同源——UI 视图行，
+ *    数据源 = transform.filters / transform.output（区块 3/4 权威，D133），不入 cfg.mappings；
+ *  - `_status`/`_warnings`/`_link` 为**真实行**（入 cfg.mappings，source 可空、target 即保留字段），
+ *    各自默认/专属设置：固定值 / 条件警告（warn）/ 智能链接（smartLink）。 */
+export const SPECIAL_FIELDS = ['_skip', '_folder', '_fileName', '_status', '_warnings', '_link'] as const;
+export type SpecialField = (typeof SPECIAL_FIELDS)[number];
+
+/** 特殊字段可读标签（UI 目标下拉「特殊字段」分组） */
+export const SPECIAL_FIELD_LABELS: ReadonlyArray<{ value: SpecialField; label: string; hint: string }> = [
+  { value: '_skip', label: '_skip', hint: '跳过该条数据（行筛选联动）' },
+  { value: '_folder', label: '_folder', hint: '目标文件夹（区块 3 联动）' },
+  { value: '_fileName', label: '_fileName', hint: '文件名（区块 3 联动）' },
+  { value: '_status', label: '_status', hint: '状态字段（固定值，模板可写）' },
+  { value: '_warnings', label: '_warnings', hint: '警告列表（条件警告）' },
+  { value: '_link', label: '_link', hint: '智能链接文本' }
+];
+
+/** 是否为可配置特殊字段目标名 */
+export function isSpecialFieldTarget(name: string | undefined | null): name is SpecialField {
+  return !!name && (SPECIAL_FIELDS as readonly string[]).includes(name);
+}
+
+/** 与上方区块同源的特殊字段（UI 视图行；数据源在 transform.filters / transform.output） */
+export function isLinkedSpecialField(f: SpecialField): boolean {
+  return f === '_skip' || f === '_folder' || f === '_fileName';
+}
+
 /**
  * D125：来源下拉选择后，目标字段自动更正 = 来源值去除所有空格与回车（\s 全部空白）。
  * 去除后为空（源名全空白）时回落原值，避免目标字段被清空。
@@ -128,8 +160,8 @@ export function extractNoneTargets(preprocess: string): string[] {
 }
 
 /** 行内「添加设置」链的分组（D113：列格式化 / 列处理；D119：计算 / 链接；D126 条件校验；D128 提取；
- *  列派生为行级 rule 预设，走独立下拉组） */
-export type MappingSettingGroup = 'format' | 'process' | 'compute' | 'link' | 'validate' | 'extract';
+ *  D133：特殊字段专属设置组；列派生为行级 rule 预设，走独立下拉组） */
+export type MappingSettingGroup = 'format' | 'process' | 'compute' | 'link' | 'validate' | 'extract' | 'special';
 
 /** 条件比较运算符（D119 条件计算 / 条件警告） */
 export type ComputeCompareOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte';
@@ -181,7 +213,9 @@ export type ValidateBranchValue = { kind: 'fixed'; value: string } | { kind: 'fi
  * - validate · 条件校验（D126）：整链替换式——布尔 Helper（validateID/isEmail/…）校验当前行值 → 真/假值
  *   （各含形态：fixed 固定值 | field 字段引用），同 D119 条件计算口径（单步直调、不入 pipe）；
  * - extract · 提取（D128）：从数组/Object 取第 N 个元素/键值（itemAt，索引 0-based 负数自末尾），值管线步骤
- *   （1 步直调 / ≥2 步以 pipe 阶段表达）。
+ *   （1 步直调 / ≥2 步以 pipe 阶段表达）；
+ * - special · fixed（D133）：特殊字段行专属——`_status` 固定值（字符串常量），非值管线步骤
+ *   （编译直接以字符串字面量为值源；仅 `_status` 行使用）。
  */
 export type MappingSetting =
   | { group: 'format'; op: ColumnFormatOp; param: string }
@@ -191,7 +225,8 @@ export type MappingSetting =
   | { group: 'compute'; op: 'warn'; compare: ComputeCompareOp; operand: string; text: string }
   | { group: 'link'; op: 'smartLink'; target: string; fallback: string }
   | { group: 'validate'; op: ValidateFnOp; param: string; truthy: ValidateBranchValue; falsy: ValidateBranchValue }
-  | { group: 'extract'; op: 'itemAt'; key: string };
+  | { group: 'extract'; op: 'itemAt'; key: string }
+  | { group: 'special'; op: 'fixed'; value: string };
 
 /** 是否为「附言」类设置（warn / link：映射行 set 之后追加，非值管线步骤） */
 export function isPostscriptSetting(
@@ -221,9 +256,17 @@ export function isExtractSetting(
   return s.group === 'extract' && s.op === 'itemAt';
 }
 
-/** 是否为值管线步骤（format / process / 算术 / 条件计算 / 提取；附言除外；条件校验 = 整链替换不入链） */
+/** 是否为特殊字段「固定值」设置（D133：`_status` 行专属，字符串常量） */
+export function isFixedSetting(
+  s: MappingSetting
+): s is Extract<MappingSetting, { group: 'special'; op: 'fixed' }> {
+  return s.group === 'special' && s.op === 'fixed';
+}
+
+/** 是否为值管线步骤（format / process / 算术 / 条件计算 / 提取；附言除外；条件校验 = 整链替换不入链；
+ *  D133：固定值为特殊行值源，不入普通值链——由特殊行专用编译处理） */
 export function isValueChainSetting(s: MappingSetting): boolean {
-  return !isPostscriptSetting(s) && !isValidateSetting(s);
+  return !isPostscriptSetting(s) && !isValidateSetting(s) && !isFixedSetting(s);
 }
 
 /**
@@ -352,6 +395,10 @@ export function mappingSettingLabel(s: MappingSetting): string {
   // D128：提取（数组/Object）
   if (s.group === 'extract') {
     return `提取·第 ${s.key || '?'} 个/键`;
+  }
+  // D133：特殊字段固定值（_status）
+  if (s.group === 'special' && s.op === 'fixed') {
+    return `固定值「${s.value ?? ''}」`;
   }
   return `链接·智能链接(→${s.target || '?'}${s.fallback ? ` 回退 ${s.fallback}` : ''})`;
 }
@@ -852,6 +899,7 @@ export function applyMappingChainValue(value: unknown, type: MappingType, settin
     // D119 计算/链接（JS 语义层仅供单测/兼容对拍；正式执行走 D98 编译段）。列操作数（非数字常数）在
     // 单值语义下无法解析 → 原样返回；数字常数按数值运算/比较处理。
     if (s.group === 'link') return x; // 附言非值变换
+    if (s.group === 'special') return x; // D133 固定值：值源（编译层处理），非 JS 变换步骤
     if (s.op === 'warn') return x; // 附言非值变换
     const opNum = Number(s.operand);
     const num = (y: unknown): number | null => {
@@ -949,6 +997,96 @@ export function autoMapColumns(columns: string[], existing: ColumnMapping[]): Co
 /** 供「🗑 删除所有自动映射」：仅移除 origin==='auto' 的行（手动添加/回填行保留） */
 export function removeAutoMappings(mappings: ColumnMapping[]): ColumnMapping[] {
   return mappings.filter((m) => m.origin !== 'auto');
+}
+
+/** 行是否为特殊字段真实行（D132：target 为 `_status`/`_warnings`/`_link`；`_skip`/`_folder`/`_fileName`
+ *  为区块 4/3 联动视图行，不入 cfg.mappings——由 transform.filters / output 承载） */
+export function isSpecialFieldRow(m: ColumnMapping): boolean {
+  const t = m.target || m.source;
+  return isSpecialFieldTarget(t) && !isLinkedSpecialField(t as SpecialField);
+}
+
+/** cfg.mappings 中已使用的特殊字段真实行目标集（D132 唯一性：UI 目标下拉灰置「已配置」） */
+export function specialTargetsInUse(mappings: ColumnMapping[]): Set<string> {
+  const s = new Set<string>();
+  for (const m of mappings ?? []) {
+    const t = m.target || m.source;
+    if (t && isSpecialFieldRow(m)) s.add(t);
+  }
+  return s;
+}
+
+/** D134：进入「主笔记」正文（content 段）的字段序列（顺序 = 区块 5 行顺序 = 内容模板顺序）。
+ *  范围口径（用户确认：仅主笔记布局）= cfg.mappings 中非忽略、目标非保留字段、输出到
+ *  「主笔记」/「所有笔记」的行——排除附加笔记类型（D120）与「不输出」（D127）；
+ *  派生行（rule）目标为普通字段时同样入列。 */
+export function mainNoteContentFields(mappings: ColumnMapping[]): string[] {
+  const out: string[] = [];
+  for (const m of mappings ?? []) {
+    const t = m.target || m.source;
+    if (!t) continue;
+    if (m.type === 'ignore') continue;
+    if (isSpecialFieldTarget(t)) continue;
+    const nt = m.noteType;
+    if (nt === NONE_NOTE_TYPE) continue;
+    if (nt && nt !== MAIN_NOTE_TYPE && nt !== ALL_NOTE_TYPES) continue; // 附加笔记类型不进主笔记
+    if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
+/** D130：移动映射行（纯函数）。行顺序 = 段内 `set` 行序 = 内容模板字段顺序；
+ *  跨段受限——纯映射行（无 rule）/ 派生行（rule）分别位于 column-mapping / derived 段，
+ *  段间顺序由段清单固定（column-mapping → derived），故不同段行间不可移动（返回原数组）。
+ *  特殊字段真实行（_status/_warnings/_link）无 rule、属 column-mapping 段，可同段移动。
+ */
+export function moveMappingRow(mappings: ColumnMapping[], from: number, to: number): ColumnMapping[] {
+  if (!mappings || mappings.length === 0) return mappings;
+  if (from < 0 || to < 0 || from >= mappings.length || to >= mappings.length || from === to) return mappings;
+  const a = mappings[from];
+  const b = mappings[to];
+  if (!!a.rule !== !!b.rule) return mappings; // 跨段拒绝
+  const next = [...mappings];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** D131：移动行内设置（纯函数）。设置顺序 = 该行值管线执行顺序（1 步直调序 / ≥2 步 pipe 阶段序）。
+ *  受限集合：附言（warn/link）、条件校验（validate）、条件计算（compute.condition）与
+ *  特殊固定值（special.fixed，值源）均不可重排（返回原数组）——它们在值管线中位置由语义固定。
+ */
+export function moveRowSetting(settings: MappingSetting[] | undefined, from: number, to: number): MappingSetting[] | undefined {
+  if (!settings || settings.length === 0) return settings;
+  if (from < 0 || to < 0 || from >= settings.length || to >= settings.length || from === to) return settings;
+  const movable = (s: MappingSetting): boolean =>
+    !isPostscriptSetting(s) && !isValidateSetting(s) && !isConditionSetting(s) && !isFixedSetting(s);
+  if (!movable(settings[from]) || !movable(settings[to])) return settings;
+  const next = [...settings];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** 可重排的行内设置（D131：附言 warn/link、条件校验、条件计算、固定值除外——供 UI 决定是否显示 ↑/↓） */
+export function isReorderableSetting(s: MappingSetting): boolean {
+  return !isPostscriptSetting(s) && !isValidateSetting(s) && !isConditionSetting(s) && !isFixedSetting(s);
+}
+
+/** D133：新建特殊字段真实行（_status/_warnings/_link）时的默认设置（D133 表；_skip/_folder/_fileName
+ *  为视图行不入 cfg.mappings——返回 null） */
+export function defaultSpecialSetting(field: SpecialField): MappingSetting[] | null {
+  switch (field) {
+    case '_status':
+      return [{ group: 'special', op: 'fixed', value: '' }];
+    case '_warnings':
+      // 条件警告默认：空条件（不命中不产）；用户补充来源列/比较与文本
+      return [{ group: 'compute', op: 'warn', compare: 'eq', operand: '', text: '' }];
+    case '_link':
+      return [{ group: 'link', op: 'smartLink', target: '', fallback: '' }];
+    default:
+      return null;
+  }
 }
 
 /** 可参与纯映射的"未消费源列"（派生行 rule 不消费，可重复读取；供映射行来源下拉与「可用源列」提示） */
@@ -1450,10 +1588,96 @@ function mappingPostLines(m: ColumnMapping): string[] {
   return out;
 }
 
-/** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set`；D119 附言紧跟其行 */
+/* ── D132/D133 特殊字段真实行（_status/_warnings/_link）编译 ── */
+
+/** `_status` 行：值 = 固定值设置（special.fixed）为源的字符串字面量，可叠加其它值型设置；无值源则不产 */
+function statusRowLines(m: ColumnMapping): string[] {
+  if (m.type === 'ignore' || m.rule) return [];
+  const settings = (m.settings ?? []).filter((s) => s.group !== 'special' || s.op !== 'fixed');
+  const fixed = (m.settings ?? []).find(isFixedSetting);
+  const steps: StepSpec[] = [];
+  for (const s of settings) {
+    if (!isValueChainSetting(s) && !isConditionSetting(s)) continue;
+    if (typeQuickConversionEquals(m.type, s)) continue;
+    const spec = settingStep(s);
+    if (spec) steps.push(spec);
+  }
+  // 无固定值且无任何值步骤 → 不产（回落引擎默认：不设 _status，noteType 回落 'main'）
+  if (!fixed && steps.length === 0) return [];
+  const base = fixed && fixed.value !== undefined ? hbQuote(fixed.value) : hbQuote('');
+  let expr: string;
+  if (steps.length === 0) expr = base;
+  else if (steps.length === 1) expr = stepDirect(steps[0], base);
+  else expr = `(pipe ${base} ${steps.map(stepStage).join(' ')})`;
+  return [`{{set "_status" ${expr}}}`];
+}
+
+/** `_warnings` 行：settings 中每个 条件警告（compute.warn，D133 专属/默认设置）产一条 push 附言行；
+ *  需要行来源列作为比较基准（无来源时忽略该 warn 步骤——UI 提示先选来源列） */
+function warningsRowLines(m: ColumnMapping): string[] {
+  if (m.type === 'ignore' || m.rule) return [];
+  const warns = (m.settings ?? []).filter(
+    (s): s is Extract<MappingSetting, { group: 'compute'; op: 'warn' }> =>
+      s.group === 'compute' && s.op === 'warn'
+  );
+  if (warns.length === 0) return [];
+  const srcExpr = m.source ? `(lookup this ${hbQuote(m.source)})` : null;
+  if (!srcExpr) return [];
+  const out: string[] = [];
+  for (const w of warns) {
+    const cmp = compareValueExpr(w.compare, srcExpr, w.operand);
+    out.push(`{{#if ${cmp}}}{{set "_warnings" (push _warnings ${hbQuote(w.text)})}}{{/if}}`);
+  }
+  return out;
+}
+
+/** `_link` 行：settings 中每个 smartLink（D133 专属/默认设置）产一条 _link set（依赖 _hash） */
+function linkRowLines(m: ColumnMapping): string[] {
+  if (m.type === 'ignore' || m.rule) return [];
+  const links = (m.settings ?? []).filter(
+    (s): s is Extract<MappingSetting, { group: 'link'; op: 'smartLink' }> =>
+      s.group === 'link' && s.op === 'smartLink'
+  );
+  const out: string[] = [];
+  for (const l of links) {
+    out.push(
+      `{{#if (isNotEmpty _hash)}}{{set "_link" (smartLink _hash ${hbQuote(l.target)} ${hbQuote(l.fallback)})}}{{/if}}`
+    );
+  }
+  return out;
+}
+
+/**
+ * 特殊字段真实行（D132：`_status`/`_warnings`/`_link` 独立行；`_skip`/`_folder`/`_fileName` 为
+ * 区块 4/3 联动视图行，不入 cfg.mappings、不在此编译）单行 → column-mapping 段行列表。
+ * 每行前加 `{{!-- ipro:specialrow:<target> --}}` 标记行——反编译据此无歧义还原为独立特殊字段行
+ * （与普通映射行的 warn/link 附言（无标记、紧跟其行）区分，D133 实现口径）。
+ */
+function specialRowLines(m: ColumnMapping): string[] {
+  const t = m.target || m.source;
+  let lines: string[] = [];
+  if (t === '_status') lines = statusRowLines(m);
+  else if (t === '_warnings') lines = warningsRowLines(m);
+  else if (t === '_link') lines = linkRowLines(m);
+  else return []; // _skip/_folder/_fileName：由 row-filter/output 段承载
+  if (lines.length === 0) return [];
+  return [`{{!-- ipro:specialrow:${t} --}}`, ...lines];
+}
+
+/** 列映射段体（D113 起为列侧唯一产出段）：纯复制 + 类型快捷转换 + 行内设置链统一一行一个 `set`；
+ *  D119 附言紧跟其行；D132/D133 特殊字段真实行（_status/_warnings/_link）同表混排、按 cfg.mappings
+ *  顺序产行（D130：行顺序 = 段内 set 行序） */
 function mappingBody(mappings: ColumnMapping[]): string {
   const lines: string[] = [];
   for (const m of mappings) {
+    if (m.rule || m.type === 'ignore') continue;
+    const target = m.target || m.source;
+    // D132：目标为可配置特殊字段（_status/_warnings/_link）→ 特殊字段行编译
+    if (target && isSpecialFieldTarget(target)) {
+      if (isLinkedSpecialField(target)) continue; // 视图行不应出现在 cfg.mappings（防御）
+      for (const l of specialRowLines(m)) lines.push(l);
+      continue;
+    }
     const built = mappingRowExpr(m);
     if (!built) continue;
     // 源列存在才 set（复制/链均要求源列存在）
@@ -1843,6 +2067,8 @@ export function foldLegacyColumnOps(
 
 /** 反编译单条 column-mapping 行（D113 值管线：copy / 单步直调 / pipe；D119 条件计算 ternary）→ 统一映射行 */
 function decodeMappingExpr(expr: string, target: string): ColumnMapping | null {
+  // D132：特殊字段行已在 decodeMappingBody 前置还原（_status/_link 等），普通映射解码拒绝保留字段目标
+  if (isSpecialFieldTarget(target)) return null;
   const call = parseParenCall(expr);
   if (!call) return null;
   if (call.name === 'lookup') {
@@ -2010,45 +2236,151 @@ function stepSpecToSetting(spec: StepSpec): MappingSetting | null {
   }
 }
 
-/** 附言（D119 warn/link）行还原 + 映射行反编译；附言行紧跟所属行之后（挂在最近一行 settings） */
+/** `_status` set 行值表达式 → 特殊字段设置链还原（D133：固定值字面量为源，可叠直调/pipe 阶段；
+ *  编译层 `statusRowLines` 以 `special.fixed` 值为源叠加其余值型步骤） */
+function decodeStatusExpr(expr: string): { fixed: string; settings: MappingSetting[] } {
+  const q = expr.trim();
+  const isLit = (s: string): boolean =>
+    (s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"));
+  if (isLit(q)) return { fixed: q.slice(1, -1), settings: [] };
+  const steps: StepSpec[] = [];
+  let base = '';
+  const parse = (e: string): boolean => {
+    const call = parseParenCall(e);
+    if (!call) return false;
+    if (call.name === 'pipe') {
+      if (!parse(call.args[0] ?? '')) return false;
+      for (const st of call.args.slice(1)) {
+        const sc = parseParenCall(st);
+        if (!sc || sc.name !== 'stage') return false;
+        steps.push({ helper: stripQuotes(sc.args[0] ?? ''), args: sc.args.slice(1) });
+      }
+      return true;
+    }
+    if (call.args.length > 0) {
+      const first = (call.args[0] ?? '').trim();
+      if (isLit(first)) {
+        base = first.slice(1, -1);
+        steps.push({ helper: call.name, args: call.args.slice(1) });
+        return true;
+      }
+      if (parse(first)) {
+        steps.push({ helper: call.name, args: call.args.slice(1) });
+        return true;
+      }
+    }
+    return false;
+  };
+  if (!parse(expr) || base === '') {
+    // 无法解析为字面量基 + 步骤 → 固定值回落整串文本（解码保底，编译通常不产出该形态）
+    return { fixed: q, settings: [] };
+  }
+  const settings: MappingSetting[] = [{ group: 'special', op: 'fixed', value: base }];
+  for (const spec of steps) {
+    const s = stepSpecToSetting(spec);
+    if (s && s.group !== 'special') settings.push(s);
+  }
+  return { fixed: base, settings };
+}
+
+/** 附言（D119 warn/link）行还原 + 映射行反编译；附言行紧跟所属行之后（挂在最近一行 settings）。
+ *  D132/D133：特殊字段真实行（`_status`/`_warnings`/`_link`）以 `ipro:specialrow:` 标记行标注，
+ *  反编译据此还原为独立特殊字段行（与普通映射行无标记的 warn/link 附言区分）。 */
 function decodeMappingBody(body: string): ColumnMapping[] {
   const out: ColumnMapping[] = [];
   let last: ColumnMapping | null = null;
+  /** D132：当前行归属的独立特殊字段目标（来自 `ipro:specialrow:` 标记） */
+  let pendingSpecial: string | null = null;
+
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t) continue;
     // D127：不输出清单标记行（`{{!-- ipro:none:目标A,目标B --}}`）仅作元信息，跳过（回填统一在 handlebarsToConfig 末尾）
     if (/^\{\{!-- ipro:none:/.test(t)) continue;
+    // D132：独立特殊字段行标记
+    const spM = /^\{\{!-- ipro:specialrow:([A-Za-z_]+) --\}\}$/.exec(t);
+    if (spM) {
+      pendingSpecial = spM[1];
+      continue;
+    }
     // warn：`{{#if (cmp VALUE operand)}}{{set "_warnings" (push _warnings "文本")}}{{/if}}`
     const warn = /^\{\{#if ([\s\S]*?)\}\}\{\{set "_warnings" \(push _warnings "([^"]*)"\)\}\}\{\{\/if\}\}$/.exec(t);
     if (warn) {
-      if (!last) continue;
       const cond = parseParenCall(warn[1].trim());
       if (!cond || !isCompareHelper(cond.name)) continue;
-      last.settings = last.settings ?? [];
-      last.settings.push({
+      const ws: MappingSetting = {
         group: 'compute',
         op: 'warn',
         compare: cond.name as ComputeCompareOp,
         operand: decodeOperand(cond.args[1] ?? ''),
         text: warn[2]
-      });
+      };
+      const L = last;
+      const isPlainLast = !!L && !!L.target && !L.rule && !isSpecialFieldTarget(L.target);
+      // 归属：`ipro:specialrow:_warnings` 标记或非普通行之后 → 独立 _warnings 特殊行（D133）；
+      // 否则 → 挂最近普通映射行（D119 附言兼容）
+      if (pendingSpecial === '_warnings' || !isPlainLast) {
+        if (L && L.target === '_warnings') {
+          L.settings = L.settings ?? [];
+          L.settings.push(ws);
+        } else {
+          // 独立 _warnings 行来源 = 条件比较左值引用的列（如 (eq (lookup this "列") …)）
+          const srcCol = colOf(cond.args[0] ?? '');
+          const row: ColumnMapping = { source: srcCol ?? '', target: '_warnings', type: 'text', settings: [ws] };
+          out.push(row);
+          last = row;
+        }
+      } else {
+        L.settings = L.settings ?? [];
+        L.settings.push(ws);
+      }
+      pendingSpecial = null;
       continue;
     }
     const set0 = parseSetLine(t);
     if (!set0) continue;
     // link：`{{set "_link" (smartLink _hash "目标" "回退")}}`（可含 `{{#if (isNotEmpty _hash)}}` 守卫）
     if (set0.key === '_link' && set0.expr.startsWith('(smartLink')) {
-      if (!last) continue;
       const sc = parseParenCall(set0.expr);
       if (!sc || sc.name !== 'smartLink') continue;
-      last.settings = last.settings ?? [];
-      last.settings.push({
+      const ls: MappingSetting = {
         group: 'link',
         op: 'smartLink',
         target: stripQuotes(sc.args[1] ?? ''),
         fallback: stripQuotes(sc.args[2] ?? '')
-      });
+      };
+      const L = last;
+      const isPlainLast = !!L && !!L.target && !L.rule && !isSpecialFieldTarget(L.target);
+      // 归属：`ipro:specialrow:_link` 标记或非普通行之后 → 独立 _link 特殊行；否则 → 挂最近普通映射行（D119）
+      if (pendingSpecial === '_link' || !isPlainLast) {
+        if (L && L.target === '_link') {
+          L.settings = L.settings ?? [];
+          L.settings.push(ls);
+        } else {
+          const row: ColumnMapping = { source: '', target: '_link', type: 'text', settings: [ls] };
+          out.push(row);
+          last = row;
+        }
+      } else {
+        L.settings = L.settings ?? [];
+        L.settings.push(ls);
+      }
+      pendingSpecial = null;
+      continue;
+    }
+    // D133：`_status` 特殊字段固定值 set 行
+    if (set0.key === '_status') {
+      const dec = decodeStatusExpr(set0.expr);
+      const row: ColumnMapping = { source: '', target: '_status', type: 'text' };
+      row.settings = [{ group: 'special', op: 'fixed', value: dec.fixed }, ...dec.settings];
+      out.push(row);
+      last = row;
+      pendingSpecial = null;
+      continue;
+    }
+    // D132：`_folder`/`_fileName`（防御——output 段权威，col-mapping 段内出现时忽略）
+    if (isSpecialFieldTarget(set0.key) && isLinkedSpecialField(set0.key)) {
+      pendingSpecial = null;
       continue;
     }
     const row = decodeMappingExpr(set0.expr, set0.key);
@@ -2056,6 +2388,7 @@ function decodeMappingBody(body: string): ColumnMapping[] {
       out.push(row);
       last = row;
     }
+    pendingSpecial = null;
   }
   return out;
 }

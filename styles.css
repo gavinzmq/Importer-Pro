@@ -139,6 +139,69 @@
   padding: 2px 5px;
   flex: 0 0 auto;
 }
+/* D130/D131：行/设置顺序操作 ↑/↓ 与拖拽把手 */
+.ipw-move {
+  min-width: 22px;
+  height: 24px;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ipw-move:hover:not(:disabled) {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+}
+.ipw-move:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ipw-move-sm {
+  min-width: 18px;
+  height: 20px;
+  font-size: 11px;
+}
+.ipw-grip {
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: -1px;
+  padding: 0 2px;
+  user-select: none;
+}
+.ipw-grip:hover,
+.ipw-grip.is-dragging {
+  color: var(--text-accent);
+  cursor: grabbing;
+}
+.ipw-grip-sm {
+  font-size: 11px;
+}
+.ipw-target-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.ipw-target-box .ipw-input {
+  min-width: 60px;
+}
+.ipw-special-sel {
+  flex: 0 0 auto;
+  width: 34px;
+  font-size: 12px;
+  padding: 0 2px;
+}
+/* D132：特殊字段「特殊」标签（保留字段行，引擎消费） */
+.ipw-chip-special {
+  border-color: var(--color-purple, #8b5cf6);
+  background: color-mix(in srgb, var(--color-purple, #8b5cf6) 14%, transparent);
+  color: var(--color-purple, #8b5cf6);
+}
 .ipw-link {
   background: none;
   border: none;
@@ -485,6 +548,10 @@
 .ipw-derive-row .ipw-select {
   width: 100%;
 }
+.ipw-map-row .ipw-select.ipw-special-sel {
+  /* D132：目标字段「特殊字段」小下拉（输入 + 下拉组合），不受通用 width:100% 影响 */
+  width: 36px;
+}
 
 /* D113：列映射行「添加设置」chips 与内联编辑器 */
 .ipw-settings-cell {
@@ -537,6 +604,24 @@
 .ipw-settings-editor .ipw-input {
   flex: 0 1 auto;
   min-width: 90px;
+}
+
+/* D132/D133：区块 4/3 联动的特殊字段视图行（_skip/_folder/_fileName） */
+.ipw-linked-special {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px dashed var(--color-purple, #8b5cf6);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-purple, #8b5cf6) 6%, transparent);
+}
+.ipw-linked-special-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* D117：列映射行「添加设置」下拉 + 行下设置面板（已添加设置列表 / 参数编辑 / 草稿） */
