@@ -17,8 +17,16 @@
     "copilot.next.contextMode": "focused",
     // 3. 高级优化：禁用自动导入，减少不必要的 Token 消耗
     "github.copilot.advanced.autoImports": false,
+    // 将辅助工具模型也指向 DeepSeek Flash，以节省成本
+    "chat.utilityModel": "deepseek/deepseek-v4-flash",
+    "chat.utilitySmallModel": "deepseek/deepseek-v4-flash",
+    // 确保所有主要的对话入口都使用 DeepSeek 模型
+    "inlineChat.defaultModel": "DeepSeek V4 Flash (deepseek)",
+    "chat.planAgent.defaultModel": "DeepSeek V4 Flash (deepseek)",
+    "chat.exploreAgent.defaultModel": "DeepSeek V4 Flash (deepseek)",
+    "github.copilot.chat.askAgent.model": "DeepSeek V4 Flash (deepseek)",
+    "github.copilot.chat.implementAgent.model": "DeepSeek V4 Flash (deepseek)",
+    "github.copilot.chat.exploreAgent.model": "DeepSeek V4 Flash (deepseek)"
     // 4. 高级优化：设置触发延迟 (毫秒)，避免频繁请求
-    "github.copilot.advanced.triggerDelayMs": 300,
-    "deepseek-copilot.experimental.stabilizeToolList": true
     // "github.copilot.chat.advanced.model": "gpt-4o"
 }
