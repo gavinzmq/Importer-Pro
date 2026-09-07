@@ -1,18 +1,7 @@
----
-title: "开发规范与标准"
-type: "standard"
-version: "1.13.0"
-last_updated: "2026-09-06"
-status: "active"
-owner: "core-team"
-tags: ["standards", "code-style", "testing", "documentation"]
-arcmesh:
-  category: "standards"
-  priority: 1
-  relates_to: ["project.md", "architecture.md"]
----
-
 # Importer Pro 开发规范与标准
+
+> **AI 协作**：变更判定详见 `references/ai-guide.md`（L1）。
+
 
 ## 1. 代码风格
 
@@ -94,7 +83,7 @@ src/
 | **反射工厂** | 通过反射工厂（注册表 `Map<platform, ctor>` + 模块加载时反射注册）获取实现实例（`DesktopXxx` / `MobileXxx`） |
 | **平台判定唯一入口** | 平台判定只在工厂内部（`Platform.isDesktop` / `Platform.isMobile`），**禁止 UI 组件内散落 `Platform.isMobile` 条件分支** |
 
-> 权威设计见 `architecture.md` §5（扩展点）与 `ui/layout.md` §4（Step 2 选择文件交互）；文件路径引用见 `architecture.md` §2.8。
+> 权威设计见 `components/infrastructure.md`（扩展点）与 `components/ui.md`（Step 2 文件管理）；文件路径引用策略见 `components/parsers.md`（FileInfo）与 `components/ui.md`。
 
 ### 1.2.2 向导渲染策略（无刷新感 / 不跳顶，D91）
 
@@ -105,7 +94,7 @@ src/
 | **滚动与焦点保持** | 刷新前记录并恢复 `scrollTop`；输入控件状态即数据源、渲染仅回填值，避免焦点丢失 |
 | **步骤切换例外** | Step 间跳转属页面结构切换，可全量渲染 |
 
-> 权威设计见 `architecture.md` §2.9 与 `ui/layout.md` §5.1；决策见 decisions/2026-09-03-ui-ux-polish.md（D91）。
+> 权威设计见 `components/ui.md`（Step 3 渲染与刷新策略）；决策见 `decisions/ui-render-strategy.md`。
 
 ### 1.2.3 向导逻辑抽离（UI 层只调用，D94–D96）
 
@@ -120,11 +109,11 @@ src/
 | **多步值型 set 统一 pipe（D99–D101）** | 一个 `set` 的目标值含 **≥2 个变换阶段**时，编译产物必须用内置 `pipe`/`stage` 表达（`(pipe 源 (stage "阶段名" 固定参数…) …)`，左→右求值，禁止深嵌套括号硬拼）；单阶段保持 `(helper 源)` 直调；阶段仅限内置白名单（外部 Helper 不得入 `PipeStages` 注册表，防注入）；`pipe` 为纯值链、不含空值守卫，守卫放外层 `#if`；反编译器须同时接受 pipe 与旧嵌套两种形态 |
 | **列侧唯一段 column-mapping（D105–D107）** | 列侧 UI 只产出 `column-mapping` 段：列格式化/列处理/派生全部并入列映射行的 `settings` 链（不再产出 column-format / column-process / derived 段）；每行一条 set——无设置=复制、1 步=直调、**≥2 步=pipe**（D99）；类型=快捷转换（隐含转换去重）；旧段/旧 frontmatter 读取折叠迁移 |
 
-> 权威设计见 `architecture.md` §2.10 与 `ui/layout.md` §5.4–§5.6；决策见 decisions/2026-09-04-step3-template-config-restructure.md（D94–D96）；值型 set 管道见 decisions/2026-09-05-pipe-pipeline-set-config.md（D99–D101）；列侧收敛见 decisions/2026-09-05-step3-column-mapping-settings-chain.md（D105–D107）。
+> 权威设计见 `components/ui.md`（Step 3 六区块）与 `references/preprocess-blocks.md`（编译映射）；决策见 `decisions/data-flow-preprocess-storage.md`、`decisions/ui-logic-separation.md` 与 `decisions/ui-render-strategy.md`。
 >
-> **D108 + D113（2026-09-05 已实现）收敛注记**：列侧以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设 rule 行；编译按 rule 拆 column-mapping/derived 段、反编译合并，旧模板/旧 frontmatter 可读回迁移）。**D113** 实现 D105 草案「添加设置」行内设置链：范围 = 列格式化/列处理 chips（`settings`，≥2 步 pipe）+ 类型快捷转换编译，列侧仅产 `column-mapping` 段、旧 column-format/column-process 段与旧 frontmatter columns 折叠为设置链，移除独立格式化/处理卡；派生不占 chips（走「类型/规则」下拉，rule 行），与 D105 草案差异见 decisions/2026-09-05-unimplemented-gap-fill.md D113。
+> **D108 + D113 收敛注记**：列侧以「映射与派生合并单表」落地（区块 5/6 合并、行内「类型/规则」直接选派生预设 rule 行；编译按 rule 拆 column-mapping/derived 段、反编译合并，旧模板/旧 frontmatter 可读回迁移）。**D113** 实现 D105 草案「添加设置」行内设置链：范围 = 列格式化/列处理 chips（`settings`，≥2 步 pipe）+ 类型快捷转换编译，列侧仅产 `column-mapping` 段、旧 column-format/column-process 段与旧 frontmatter columns 折叠为设置链，移除独立格式化/处理卡；派生不占 chips（走「类型/规则」下拉，rule 行），与 D105 草案差异记录于 `decisions/data-flow-preprocess-storage.md`。
 
-### 1.2.4 Helper 实现委托原则（D102–D104 定口径；D109–D111 实现源迁 fumanchu，2026-09-05 已实现）
+### 1.2.4 Helper 实现委托原则（D102–D104 定口径；D109–D111 实现源迁 fumanchu）
 
 | 规范项 | 标准 |
 | :--- | :--- |
@@ -136,7 +125,7 @@ src/
 | **对拍定稿** | 委托清单以 `tests/unit/helpers.test.ts` 全绿为准（语义回归网）；改名/专用名条目登记迁移清单。D109 起补 **options 剥离**边界用例（fumanchu 变参 helper 未 pop 末位 options，注册层 `withOptionsStripped` 补齐） |
 | **第三方门禁** | 新 helper 只取自白名单类；esbuild `platform:'browser'` + `@jaredwray/fumanchu/browser` + alias 空壳（`scripts/shims/fumanchu-node-deps-empty.mjs`，仅 micromatch/@cacheable/memory/chrono-node）验证打包无 Node 助手泄漏（沿用 D58/js-md5 排查法；勿删 alias、勿对 dayjs/markdown-it alias） |
 
-> 口径决策见 decisions/2026-09-05-handlebars-helpers-on-demand.md（D102–D104，v1.2.0）；实现源迁移见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
+> 口径决策与实现源迁移（D102–D104 / D109–D111）归纳于 `components/engine.md`（Helper 实现源）与 `references/builtin-helpers.md`；构建约束见 `decisions/build-esbuild-constraints.md`。
 
 ### 1.3 跨平台脚本与子进程调用
 
@@ -146,7 +135,7 @@ src/
 | 确需调用外部命令 | `execFileSync`/`spawnSync` 传**参数数组** | 避免把路径/参数拼进 shell 命令字符串 |
 | 打包/压缩 | Windows `Compress-Archive` / Unix `zip` 显式分支 | 平台分支显式判断；Unix `zip` 由 CI 安装步骤保证（见 §8） |
 
-**历史教训（2026-09-03，D58）**：`scripts/package.mjs` 曾通过
+**历史教训（D58）**：`scripts/package.mjs` 曾通过
 `node -e "require('fs').copyFileSync("main.js", "dist/main.js")"` 复制产物，内层 `JSON.stringify` 双引号在 Ubuntu runner 的 bash 下被提前截断，eval 收到 `copyFileSync(main.js, ...)` → `ReferenceError: main is not defined`；本机 Windows/PowerShell 引号规则不同故未暴露。已改用原生 `fs.copyFileSync` 消除 shell 依赖。
 
 ## 2. 测试标准
@@ -233,7 +222,7 @@ async resolve(hash: string, targetFolder: string, fallbackFolder: string): Promi
 
 任何代码修改（功能 / 修复 / 重构）在提交时须同步更新：
 
-- **蓝图版本/状态**：`architecture.md`、`project.md` 的版本号、状态及受影响的流程描述。
+- **受影响文档**：按 `references/ai-guide.md`（L1）变更类型映射更新对应 `components/`、`references/` 文件；结构性决策新增到 `decisions/`。
 - **决策记录**：在 `decisions/` 新增或更新决策文件（含背景、决策内容、影响）。
 - **本规范**：涉及代码风格、测试、文档、Git、CI/CD 等标准变化时，同步修订本 STANDARDS。
 - **文档格式**：无行尾空白、无 NBSP、frontmatter 闭合、代码围栏偶数；改完通读核对。
@@ -314,7 +303,7 @@ const ERROR_CODES = {
 |内存占用|< 200MB|
 |首次加载时间|< 500ms（onload 到可用，懒初始化）|
 
-> 实现策略（懒初始化、模板索引缓存、解析 LRU、写文件并发限流等）见 [architecture.md](architecture.md) §8，代码评审时须对照核对。
+> 实现策略（懒初始化、模板索引缓存、解析 LRU、写文件并发限流等）见 `components/infrastructure.md`（性能与并发节），代码评审时须对照核对。
 
 ## 7. 安全标准
 
@@ -326,7 +315,7 @@ const ERROR_CODES = {
 
 - 文件操作限制在 Vault 内
 
-- 向导所选文件**仅记录路径引用**：不预加载进内存、不复制到 Vault、不写临时磁盘缓存；解析/预览按需从原路径读取，读取失败（原文件不可访问/URI 失效）记 `IO_002`（见 architecture.md §2.8、ui/layout.md §4）
+- 向导所选文件**仅记录路径引用**：不预加载进内存、不复制到 Vault、不写临时磁盘缓存；解析/预览按需从原路径读取，读取失败（原文件不可访问/URI 失效）记 `IO_002`（见 `components/ui.md` 与 `references/error-codes.md`）
 
 - 文件写入采用"先渲染后写入"：全部内容在内存渲染并校验路径后统一写入，单个文件失败不影响批次，不产生半成品文件
 
@@ -346,5 +335,3 @@ const ERROR_CODES = {
 | 观察项 | Node 20 运行时弃用 warning | 目前仅 warning 不阻塞；计划升级 `actions/checkout` 等 action 版本 |
 
 ---
-
-_版本: 1.13.0
