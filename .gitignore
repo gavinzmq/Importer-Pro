@@ -1,7 +1,5 @@
-# ArcMesh 本地运行时产物（不入库；蓝图文档 .arcmesh/** 纳入版本控制）
-.arcmesh/index.db
-.arcmesh/.cache/
-.arcmesh/logs/
+# 本地 MCP 工具链运行时产物（不入库；脚本与配置 scripts/mcp/ 入库）
+scripts/mcp/logs/
 *.log
 .DS_Store
 
@@ -18,6 +16,6 @@ playwright-report/
 !.vscode/mcp.json
 .cachebro/
 .codegraph/
-.arcmesh - 副本/
-.arcmesh-backup/
 .symbra/
+.arcmesh-backup
+.arcmesh - 副本

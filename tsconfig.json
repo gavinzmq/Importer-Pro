@@ -18,5 +18,5 @@
     "resolveJsonModule": true,
     "useDefineForClassFields": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "esbuild.config.mjs", "scripts/**/*.mjs"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "scripts/**/*.ts"]
 }

@@ -2,26 +2,26 @@
 'use strict';
 
 /**
- * ArcMesh 本地 AI 协作环境 · 自动生成脚本
+ * 本地 MCP 工具链 · 自动生成脚本
  *
- * 依据 `.arcmesh/system-repo/references/deployment.md`（v3.7）第四节「服务端配置生成规则」
+ * 依据 `docs/references/deployment.md` 第四节「服务端配置生成规则」
  * 与第五节「自动化生成」实现：
- *   1. 递归创建 `.arcmesh/mcp/` 与 `.arcmesh/logs/`
- *   2. 生成 `.arcmesh/mcp/ctxslim.json`（仅含已安装且支持 stdio 的组件）
- *   3. 生成 `.arcmesh/mcp/mcp.json`（gatekeeper 配置；默认不注册，属可选旁路）
+ *   1. 递归创建 `scripts/mcp/` 与 `scripts/mcp/logs/`
+ *   2. 生成 `scripts/mcp/ctxslim.json`（仅含已安装且支持 stdio 的组件）
+ *   3. 生成 `scripts/mcp/gatekeeper.json`（可选旁路；默认不注册）
  *   4. 生成 / 合并 `.vscode/settings.json`
- *   5. 生成 / 合并 `.vscode/mcp.json`（保留 ArcMesh 条目，注册 ctxslim 直连）
+ *   5. 生成 / 合并 `.vscode/mcp.json`（注册 ctxslim 直连）
  *   6. 合并 `package.json` 的 `scripts`（不覆盖既有脚本）
  *
  * 用法：
  *   pnpm setup:mcp
  *
  * 可选环境变量：
- *   ARCMESH_JUDGE_STRATEGY=none|openai|command   （默认 none；本机无本地 Judge 时不启用）
- *   ARCMESH_JUDGE_ENDPOINT=http://localhost:1234/v1
- *   ARCMESH_JUDGE_COMMAND="ollama run llama3.1"
- *   ARCMESH_DEEPSEEK_BASE_URL=http://localhost:1234/v1   （设置后才写入 deepseek-copilot.baseUrl）
- *   ARCMESH_ROOT=<项目根绝对路径>   （缺省用 process.cwd()；在容器/沙箱内执行时用它纠正）
+ *   MCP_JUDGE_STRATEGY=none|openai|command   （默认 none；本机无本地 Judge 时不启用）
+ *   MCP_JUDGE_ENDPOINT=http://localhost:1234/v1
+ *   MCP_JUDGE_COMMAND="ollama run llama3.1"
+ *   MCP_DEEPSEEK_BASE_URL=http://localhost:1234/v1   （设置后才写入 deepseek-copilot.baseUrl）
+ *   MCP_ROOT=<项目根绝对路径>   （缺省用 process.cwd()；在容器/沙箱内执行时用它纠正）
  *
  * 脚本动态读取 `process.cwd()` 与 `package.json` / `node_modules`，不硬编码项目路径。
  */
@@ -29,13 +29,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const ROOT = path.resolve(process.env.ARCMESH_ROOT || process.cwd());
+const ROOT = path.resolve(process.env.MCP_ROOT || process.cwd());
 
-const MCP_DIR = path.join(ROOT, '.arcmesh', 'mcp');
-const LOGS_DIR = path.join(ROOT, '.arcmesh', 'logs');
-const GATEKEEPER_CONFIG_REL = '.arcmesh/mcp/mcp.json';
-const CTXSLIM_CONFIG_REL = '.arcmesh/mcp/ctxslim.json';
-const AUDIT_LOG_REL = '.arcmesh/logs/gatekeeper-audit.log';
+const MCP_DIR = path.join(ROOT, 'scripts', 'mcp');
+const LOGS_DIR = path.join(ROOT, 'scripts', 'mcp', 'logs');
+const GATEKEEPER_CONFIG_REL = 'scripts/mcp/gatekeeper.json';
+const CTXSLIM_CONFIG_REL = 'scripts/mcp/ctxslim.json';
+const AUDIT_LOG_REL = 'scripts/mcp/logs/gatekeeper-audit.log';
 
 /** 依赖字段，用于判断组件是否已安装 */
 const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
@@ -215,14 +215,14 @@ function generateCtxslimConfig() {
  * 注意其门控只作用于 ctxslim 的 5 个元工具，对上游业务工具没有约束力。
  */
 function generateGatekeeperConfig() {
-  const judgeStrategy = process.env.ARCMESH_JUDGE_STRATEGY || 'none';
+  const judgeStrategy = process.env.MCP_JUDGE_STRATEGY || 'none';
   const judge = { strategy: judgeStrategy };
 
   if (judgeStrategy === 'openai') {
-    judge.endpoint = process.env.ARCMESH_JUDGE_ENDPOINT || 'http://localhost:1234/v1';
+    judge.endpoint = process.env.MCP_JUDGE_ENDPOINT || 'http://localhost:1234/v1';
   } else if (judgeStrategy === 'command') {
     judge.strategy = 'command';
-    judge['judge-command'] = process.env.ARCMESH_JUDGE_COMMAND || 'ollama run llama3.1';
+    judge['judge-command'] = process.env.MCP_JUDGE_COMMAND || 'ollama run llama3.1';
   }
 
   const config = {
@@ -295,7 +295,7 @@ function generateGatekeeperConfig() {
     judge,
   };
 
-  const file = path.join(MCP_DIR, 'mcp.json');
+  const file = path.join(MCP_DIR, 'gatekeeper.json');
   writeJson(file, config);
   return { file, judgeStrategy };
 }
@@ -310,16 +310,11 @@ function generateVscodeSettings() {
    * 只写真实生效的设置。
    *
    * 此前写入的 mcp.gatekeeper.* / context-mode.* / codegraph.* / ctxslim.* / context-cost.*
-   * 全是**第三方扩展**的设置，而本仓库只装了 `arcmesh` 一个扩展（另两个是中文语言包与
-   * DeepSeek），没有任何进程读它们 —— 真正的 CLI 开关在 .arcmesh/mcp/*.json 里。
+   * 全是**第三方扩展**的设置，而真正的 CLI 开关在 scripts/mcp/*.json 里。
    * 留着它们最有害的一点是制造错觉：改 `ctxslim.maxTools` 不会省任何 token，
    * 因为 ctxslim 是以 `--config` 启动的独立进程，从不读 VS Code 设置。
    */
   const desired = {
-    // ArcMesh 扩展（已安装）
-    'arcmesh.enable': true,
-    'arcmesh.systemRepoPath': '.arcmesh/system-repo',
-
     // Copilot Chat 原生设置（§7.2）
     // `chat.mcp.enabled` 在当前构建中已不存在；`chat.mcp.discovery.enabled` 是对象类型
     // （非布尔），写 true 会报「类型不正确，预期为 object」。两者都不写。
@@ -349,8 +344,8 @@ function generateVscodeSettings() {
   ];
 
   // §6.8 DeepSeek 端点：仅在显式提供时才写入，避免覆盖本机可用配置
-  if (process.env.ARCMESH_DEEPSEEK_BASE_URL) {
-    desired['deepseek-copilot.baseUrl'] = process.env.ARCMESH_DEEPSEEK_BASE_URL;
+  if (process.env.MCP_DEEPSEEK_BASE_URL) {
+    desired['deepseek-copilot.baseUrl'] = process.env.MCP_DEEPSEEK_BASE_URL;
   }
 
   for (const [key, value] of Object.entries(desired)) {
@@ -374,7 +369,7 @@ function generateVscodeSettings() {
 }
 
 /**
- * §4.4 .vscode/mcp.json —— 合并，保留 ArcMesh 已有条目。
+ * §4.4 .vscode/mcp.json —— 合并，注册 ctxslim 直连。
  *
  * 注册的是 **ctxslim 直连**，不是 gatekeeper：gatekeeper 的 re-export 表在启动时一次性
  * 确定，源码中没有任何 `notifications/tools/list_changed` 处理逻辑；而 ctxslim 的省 token
@@ -462,7 +457,7 @@ function main() {
 
   const log = (label, value) => console.log(`  ${label.padEnd(14)} ${value}`);
 
-  console.log('ArcMesh AI 协作环境 · 配置生成完成');
+  console.log('MCP 工具链 · 配置生成完成');
   console.log(`项目根: ${ROOT}`);
   console.log('');
   if (!nodeModulesVisible()) {
