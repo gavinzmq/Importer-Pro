@@ -21,6 +21,7 @@
 
 > 引导层（本文件）只留**指针**，细节一律下沉到 `.arcmesh/system-repo/` ——
 > 范围号 / 版本号 / 命令 / 参数写在这里必然漂移。
+> 文档与对话回复均**用列表、不用表格**，且只写当前有效状态（细则见 `STANDARDS.md`「AI协作」）。
 
 部署与故障排查：`references/deployment.md`。
 工具链决策依据：`decisions/mcp-gating-and-token-posture.md`。
