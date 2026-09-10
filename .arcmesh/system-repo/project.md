@@ -5,6 +5,8 @@ Obsidian 批量导入插件，Excel/CSV/JSON→Markdown，Handlebars 驱动，**
 ---
 
 ## 加载策略
+- L0(每轮注入)：`.github/copilot-instructions.md` —— 由 VS Code Copilot 自动注入，位于仓库根、**不在本目录内**。
+  作用只有两个：给出下面 L1~L4 的入口，与前置工具调用约定。必须保持薄，细节一律下沉到本目录
 - L1(必读)：本+`architecture.md`+`STANDARDS.md`
 - L2(改模块)：`components/*.md`
 - L3(查决策)：`decisions/*.md`
