@@ -19,9 +19,13 @@
 
 ---
 
-## 文档同步（ArcMesh 自动维护）
-代码变更 → ArcMesh 监听器检测 → `codegraph` 影响分析 → 自动更新 `.arcmesh/system-repo/` 下的文档（`project.md`、`components/*.md` 等）。  
-同步失败时记录日志并提示人工介入。
+## 文档同步（AI 驱动，非自动）
+代码变更 →（AI 依 `.github/copilot-instructions.md` 的纪律）用 `codegraph` 影响分析 → 自动更新 `.arcmesh/system-repo/` 下的文档（`project.md`、`components/*.md` 等）。  
+同步遗漏时由人工介入。
+
+> 核验（2026-09-10）：ArcMesh 扩展 v0.2.5 **没有**任何文件监听器（上游仓库无
+> `createFileSystemWatcher` / `onDidSaveTextDocument`），不存在「变更 → 自动更新文档」的链路。
+> 详见 `references/deployment.md` 第七节第 7 条与 D-MCP-007。
 
 ---
 

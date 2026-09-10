@@ -1,10 +1,11 @@
-# MCP 门控姿态与 Token 披露策略（D-MCP-001 ~ 006）
+# MCP 门控姿态与 Token 披露策略（D-MCP-001 ~ 007）
 
 > 约束对象：`.arcmesh/mcp/*.json`、`.vscode/mcp.json` 与 `scripts/setup-mcp.js` 的生成规则。
 > 权威描述见 `references/deployment.md` 第四节。
 > D-MCP-001 与 D-MCP-002 的结论已按 2026-09-10 端到端实测修正，修正段落以「事后修正」标注。
 > D-MCP-004 对 D-MCP-002 中「需 `enable_tools` 手工 pin」的表述做了校正。
 > D-MCP-006 为 D-MCP-004 的「pin 在首轮工具列表里就位」补充了前提条件（后端须已就绪）。
+> D-MCP-007 记录 ArcMesh 扩展的惰性激活与配置覆写行为（与本仓库配置策略冲突）。
 
 ---
 
@@ -188,3 +189,38 @@ VS Code 设置，gatekeeper 按设计从不读工作区配置，且仓库只安�
   —— `codegraph_explore` 单次 6 符号查询输出 15 KB（≈4.4k tokens），与 D-MCP-005 的 4392 采样一致。
 - 校正 D-MCP-004：「pin 在首轮工具列表里就位」成立的前提是**后端已就绪**，否则静默失效且无任何报错。
 - 顺带核清：codegraph 后端只报 1 个工具，其返回自荐的 `codegraph_node` 在本环境不存在。
+
+## D-MCP-007 ArcMesh 扩展惰性激活且会整体覆写配置：禁用它，只保留 `mcp.json` 条目
+
+**背景**：用户观察到状态栏出现禁止图标、`MCP: List Servers` 中 arcmesh 显示「已停止」，
+并担心「手动开启会覆盖 `.vscode/mcp.json`」。核验上游源码（`alexD1990/arcmesh-extension`，v0.2.5）后，
+该担心**成立**，且本仓库已经历过一次。
+
+**事实（源码级）**：
+- 扩展为**惰性激活**：`activationEvents: onStartupFinished` 只创建一个状态栏项
+  `$(circle-slash) ArcMesh`（tooltip `ArcMesh – click to activate`，command `arcmesh.activate`）。
+  即「禁止图标」表达的是**未激活**，不是故障。
+- `arcmesh.activate` 依次执行 `ensureSystemRepo` → `writeMcpJson` → `ensureGitignore` → `detectGitState`。
+- `writeMcpJson()` 是 **`fs.writeFileSync` 整体覆写**，其 config **只含 arcmesh 一条**：
+  `{ servers: { arcmesh: { type:'stdio', command:'node', args:[serverScript, systemRepoPath, workspaceRoot] } } }`
+  → 点一次状态栏即**删除 `.vscode/mcp.json` 里的 ctxslim 条目**（省 token 链与 codegraph 全部失效）。
+- `ensureGitignore()` 在 `.gitignore` 缺少 `.arcmesh/` 行时追加它 → 与「蓝图文档纳入版本库」冲突。
+  实测：本仓库 `.gitignore` 末尾确有该行，且与文件头部注释自相矛盾 —— 即历史上被点过一次
+  （`.vscode/mcp.json` 里那条带版本号绝对路径的 arcmesh 条目，正是它写下的形态）。
+- 扩展**没有**文件监听器（上游仓库无 `createFileSystemWatcher` / `onDidSaveTextDocument`），
+  因此 `architecture.md` 原先描述的「代码变更 → 监听器 → 自动更新文档」链路并不存在。
+- 我们实际使用的 arcmesh MCP 服务由 VS Code 依 `.vscode/mcp.json` 拉起
+  （日志 `mcpServer.mcp.config.ws0.arcmesh.log`，`Discovered 16 tools`），**与扩展是否激活无关**；
+  扩展自己 spawn 的子进程只在 `arcmesh.activate` 之后存在。
+
+**决策**：
+- **不点**状态栏的 `$(circle-slash) ArcMesh`；根治手段是在工作区禁用 arcmesh 扩展
+  （`Extensions: Disable (Workspace)`）—— mcp.json 条目仍由 VS Code 启动，16 个工具不受影响。
+- 保留 `.vscode/mcp.json` 中的 arcmesh 条目（`scripts/setup-mcp.js` 继续以「保留、不生成」处理）。
+- 删除 `.gitignore` 末尾被追加的 `.arcmesh/`。
+- 文档同步如实描述为 **AI 驱动**（`architecture.md` 已更正），不再声称自动。
+
+**影响**：
+- 禁扩展后 `arcmesh.enable` / `arcmesh.systemRepoPath` 成为惰性配置（MCP 服务器从 `args` 取路径，不读它们）。
+- 兜底：`.vscode/mcp.json` 已入库，即使被覆写也可 `git diff` + `git checkout -- .vscode/mcp.json` 还原。
+- 未采用「保留扩展、只是别点」作为主选：一次误点就断链，靠纪律不如靠禁用。

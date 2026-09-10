@@ -1,6 +1,6 @@
 # 本地 AI 协作环境部署文档（ctxslim 直连）
 
-> 版本 3.10 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
+> 版本 3.11 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
 >
 > v3.7 变更：拓扑由「Copilot → gatekeeper → ctxslim」改为「Copilot → ctxslim」直连，
 > gatekeeper 退为可选旁路。依据见 `decisions/mcp-gating-and-token-posture.md`（D-MCP-003）。
@@ -9,6 +9,8 @@
 > v3.9 变更：新增第七节第 9 条「工具调用约定」，把任务内往返压成常数；依据 D-MCP-005。
 > v3.10 变更：修正第七节第 8 条的重启入口（`MCP: Restart Server` 不进命令面板），
 > 并补记 `pins` 的冷启动竞态（4.1 与第九节）；依据 D-MCP-006。
+> v3.11 变更：记录 ArcMesh 扩展惰性激活与「点状态栏即覆写 `.vscode/mcp.json`」陷阱
+> （4.3 / 第七节第 7 条 / 第九节 / 第十节）；依据 D-MCP-007。
 
 ## 一、拓扑
 
@@ -117,8 +119,8 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
 ### 4.3 `.vscode/settings.json`（与已有配置合并）
 
 **只写真实生效的设置**：
-- `arcmesh.enable`: true
-- `arcmesh.systemRepoPath`: ".arcmesh/system-repo"
+- `arcmesh.enable`: true —— 由 arcmesh 扩展读取；**仅在扩展处于启用状态时才有意义**（见 7.7）
+- `arcmesh.systemRepoPath`: ".arcmesh/system-repo" —— 同上。MCP 服务器从 `args` 取绝对路径，**不读它**
 - `chat.agent.enabled`: true
 - `chat.mcp.access`: "all"
 
@@ -193,7 +195,21 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
      VS Code 随即重置该服务器全部工具的勾选状态，必须回 Tools 面板重新勾选；
      且 pin 只活在当前 ctxslim 进程内，重启即失效。
    - 两种方式名字均可使用暴露名或内部键 `服务器::工具名`，写错会被静默忽略。
-7. **与 ArcMesh 关系**：ArcMesh 自动注册自身 MCP 服务器（提供 `read_file` 等），与 ctxslim 互补，共存不覆盖。
+7. **与 ArcMesh 关系**：ArcMesh 提供 16 个工具（`list_files` / `read_file` / `write_file` /
+   `write_planning_doc` / `list_code_files` / `read_code_file` / `search_code` / `git_*` /
+   `system_repo_git_*`），与 ctxslim 互补。它有**两条互不相干**的启动路径：
+   - **我们使用的那条**：VS Code 依 `.vscode/mcp.json` 的 `arcmesh` 条目拉起
+     （日志 `mcpServer.mcp.config.ws0.arcmesh.log`），**与扩展是否激活无关**。
+   - 扩展自带的那条：`arcmesh.activate` 命令里 `cp.spawn` 的子进程（`deactivate()` 会 kill）。
+
+   扩展是**惰性激活**的：`activationEvents: onStartupFinished` 只创建一个状态栏项 ——
+   文案 `$(circle-slash) ArcMesh`（禁止图标）、tooltip `ArcMesh – click to activate`。
+   即**禁止图标 ≠ 故障**，它只是「等你点」。
+
+   **但不要点它**：`arcmesh.activate` 会调 `writeMcpJson()`，用 `fs.writeFileSync`
+   **整体覆写** `.vscode/mcp.json`，且它构造的 config 里**只有 arcmesh 一条** →
+   **ctxslim 条目被删除**，整条省 token 链断掉；同时 `ensureGitignore()` 会往 `.gitignore`
+   追加 `.arcmesh/`。详见第九节与 D-MCP-007。
 8. **重启服务器**：命令面板里**没有** `MCP: Restart Server`。该命令（内部 ID
    `workbench.mcp.restartServer`，标题 `Restart Server`）在本机构建注册为 `f1:false`，**不进命令面板**，
    只能从服务器列表菜单调用。路径：命令面板 `MCP: List Servers` → 选 `ctxslim` → 菜单里选 `Restart Server`
@@ -240,6 +256,15 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
   对策：等 `list_servers` 三个后端全部 `ready` 后重启 ctxslim（入口见第七节第 8 条）；实测一次重启即命中
 - **`codegraph_explore` 的返回里推荐 `codegraph_node`**：codegraph 后端只报 1 个工具，`codegraph_node`
   在本环境不存在，勿照做
+- **状态栏出现禁止图标 `$(circle-slash) ArcMesh`**：不是故障，是扩展的惰性激活标记（见 7.7）。**不要点**：
+  点击 = `arcmesh.activate` → 覆写 `.vscode/mcp.json`（只剩 arcmesh 一条，ctxslim 条目丢失）
+  + 往 `.gitignore` 追加 `.arcmesh/`。根治：在工作区禁用 arcmesh 扩展（`Extensions: Disable (Workspace)`），
+  `.vscode/mcp.json` 的条目仍由 VS Code 启动，16 个工具不受影响
+- **`.gitignore` 末尾莫名多出 `.arcmesh/`**：同源（见上条）。它与「蓝图文档入库」策略冲突 ——
+  已跟踪文件不受影响，但 `git add -A` **不会**纳入 `.arcmesh/` 下的**新**文件。删掉该行即可
+- **`MCP: List Servers` 里 arcmesh 显示「已停止」但工具可用**：窗口重载时扩展宿主会写一次
+  `Extension host shut down, server will stop`（连接状态: 已停止），随后自动重启。
+  面板可能读到旧状态 —— 以日志末行是否为 `Discovered 16 tools` 为准，不必为此手动 Start
 - 无工具导出：`tools.profile` 应为 `"full"`（仅旁路场景）
 - 语义检索返回「知识库为空」：执行 `npx @mxalbert/context-mode index <path>`
 - **误以为 `savingsPct: 100%` 很赚**：经 gatekeeper 时的 100% 是零工具导出的假象；
@@ -255,6 +280,9 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
 .DS_Store
 node_modules/
 ```
+
+> ⚠ 该文件可能被 ArcMesh 扩展的 `ensureGitignore()` 追加一行 `.arcmesh/`（见第七节第 7 条）。
+> 该行与「`.arcmesh/mcp/`、`.arcmesh/system-repo/` 入库」直接冲突，必须删除。
 
 `.vscode/` 用「先排除再例外」写法，否则新增的编辑器文件会被一并提交：
 
