@@ -6,10 +6,7 @@ last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
 tags: ["user-guide", "tutorial", "getting-started"]
-arcmesh:
-  category: "user-guide"
-  priority: 0
-  relates_to: ["TEMPLATE_GUIDE.md", "GRAPHIC_CONFIG.md"]
+relates_to: ["TEMPLATE_GUIDE.md", "GRAPHIC_CONFIG.md"]
 ---
 
 # Importer Pro 用户使用指南
@@ -51,7 +48,7 @@ arcmesh:
 
 ### 2.3 图形化配置
 
-如果未匹配到模板，插件会在 4 步导入向导中引导你完成配置（界面布局见蓝图 `ui/layout.md`）：
+如果未匹配到模板，插件会在 4 步导入向导中引导你完成配置（界面布局见蓝图 `components/ui.md`）：
 
 | 步骤 | 名称 | 内容 |
 | :--- | :--- | :--- |
@@ -139,7 +136,7 @@ arcmesh:
 | 缓存路径 | `.obsidian/importer-pro/` | 缓存与内部数据 |
 | 日志路径 | `.obsidian/importer-pro/logs` | 日志文件 |
 
-修改后模板索引自动重建，Helper/钩子自动重载；导入行为/缓存/日志等其他设置见设置面板（布局见蓝图 `ui/layout.md` §9）。
+修改后模板索引自动重建，Helper/钩子自动重载；导入行为/缓存/日志等其他设置见设置面板（布局见蓝图 `components/ui.md`）。
 
 ## 5. 与其他插件集成
 

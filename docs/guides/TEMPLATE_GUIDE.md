@@ -6,10 +6,7 @@ last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
 tags: ["template", "handlebars", "guide"]
-arcmesh:
-  category: "template-guide"
-  priority: 0
-  relates_to: ["USER_GUIDE.md", "GRAPHIC_CONFIG.md"]
+relates_to: ["USER_GUIDE.md", "GRAPHIC_CONFIG.md"]
 ---
 
 # Importer Pro 模板编写指南

@@ -6,10 +6,7 @@ last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
 tags: ["faq", "troubleshooting"]
-arcmesh:
-  category: "faq"
-  priority: 0
-  relates_to: ["USER_GUIDE.md", "TEMPLATE_GUIDE.md"]
+relates_to: ["USER_GUIDE.md", "TEMPLATE_GUIDE.md"]
 ---
 
 # Importer Pro 常见问题

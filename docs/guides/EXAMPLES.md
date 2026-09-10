@@ -6,10 +6,7 @@ last_updated: "2026-09-03"
 status: "active"
 owner: "core-team"
 tags: ["examples", "best-practices", "templates"]
-arcmesh:
-  category: "examples"
-  priority: 0
-  relates_to: ["USER_GUIDE.md", "TEMPLATE_GUIDE.md"]
+relates_to: ["USER_GUIDE.md", "TEMPLATE_GUIDE.md"]
 ---
 
 # Importer Pro 示例与最佳实践
