@@ -1,6 +1,9 @@
 # ArcMesh 本地运行时产物（不入库；蓝图文档 .arcmesh/** 纳入版本控制）
 .arcmesh/index.db
 .arcmesh/.cache/
+.arcmesh/logs/
+*.log
+.DS_Store
 
 # 依赖与构建产物
 node_modules/
@@ -9,7 +12,10 @@ dist/
 importer-pro.zip
 coverage/
 playwright-report/
-.vscode/
+# .vscode 默认忽略，但部署文档要求入库 settings.json 与 mcp.json
+.vscode/*
+!.vscode/settings.json
+!.vscode/mcp.json
 .cachebro/
 .codegraph/
 .arcmesh - 副本/

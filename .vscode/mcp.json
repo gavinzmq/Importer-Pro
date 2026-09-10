@@ -1,0 +1,23 @@
+{
+  "servers": {
+    "arcmesh": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "c:\\Users\\Admin\\.vscode\\extensions\\arcmesh.arcmesh-0.2.5\\out\\mcpServer.js",
+        "d:\\Importer-Pro\\.arcmesh\\system-repo",
+        "d:\\Importer-Pro"
+      ]
+    },
+    "ctxslim": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/node_modules/ctxslim/dist/index.js",
+        "--config",
+        "${workspaceFolder}/.arcmesh/mcp/ctxslim.json"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

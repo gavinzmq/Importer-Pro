@@ -1,7 +1,7 @@
 {
   "name": "obsidian-importer-pro",
   "version": "0.2.16",
-  "description": "Importer Pro - 一次配置，处处使用。Obsidian 数据导入插件，通过 Handlebars 模板引擎实现灵活的数据处理和批量笔记生成。",
+  "description": "Importer Pro - 一次配置,处处使用。Obsidian 数据导入插件，通过 Handlebars 模板引擎实现灵活的数据处理和批量笔记生成。",
   "license": "MIT",
   "main": "main.js",
   "scripts": {
@@ -15,7 +15,13 @@
     "lint": "node -e \"console.error('⚠️ Lint 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "test": "node -e \"console.error('⚠️ Test 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "build": "node -e \"console.error('⚠️ Build 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
-    "package": "node -e \"console.error('⚠️ Package 将在 CI 中执行，请勿本地运行'); process.exit(1)\""
+    "package": "node -e \"console.error('⚠️ Package 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
+    "setup:mcp": "node scripts/setup-mcp.js",
+    "mcp": "mcp-gatekeeper --config .arcmesh/mcp/mcp.json",
+    "mcp:inspect": "npx @modelcontextprotocol/inspector --transport stdio --command \"npx mcp-gatekeeper --config .arcmesh/mcp/mcp.json\"",
+    "ctxslim:doctor": "npx ctxslim --config .arcmesh/mcp/ctxslim.json doctor",
+    "ctxslim:tune": "npx ctxslim --config .arcmesh/mcp/ctxslim.json doctor --tune",
+    "ctxslim:stats": "npx ctxslim --config .arcmesh/mcp/ctxslim.json stats --json"
   },
   "dependencies": {
     "@jaredwray/fumanchu": "4.7.3",
@@ -28,6 +34,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@colbymchenry/codegraph": "^1.6.0",
+    "@mxalbert/context-mode": "^2.0.2",
+    "@perrylink/dsh-cert-mcp": "^0.1.4",
     "@testing-library/dom": "^10.1.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/node": "^20.12.7",
@@ -36,9 +45,14 @@
     "@typescript-eslint/parser": "^6.21.0",
     "@vitest/coverage-v8": "^1.6.0",
     "@vitest/ui": "^1.6.0",
+    "ctxslim": "^0.5.0",
+    "dmux": "^5.11.1",
     "esbuild": "^0.19.12",
     "eslint": "^8.57.0",
     "jsdom": "^24.0.0",
+    "mcp-context-cost": "^0.19.0",
+    "mcp-fuse": "^0.2.1",
+    "mcp-gatekeeper": "^0.1.5",
     "obsidian": "^1.4.11",
     "prettier": "^3.2.5",
     "rimraf": "^5.0.5",

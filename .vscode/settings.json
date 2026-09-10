@@ -1,0 +1,6 @@
+{
+  "arcmesh.enable": true,
+  "arcmesh.systemRepoPath": ".arcmesh/system-repo",
+  "chat.agent.enabled": true,
+  "chat.mcp.access": "all"
+}

@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "dsh-cert-mcp": {
+      "command": "npx",
+      "args": [
+        "@perrylink/dsh-cert-mcp"
+      ]
+    },
+    "context-mode": {
+      "command": "npx",
+      "args": [
+        "@mxalbert/context-mode"
+      ]
+    },
+    "codegraph": {
+      "command": "npx",
+      "args": [
+        "@colbymchenry/codegraph",
+        "serve",
+        "--mcp"
+      ]
+    }
+  },
+  "slim": {
+    "mode": "auto",
+    "maxTools": 8,
+    "pins": [
+      "codegraph_explore"
+    ],
+    "adaptive": true,
+    "disclosure": true,
+    "connectTimeout": 45000
+  }
+}
