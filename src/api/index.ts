@@ -29,7 +29,7 @@ import { Validator } from '../core/validator/validator';
 import { normalizeVaultPath, extOf } from '../utils/path';
 import { ERROR_CODES, ImporterProError } from '../utils/errors';
 
-/** API 门面（components/api-layer.md 权威规范） */
+/** API 门面（权威规范见 docs/components/infrastructure.md） */
 export class ApiFacade {
   readonly version: string;
 

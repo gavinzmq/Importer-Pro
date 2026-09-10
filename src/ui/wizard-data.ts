@@ -1,6 +1,6 @@
 /**
  * 导入向导 Step 3 配置模型 + 行筛选 + 配置 ↔ Handlebars 编译/反编译层
- * 权威：ui/layout.md §5 / architecture §2.7/§2.10 / template-schema §9 / decisions 2026-09-04-step3-template-config-restructure.md（D94–D98）
+ * 权威：docs/components/ui.md / architecture §2.7/§2.10 / docs/references/types-index.md / decisions 2026-09-04-step3-template-config-restructure.md（D94–D98）
  *
  * - D96 行筛选：RowFilterOp 13 种（Excel 式包含式保留，多规则 AND）；`'*'` 任意列。
  * - D122/D123 行清洗重构：删除行 / 去重 / 过滤无效数据 / 合并行废弃删除；行清洗收敛为
@@ -644,7 +644,7 @@ export function rowFilterFromRemove(legacy: LegacyByContentRule): RowFilterRule 
   };
 }
 
-/* ── 下拉选项（与 ui/layout.md §5 一致） ─────────────────── */
+/* ── 下拉选项（与 docs/components/ui.md 一致） ─────────────────── */
 
 export const FORMAT_OP_LABELS: ReadonlyArray<{ value: ColumnFormatOp; label: string }> = [
   { value: 'toIDCard', label: '转换为身份证类型（大写去空格）' },
@@ -2965,7 +2965,7 @@ export function dryRunStats(files: ReadonlyArray<{ status: string }>): DryRunSum
   return { created, updated, skipped, failed };
 }
 
-/* ── 展示格式化工具（ui/layout.md §4/§7） ─────────────────── */
+/* ── 展示格式化工具（见 docs/components/ui.md） ─────────────────── */
 
 /** 字节数 → 人类可读（如 12.4 MB） */
 export function formatFileSize(bytes: number): string {

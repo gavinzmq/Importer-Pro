@@ -40,7 +40,7 @@ export class ExcelParser extends BaseParser {
     return sliceRows(rows, options);
   }
 
-  /** 枚举工作表名（Step 3 区块 2"数据表单选择"按需调用；ui/layout.md §5.3） */
+  /** 枚举工作表名（Step 3 区块 2"数据表单选择"按需调用；见 docs/components/ui.md） */
   async getSheetNames(file: FileInfo): Promise<string[]> {
     const data = await this.ctx.readBinary(file);
     const workbook = XLSX.read(data, { type: 'array' });

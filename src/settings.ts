@@ -1,7 +1,7 @@
 import { App, Plugin } from 'obsidian';
 import { LogLevel, PluginSettings } from './types';
 
-/** 默认设置（architecture §9.1 / ui/layout.md §9，仅首启初始化） */
+/** 默认设置（architecture §9.1；布局见 docs/components/ui.md，仅首启初始化） */
 export const DEFAULT_SETTINGS: PluginSettings = {
   schemaVersion: 1,
   paths: {

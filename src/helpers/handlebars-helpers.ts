@@ -19,8 +19,8 @@
  * 例外专用名（`strTrim`/`strSplit`/`isEmptyValue`/`fillDefault` 仍由 builtin 保留我方实现）均不变——fumanchu
  * 采用同一 helper 命名（`uppercase`/`lowercase`，无 `upper`/`lower`），公开名清单无需再迁移。
  *
- * 权威清单与命名同步见 components/template-engine.md / components/api-layer.md §6；
- * 决策见 decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
+ * 权威清单与命名同步见 docs/references/builtin-helpers.md 与 docs/components/engine.md；
+ * 决策见 docs/decisions/2026-09-05-fumanchu-replace-handlebars-helpers.md（D109–D111）。
  */
 import { HelperRegistry } from '@jaredwray/fumanchu/browser';
 

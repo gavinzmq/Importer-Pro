@@ -1,6 +1,6 @@
 /**
  * UI 平台能力抽象 - 文件选择器类型
- * 权威设计：architecture.md §5 / §9.7、ui/layout.md §4、STANDARDS.md §1.2.1
+ * 权威设计：architecture.md §5 / §9.7、docs/components/ui.md、STANDARDS.md §1.2.1
  * 决策记录：decisions/2026-09-03-ui-file-picker.md（D62–D64）
  */
 import type { FileInfo } from '../../types';

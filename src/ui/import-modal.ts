@@ -1,8 +1,8 @@
 /**
  * 导入向导 Modal（4 步：来源选择 → 文件管理 → 模板配置 → 进度执行）
- * 权威布局：.arcmesh/ui/layout.md（Step1 §3 / Step2 §4 / Step3 §5 / Step4 §6–7）
+ * 权威布局：docs/components/ui.md（Step1 / Step2 / Step3 / Step4）
  * 文件选择平台抽象（IFilePicker + FilePickerFactory）：architecture §5 / §9.7
- * Step 2 单列表（会话+历史、路径引用）：decisions D66–D68；外部文件端到端导入：D81（decisions/2026-09-03-external-file-e2e.md）
+ * Step 2 单列表（会话+历史、路径引用）：decisions D66–D68；外部文件端到端导入：D81（docs/decisions/2026-09-03-external-file-e2e.md）
  */
 import {
   App,
@@ -144,7 +144,7 @@ export interface ImportModalDeps {
   save: (s: PluginSettings) => Promise<void>;
 }
 
-/** 导入向导（4 步，ui/layout.md 权威布局） */
+/** 导入向导（4 步，权威布局见 docs/components/ui.md） */
 export class ImportModal extends Modal {
   private step: Step = 1;
   private format = '';
@@ -555,7 +555,7 @@ export class ImportModal extends Modal {
     return t.file?.path || t.label;
   }
 
-  /* ── Step 3：模板配置（区块 5 列映射·派生合并后共 6 区块，D108，ui/layout.md §5） ── */
+  /* ── Step 3：模板配置（区块 5 列映射·派生合并后共 6 区块，D108，docs/components/ui.md） ── */
 
   /** 进入 Step 3（步骤跳转，属页面结构切换，可全量渲染）：记录 body 容器并构建区块内容 */
   private async renderStep3(el: HTMLElement): Promise<void> {
@@ -812,7 +812,7 @@ export class ImportModal extends Modal {
 
     try {
       const parser = this.deps.parsers.getForFile(info);
-      // 表单枚举（仅 Excel 提供，ui/layout.md §5.3）
+      // 表单枚举（仅 Excel 提供，见 docs/components/ui.md）
       // ⚠ 必须成员调用保留 this：getSheetNames 内部访问 this.ctx；若先解构成局部函数再调用
       // （getSheets(info)）会丢 this → 抛 TypeError「Cannot read properties of undefined (reading 'ctx')」，
       // 即外部 Excel 第三步误报 IO_002 的根因。
@@ -3371,7 +3371,7 @@ export class ImportModal extends Modal {
     await this.render();
   }
 
-  /* ── 完成页（ui/layout.md §7） ───────────────────────────── */
+  /* ── 完成页（见 docs/components/ui.md） ───────────────────────────── */
 
   private renderDone(el: HTMLElement): void {
     const r = this.lastResult;

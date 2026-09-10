@@ -5,14 +5,14 @@ import { md5Hash, sha256Hash, hashShort as shortHash } from '../utils/crypto';
 import { adoptedLibraryHelpers } from './handlebars-helpers';
 
 /**
- * 内置 Helper：8 类 38 个（权威清单见 components/api-layer.md §6；D128 增「集合」类 itemAt）
+ * 内置 Helper：8 类 38 个（权威清单见 docs/references/builtin-helpers.md；D128 增「集合」类 itemAt）
  * + 模板运行时辅助（set/array/object/push/first/second/now/log/比较运算，供预处理模板使用）
  * + pipe 值型变换管道（D99–D101：pipe/stage + PipeStages 阶段注册表）
  */
 
 type HB = typeof Handlebars;
 
-/** pipe 阶段名白名单（D99–D101）：编译产物可引用的变换集合，权威见 components/template-engine.md；外部 Helper 不自动入注册表 */
+/** pipe 阶段名白名单（D99–D101）：编译产物可引用的变换集合，权威见 docs/components/engine.md；外部 Helper 不自动入注册表 */
 export const PIPE_STAGE_WHITELIST = [
   'md5',
   'sha256',

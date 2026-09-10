@@ -370,7 +370,7 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/* ── D92 模板引导创建纯函数（可单测；规范见 components/template-schema.md §8） ── */
+/* ── D92 模板引导创建纯函数（可单测；规范见 docs/components/engine.md） ── */
 
 /** 模板 ID 生成：`tpl_` + 时间戳短码（36 进制），保证唯一 */
 export function newTemplateId(ts: number = Date.now()): string {

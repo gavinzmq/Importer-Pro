@@ -1,7 +1,7 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import { LogLevel, PluginSettings } from '../types';
 
-/** 设置页（ui/layout.md §9：路径/导入行为/缓存/日志/高级 五区块） */
+/** 设置页（五区块：路径/导入行为/缓存/日志/高级；见 docs/components/ui.md） */
 export class ImporterProSettingTab extends PluginSettingTab {
   constructor(
     app: App,

@@ -1,6 +1,6 @@
 /**
  * Importer Pro 核心类型定义
- * 权威口径见 .arcmesh/system-repo/architecture.md §7 与 components/api-layer.md §12
+ * 权威口径见 docs/architecture.md §7 与 docs/references/types-index.md
  */
 
 export enum LogLevel {
@@ -256,7 +256,7 @@ export interface TemplateNoteSpec {
 /**
  * 模板输出位置及命名规则（D94，运行时求值 D112）：folder / noteName 为 Handlebars 表达式，
  * 由 DataPipeline 在导入运行时对每条记录求值（未显式携带 _folder/_fileName 时兜底），
- * 权威规范见 components/template-schema.md §2（frontmatter `output.folder`/`note_name`）。
+ * 权威规范见 docs/references/preprocess-blocks.md（frontmatter `output.folder`/`note_name`）。
  */
 export interface TemplateOutput {
   folder?: string; // 输出文件夹表达式（如 "{{_folder}}"；空 = 回落到设置默认输出目录）
