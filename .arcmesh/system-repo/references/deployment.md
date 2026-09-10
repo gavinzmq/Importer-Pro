@@ -1,11 +1,12 @@
 # 本地 AI 协作环境部署文档（ctxslim 直连）
 
-> 版本 3.8（2026-09-10 修订）| 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
+> 版本 3.9 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
 >
 > v3.7 变更：拓扑由「Copilot → gatekeeper → ctxslim」改为「Copilot → ctxslim」直连，
 > gatekeeper 退为可选旁路。依据见 `decisions/mcp-gating-and-token-posture.md`（D-MCP-003）。
 > v3.8 变更：`slim.pins` 正式入册（`codegraph_explore`），并说明 pin 与 `maxTools` 的关系；
 > 依据 D-MCP-004。本文数字为 ctxslim 0.5.0 实测采样，非推算。
+> v3.9 变更：新增第七节第 9 条「工具调用约定」，把任务内往返压成常数；依据 D-MCP-005。
 
 ## 一、拓扑
 
@@ -188,6 +189,15 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
    - 两种方式名字均可使用暴露名或内部键 `服务器::工具名`，写错会被静默忽略。
 7. **与 ArcMesh 关系**：ArcMesh 自动注册自身 MCP 服务器（提供 `read_file` 等），与 ctxslim 互补，共存不覆盖。
 8. **重载**：修改 `.vscode/mcp.json` 后执行命令面板 `MCP: Restart Server`，或 `Developer: Reload Window`。
+9. **工具调用约定（把任务内往返压成常数）** —— 依据 `decisions/mcp-gating-and-token-posture.md` D-MCP-005：
+   - 一次调用问全：`ctx_search.queries` 是数组，多个问题合并为一次调用；
+     `codegraph_explore.query` 可列多个符号，一次取回整片代码。
+   - 多步计算走 `ctx_execute`：把「读 N 个文件 → 过滤 → 统计」写成一段代码，
+     只有 `console.log` 的输出进上下文，中间过程零 token —— N 次往返压成 1 次。
+   - 不做工具发现：不用 `search_tools` / `describe_tools` 探路，必需工具已由 `pins` 就位；
+     这两个工具输出不可分页（实测单次 12 029 B），且 `enable_tools` 触发 `list_changed`
+     会打断已勾选状态（D-MCP-004）。
+   - 批量规模建议 ≤5：一次失败等于全部重试，过大反而抬高成本。
 
 ## 八、维护命令
 

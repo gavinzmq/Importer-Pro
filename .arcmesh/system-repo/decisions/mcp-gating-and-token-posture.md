@@ -135,3 +135,26 @@ VS Code 设置，gatekeeper 按设计从不读工作区配置，且仓库只安�
 - 成本中性：`maxTools` 仍为 8，`tokensAfter` 维持 374 量级（省 95.1% 不变）；
   代价是原本入选的一个工具转为落选，需要时再换 pin 或临时 `enable_tools`。
 - 校正 D-MCP-002 表述：「需 `enable_tools` 手工 pin」→「需显式 pin，首选 `slim.pins`」。
+
+## D-MCP-005 任务内往返压成常数：批量入参优先，禁用发现类工具
+
+**背景**：D-MCP-004 用 `slim.pins` 消除了「工具落选 → 发现 → 手工勾选」这一**前置**往返，
+但单次任务内的往返数仍未受约束。实测一次真实调用：`codegraph_explore` 输出 4392 tokens／1 次往返；
+而多数场景（查多个符号、问多个问题）本可合并为一次调用 —— 每多一次往返，模型都要重放一遍上下文。
+
+**决策**：工具调用遵循四条约定，写入 `references/deployment.md` 第七节第 9 条，
+并由仓库根 `.github/copilot-instructions.md` 前置给客户端：
+- **一次调用问全**：`ctx_search.queries` 是数组；`codegraph_explore.query` 可列多个符号。
+- **多步计算走 `ctx_execute`**：把「读 N 个文件 → 过滤 → 统计」写成一段代码执行，
+  只有 `console.log` 的输出进上下文（Think-in-Code），中间过程零 token。
+- **不做工具发现**：不用 `search_tools` / `describe_tools` 探路。必需工具已由 `pins` + `maxTools`
+  就位；这两个工具的结果不可分页（实测单次 12 029 B，会触发 8 KB 上限截断），
+  且 `enable_tools` 会触发 `list_changed` 打断已勾选状态（见 D-MCP-004）。
+- **批量规模 ≤5**：一次失败等于全部重试，过大反而抬高成本。
+
+**影响**：
+- 前置往返归零（pins）＋任务内往返由「问题数」收敛为常数（批量）。
+- 上下文成本从「N × 单次工具输出」降为「合并后的输出」；`ctx_execute` 的中间过程完全不进上下文。
+- 代价：批量入参需模型主动构造；单次失败会整批重试，故设规模上限。
+- 边界：本约定只约束**调用形态**，不改变工具可用集 —— 工具面仍由 `pins` + `maxTools` 决定，
+  要真正扩大只能改 `mode`（见 D-MCP-004）。
