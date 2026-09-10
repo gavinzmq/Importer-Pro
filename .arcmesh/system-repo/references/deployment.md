@@ -1,12 +1,14 @@
 # 本地 AI 协作环境部署文档（ctxslim 直连）
 
-> 版本 3.9 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
+> 版本 3.10 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
 >
 > v3.7 变更：拓扑由「Copilot → gatekeeper → ctxslim」改为「Copilot → ctxslim」直连，
 > gatekeeper 退为可选旁路。依据见 `decisions/mcp-gating-and-token-posture.md`（D-MCP-003）。
 > v3.8 变更：`slim.pins` 正式入册（`codegraph_explore`），并说明 pin 与 `maxTools` 的关系；
 > 依据 D-MCP-004。本文数字为 ctxslim 0.5.0 实测采样，非推算。
 > v3.9 变更：新增第七节第 9 条「工具调用约定」，把任务内往返压成常数；依据 D-MCP-005。
+> v3.10 变更：修正第七节第 8 条的重启入口（`MCP: Restart Server` 不进命令面板），
+> 并补记 `pins` 的冷启动竞态（4.1 与第九节）；依据 D-MCP-006。
 
 ## 一、拓扑
 
@@ -96,6 +98,10 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
   `服务器::工具名`（如 `codegraph::codegraph_explore`）；写错**静默忽略**，不报错，
   只在返回里列进 `not found (ignored):`。
 - 应用点在首次 `tools/list` 之前，**不触发 `list_changed`** → 不需要回 Tools 面板重新勾选。
+- **但该时机也是它的软肋**：解析对象是**那一刻已注册的工具**，而非配置里声明的后端。
+  3 个后端经 `npx` 冷启动约 11.5 s，若首次 `tools/list` 时 `codegraph` 仍为 `connecting`（0 工具），
+  名字解析不到 → pin **静默丢弃**；后端就绪后补推的 `list_changed` **不会**重试解析，该会话内永久缺席。
+  症状与对策见第九节。
 - 初始 8 个上游工具为 dsh-cert 3 个 + context-mode 5 个，故 `codegraph_explore` 必须显式 pin。
 
 > `slim` 是给 **ctxslim 进程**读的。写进 `.vscode/settings.json` 的 `ctxslim.*` 完全不会被读取，详见 4.3。
@@ -188,7 +194,11 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
      且 pin 只活在当前 ctxslim 进程内，重启即失效。
    - 两种方式名字均可使用暴露名或内部键 `服务器::工具名`，写错会被静默忽略。
 7. **与 ArcMesh 关系**：ArcMesh 自动注册自身 MCP 服务器（提供 `read_file` 等），与 ctxslim 互补，共存不覆盖。
-8. **重载**：修改 `.vscode/mcp.json` 后执行命令面板 `MCP: Restart Server`，或 `Developer: Reload Window`。
+8. **重启服务器**：命令面板里**没有** `MCP: Restart Server`。该命令（内部 ID
+   `workbench.mcp.restartServer`，标题 `Restart Server`）在本机构建注册为 `f1:false`，**不进命令面板**，
+   只能从服务器列表菜单调用。路径：命令面板 `MCP: List Servers` → 选 `ctxslim` → 菜单里选 `Restart Server`
+   （同一菜单另有 `Start` / `Stop` / `Show Output`）。也可用 `MCP: Show Installed Servers`
+   打开扩展视图里的服务器列表。整体重载仍为 `Developer: Reload Window`。
 9. **工具调用约定（把任务内往返压成常数）** —— 依据 `decisions/mcp-gating-and-token-posture.md` D-MCP-005：
    - 一次调用问全：`ctx_search.queries` 是数组，多个问题合并为一次调用；
      `codegraph_explore.query` 可列多个符号，一次取回整片代码。
@@ -222,6 +232,14 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
   先用 `search_tools` 取准确名字；注意写错不会报错，只会静默跳过
 - **pin 了工具但总数没变**：`auto` 模式下 `selected = ranked.slice(0, maxTools)`，pin 只保证入选、
   不突破上限 —— 挤掉的是排名最低的工具。这是预期行为，不是失效
+- **pin 了 `codegraph_explore` 却拿不到该工具**：冷启动竞态（见 4.1）。首次 `tools/list` 时 codegraph
+  仍在 `connecting`（0 工具），名字解析不到被静默丢弃，后续 `list_changed` 不会重试。
+  判定：暴露集**完整包含**基线 8 个（dsh-cert 3 + context-mode 5）、一个都没被挤掉 → pin 落空；
+  若 pin 生效，被挤掉的那个基线工具必然缺席（总数仍是 8）。
+  **不要**用「模型看不到该工具」直接判定未暴露 —— 已暴露但未勾选的工具同样不可见。
+  对策：等 `list_servers` 三个后端全部 `ready` 后重启 ctxslim（入口见第七节第 8 条）；实测一次重启即命中
+- **`codegraph_explore` 的返回里推荐 `codegraph_node`**：codegraph 后端只报 1 个工具，`codegraph_node`
+  在本环境不存在，勿照做
 - 无工具导出：`tools.profile` 应为 `"full"`（仅旁路场景）
 - 语义检索返回「知识库为空」：执行 `npx @mxalbert/context-mode index <path>`
 - **误以为 `savingsPct: 100%` 很赚**：经 gatekeeper 时的 100% 是零工具导出的假象；

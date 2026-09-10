@@ -1,9 +1,10 @@
-# MCP 门控姿态与 Token 披露策略（D-MCP-001 ~ 004）
+# MCP 门控姿态与 Token 披露策略（D-MCP-001 ~ 006）
 
 > 约束对象：`.arcmesh/mcp/*.json`、`.vscode/mcp.json` 与 `scripts/setup-mcp.js` 的生成规则。
 > 权威描述见 `references/deployment.md` 第四节。
 > D-MCP-001 与 D-MCP-002 的结论已按 2026-09-10 端到端实测修正，修正段落以「事后修正」标注。
 > D-MCP-004 对 D-MCP-002 中「需 `enable_tools` 手工 pin」的表述做了校正。
+> D-MCP-006 为 D-MCP-004 的「pin 在首轮工具列表里就位」补充了前提条件（后端须已就绪）。
 
 ---
 
@@ -158,3 +159,32 @@ VS Code 设置，gatekeeper 按设计从不读工作区配置，且仓库只安�
 - 代价：批量入参需模型主动构造；单次失败会整批重试，故设规模上限。
 - 边界：本约定只约束**调用形态**，不改变工具可用集 —— 工具面仍由 `pins` + `maxTools` 决定，
   要真正扩大只能改 `mode`（见 D-MCP-004）。
+
+## D-MCP-006 `pins` 的冷启动竞态：解析只做一次，后端未就绪即静默丢弃
+
+**背景**：D-MCP-004 把 `slim.pins` 定为固定 `codegraph_explore` 的标准手段，并称「pin 在首轮工具列表里就位」。
+但落地后出现「pin 已写入配置、工具却拿不到」的会话（2026-09-10，会话 `003db6dc`）。
+
+**事实**：
+- `pins` 在**首次 `tools/list` 之前**解析一次，解析对象是**那一刻已注册的工具**，而非配置里声明的后端。
+- 3 个后端均经 `npx` 拉起，冷启动约 11.5 s。首次 `tools/list` 时 `codegraph` 常处于 `connecting`（0 工具），
+  名字解析不到 → pin 走 D-MCP-004 已记录的 `not found (ignored)` 路径被**静默丢弃**。
+- 后端就绪后 ctxslim 会补推一次 `list_changed` 推送完整列表，但**不会**重新应用 `pins`。
+- 观测签名：暴露集是**完整的基线 8 个**（dsh-cert 3 + context-mode 5），一个都没被挤掉。
+  若 pin 生效，被挤掉的那个基线工具必然缺席 —— 总数仍是 8，故「总数是否变化」不足以判定。
+- 客户端侧另有一个假信号：**已暴露但未勾选**的工具同样对模型不可见。「模型看不到」不等于「未暴露」。
+
+**决策**：不改 `slim` 配置结构（这是时序问题，调整 `mode` / `maxTools` / `pins` 名字都不能消除），
+改在客户端操作层面兜底 —— 等 `list_servers` 三个后端全部 `ready` 后重启 ctxslim，
+让首次 `tools/list` 落在后端就绪之后。同步修正 `references/deployment.md`：
+- 4.1 补记解析时机与竞态；
+- 第七节第 8 条改重启入口为 `MCP: List Servers` → `ctxslim` → `Restart Server`
+  （`workbench.mcp.restartServer` 在本机构建为 `f1:false`，不进命令面板；保留 `Developer: Reload Window`）；
+- 第九节补判定与对策。
+
+**影响**：
+- 未采用 `enable_tools` 兜底：它会发 `list_changed`，重置该服务器全部勾选状态（D-MCP-004），代价高于重启。
+- 仅影响**首次解析那一刻**后端未就绪的会话；`npx` 包已缓存时后端就绪更快，实测一次重启即命中
+  —— `codegraph_explore` 单次 6 符号查询输出 15 KB（≈4.4k tokens），与 D-MCP-005 的 4392 采样一致。
+- 校正 D-MCP-004：「pin 在首轮工具列表里就位」成立的前提是**后端已就绪**，否则静默失效且无任何报错。
+- 顺带核清：codegraph 后端只报 1 个工具，其返回自荐的 `codegraph_node` 在本环境不存在。
