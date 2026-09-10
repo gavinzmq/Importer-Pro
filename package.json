@@ -22,6 +22,7 @@
     "build": "node -e \"console.error('⚠️ Build 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "package": "node -e \"console.error('⚠️ Package 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "setup:mcp": "node scripts/setup-mcp.js",
+    "index": "node scripts/mcp/reindex.js",
     "mcp:inspect": "npx @modelcontextprotocol/inspector --transport stdio --command \"npx mcp-gatekeeper --config scripts/mcp/gatekeeper.json\"",
     "ctxslim:tune": "npx ctxslim --config scripts/mcp/ctxslim.json doctor --tune",
     "ctxslim:stats": "npx ctxslim --config scripts/mcp/ctxslim.json stats --json"

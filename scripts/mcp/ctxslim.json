@@ -1,21 +1,21 @@
 {
   "mcpServers": {
     "dsh-cert-mcp": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "@perrylink/dsh-cert-mcp"
+        "node_modules/@perrylink/dsh-cert-mcp/src/index.js"
       ]
     },
     "context-mode": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "@mxalbert/context-mode"
+        "node_modules/@mxalbert/context-mode/server.bundle.mjs"
       ]
     },
     "codegraph": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "@colbymchenry/codegraph",
+        "node_modules/@colbymchenry/codegraph/npm-shim.js",
         "serve",
         "--mcp"
       ]
@@ -25,7 +25,9 @@
     "mode": "auto",
     "maxTools": 8,
     "pins": [
-      "codegraph_explore"
+      "codegraph_explore",
+      "ctx_execute",
+      "ctx_search"
     ],
     "adaptive": true,
     "disclosure": true,

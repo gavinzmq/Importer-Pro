@@ -2,29 +2,36 @@
 
 ## 先读文档（docs/ 蓝图，分级加载）
 1. L1 必读：`docs/project.md` + `docs/architecture.md` + `docs/STANDARDS.md`
-2. 改某模块前：`docs/components/<模块>.md`
-3. 查决策：`docs/decisions/*.md`　查细节：`docs/references/*.md`
+2. 改模块：`docs/components/<模块>.md`　查决策：`docs/decisions/*.md`　细节：`docs/references/*.md`
 
-完整规则见 `docs/project.md`「加载策略」与 `docs/STANDARDS.md`。**禁止未更新文档就改代码。**
+**禁止未更新文档就改代码。**部署/排障/工具链依据：
+`docs/references/deployment.md`、`docs/decisions/mcp-gating-and-token-posture.md`。
 
 ## MCP 工具约定（省 token / 省往返）
-工具前缀 `mcp_ctxslim_`。
+工具前缀 `mcp_ctxslim_`。两类目标分开，别混用（细则见 `deployment.md` 第五-8）。
 
-- 查代码结构 → `codegraph_explore`：`query` 一次列多个符号，别一次一个；
-  `maxFiles` 按需收窄（默认 12，单次可达 4.4k tokens —— 最大单次开销源）。
-- 查文档 / 历史 → `ctx_search`：`queries` 传数组一次问全；`limit` 保持 1–2。
-  已知文件位置时改用 `read_file` 精读（`ctx_search` 命中段落多、开销约 10 倍）。
-  知识库不自动更新 —— 改动 `docs/` 后需重跑 `ctx_index`，否则会检索到过时内容。
-- 多步数据处理 → `ctx_execute`：写代码跑，只 `console.log` 结果，中间过程不进上下文。
-- 不要用 `search_tools` / `describe_tools` 做工具发现 —— 必需工具已由
-  `scripts/mcp/ctxslim.json` 的 `slim.pins` 就位。
-- 不要用 `enable_tools` —— 它触发 `list_changed`，会使 VS Code 重置全部工具勾选。
+**省 token（单次输出小）**
+- 取文档 → **`read_file` 精读（首选）**。它**不省往返**，只省单次开销。
+  ⚠️ **不支持批量**（`filePath` 是字符串）、**2000 行截断**；
+  批量读改用 `ctx_execute`（只回所需的），但通读全文仍须逐次读。
+- `codegraph_explore`：`maxFiles` **显式给值，推荐 2–3**；单符号聚焦优先。
+- `ctx_search`：只用于**不知信息在哪**时，`limit` **取 1**。
+- 单文件分析 → **`ctx_execute_file`**（文件入 `FILE_CONTENT`，只回 stdout）；
+  抓网页 → `ctx_fetch_and_index`（未暴露，须先加 `pins`），内置 `fetch_webpage` 会灌整页。
+- `guides/CHANGELOG.md`（≈13.1k）禁止精读 —— 人类向历史，零价值。
 
-单次调用问全，别拆成多次往返；批量规模 ≤5（一次失败等于全部重试）。
+**省往返（次数是乘数）**
+- 入参合并：`ctx_search.queries` 传数组、`codegraph_explore.query` 列多符号。
+- **`ctx_batch_execute`：一次调用 = 跑 N 条命令 + 问 N 个问题**。
+- 多步处理 → `ctx_execute`：只 `console.log` 结果，中间过程不入上下文；大输出加 `intent`。
+- **准备步骤别在对话里做**（索引重建等）—— 交给脚本或 CI；重建一律 `pnpm index`，勿调 `ctx_index`。
+- 单次问全；批量 ≤5。无自动压缩：输出入历史即每轮重放，
+  故 A 组收益被 B 组放大，压缩只能手动（`ctx_execute` 当隔气层）。
 
-> 引导层（本文件）只留指针，细节一律下沉到 `docs/` ——
-> 范围号 / 版本号 / 命令 / 参数写在这里必然漂移。
-> 文档与对话回复均用列表、不用表格，且只写当前有效状态（细则见 `docs/STANDARDS.md`「AI协作」）。
+**通用限制**
+- 知识库不自动更新 —— 改 `docs/` 后跑 **`pnpm index`** 重建（勿手动索引）。
+- 不用 `search_tools` / `describe_tools` 做工具发现（`slim.pins` 已就位）。
+- 不用 `enable_tools` —— 触发 `list_changed`，重置全部勾选。
 
-部署与故障排查：`docs/references/deployment.md`。
-工具链决策依据：`docs/decisions/mcp-gating-and-token-posture.md`。
+> 只留指针，细节下沉 `docs/`（参数写在这里必然漂移）；
+> 列表不用表格，只写当前有效状态（见 `STANDARDS.md`）。

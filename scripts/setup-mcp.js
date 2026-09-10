@@ -49,11 +49,42 @@ const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', '
  *   - @mxalbert/context-mode   无子命令，直接以 stdio 启动（index/search/doctor 为子命令）
  *   - @colbymchenry/codegraph  `serve --mcp`
  * 文档 §4.2 的通用模板 `<pkg> serve --stdio` 对上述包并不成立，故按实况生成。
+ *
+ * `entry` = 包内 stdout 入口（相对仓库根），启动方式为 `node <entry>`。
+ * 为何不用 `npx <pkg>`：实测同一后端 `npx` 2.55 s / 直接 `node` 0.24 s（≈10 倍），
+ * 且 3 个后端串行拉起时这段差异直接体现为客户端“首次连接 11.5 s”的等待。
+ * `npx` 每次都要走一遍 npm 解析/版本探测与 shell 包装，而这三个包已在 node_modules 内落盘，
+ * 解析结果不会变 —— 纯开销。改 entry 前用 `node <entry>` 直接验证可启动。
+ * 注意：可用相对路径（`cwd` 由客户端设为 ${workspaceFolder}）；若某包的 bin 为 shell 包装
+ * （.cmd/.ps1），则不要用它，而应指向它内部真正 require 的 js/mjs 文件。
+ *
+ * ⚠ entry 不能照包名猜，也不等于 `bin` 字段：
+ *   - context-mode 用 `server.bundle.mjs`（已打包、2.7 s 握手）；同名目录下的 `server.js`
+ *     看似更“源码”，实为未打包的传输层，实测 8 s 内**完不成 MCP 握手**（会挂住）。
+ *     验证方式：`node scripts/mcp/probe-stdio.mjs <entry>` —— 打印握手到首包 JSON 的耗时。
+ *   - codegraph 的 bin 是 `npm-shim.js`（JS 包装，非 .cmd），可直接执行。
+ * 三个后端实测握手耗时：dsh-cert 88 ms / codegraph 391 ms / context-mode 2.7 s。
+ * 新增后端一律先用探针脚本量一次，再写进 `entry`。
  */
 const COMPONENTS = [
-  { name: 'dsh-cert-mcp', pkg: '@perrylink/dsh-cert-mcp', args: [] },
-  { name: 'context-mode', pkg: '@mxalbert/context-mode', args: [] },
-  { name: 'codegraph', pkg: '@colbymchenry/codegraph', args: ['serve', '--mcp'] },
+  {
+    name: 'dsh-cert-mcp',
+    pkg: '@perrylink/dsh-cert-mcp',
+    entry: 'node_modules/@perrylink/dsh-cert-mcp/src/index.js',
+    args: [],
+  },
+  {
+    name: 'context-mode',
+    pkg: '@mxalbert/context-mode',
+    entry: 'node_modules/@mxalbert/context-mode/server.bundle.mjs',
+    args: [],
+  },
+  {
+    name: 'codegraph',
+    pkg: '@colbymchenry/codegraph',
+    entry: 'node_modules/@colbymchenry/codegraph/npm-shim.js',
+    args: ['serve', '--mcp'],
+  },
 ];
 
 /**
@@ -97,15 +128,20 @@ const META_TOOLS = [
  *   - adaptive true：实际调用过的工具在排序中加权（持久化于 ~/.ctxslim/usage.json）
  *   - pins：把「必需但排序落选」的工具钉进榜单。auto 模式下 selected = ranked.slice(0, maxTools)，
  *     pinned 只加 1000 分保证入选，**不突破 maxTools** —— 总数恒为 8，token 开销不变，
- *     被挤掉的是排名最低的那个。初始 8 个为 dsh-cert 3 + context-mode 5，故 codegraph_explore 必须显式 pin。
+ *     被挤掉的是排名最低的那个。
  *     写在这里优于调用 enable_tools：pins 在首次 tools/list 之前就应用，不触发 list_changed，
  *     不必回 Tools 面板重新勾选，且重启后仍在。名字用暴露名（search_tools 返回的 name）
  *     或内部键 `服务器::工具名` 均可，写错会被静默忽略（不报错）。
+ *
+ * pins 清单按**实测调用量**定，不按直觉：`ctxslim stats` 显示 ctx_execute 24 次 / ctx_search 6 次 /
+ * ctx_index 4 次 / codegraph_explore 1 次。前两个是最常走的路径，必须常驻，否则冷启动或换会话时
+ * 会靠 `adaptive` 加权竞争 8 个名额，落选后只能走 enable_tools（发 list_changed → 重置全部勾选）。
+ * 注意 pins 数量不得超过 maxTools，否则互相挤占。改这里前先跑 `pnpm ctxslim:stats` 复核。
  */
 const SLIM = {
   mode: 'auto',
   maxTools: 8,
-  pins: ['codegraph_explore'],
+  pins: ['codegraph_explore', 'ctx_execute', 'ctx_search'],
   adaptive: true,
   disclosure: true,
   connectTimeout: 45000,
@@ -187,15 +223,22 @@ function generateCtxslimConfig() {
   const mcpServers = {};
   const included = [];
   const skipped = [];
+  const missingEntry = [];
 
   for (const component of COMPONENTS) {
     if (!isInstalled(component.pkg)) {
       skipped.push(component.pkg);
       continue;
     }
+    // 包内结构变化时必须在生成阶段就看到，而不是等客户端拉起后报一个含糊的启动失败。
+    if (!fs.existsSync(path.join(ROOT, component.entry))) {
+      missingEntry.push(`${component.name} → ${component.entry}`);
+      continue;
+    }
+    // 直接执行包内入口，不经 npx（后者每次多花 ~2.3 s 的 npm 解析/包装）。
     mcpServers[component.name] = {
-      command: 'npx',
-      args: [component.pkg, ...component.args],
+      command: 'node',
+      args: [component.entry, ...component.args],
     };
     included.push(component.name);
   }
@@ -204,7 +247,7 @@ function generateCtxslimConfig() {
 
   const file = path.join(MCP_DIR, 'ctxslim.json');
   writeJson(file, { mcpServers, slim: SLIM });
-  return { file, included, skipped, excluded };
+  return { file, included, skipped, excluded, missingEntry };
 }
 
 /**
@@ -469,12 +512,16 @@ function main() {
   console.log('生成/合并');
   log('ctxslim.json', rel(ctxslim.file));
   log('  后端', ctxslim.included.length ? ctxslim.included.join(', ') : '（无）');
+  log('  启动', `node <entry>（直连 node_modules，不经 npx）`);
   log(
     '  slim',
     `mode=${SLIM.mode}, maxTools=${SLIM.maxTools}, disclosure=${SLIM.disclosure}, ` +
       `pins=${SLIM.pins.length ? SLIM.pins.join(', ') : '（无）'}`
   );
   if (ctxslim.skipped.length) log('  未安装跳过', ctxslim.skipped.join(', '));
+  if (ctxslim.missingEntry.length) {
+    log('  ⚠ 入口缺失（已从后端列表移除）', ctxslim.missingEntry.join('；'));
+  }
   if (ctxslim.excluded.length) {
     log('  非 stdio 工具', ctxslim.excluded.map((i) => `${i.pkg}（${i.note}）`).join('；'));
   }
