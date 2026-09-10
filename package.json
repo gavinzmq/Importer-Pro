@@ -16,6 +16,7 @@
     "ci:test": "vitest run --coverage --config scripts/vitest.config.ts",
     "ci:build": "tsc -noEmit -skipLibCheck && node scripts/esbuild.config.mjs production",
     "ci:package": "pnpm run ci:build && node scripts/package.mjs",
+    "ci:mcp-check": "npx ctxslim --config scripts/mcp/ctxslim.json doctor",
     "lint": "node -e \"console.error('⚠️ Lint 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "test": "node -e \"console.error('⚠️ Test 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
     "build": "node -e \"console.error('⚠️ Build 将在 CI 中执行，请勿本地运行'); process.exit(1)\"",
@@ -37,7 +38,7 @@
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",
-    "@mxalbert/context-mode": "^2.0.2",
+    "@mxalbert/context-mode": "^2.0.4",
     "@perrylink/dsh-cert-mcp": "^0.1.4",
     "@testing-library/dom": "^10.1.0",
     "@testing-library/user-event": "^14.5.2",

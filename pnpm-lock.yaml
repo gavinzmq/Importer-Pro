@@ -37,8 +37,8 @@ importers:
         specifier: ^1.6.0
         version: 1.6.0
       '@mxalbert/context-mode':
-        specifier: ^2.0.2
-        version: 2.0.2(supports-color@7.2.0)
+        specifier: ^2.0.4
+        version: 2.0.4(supports-color@7.2.0)
       '@perrylink/dsh-cert-mcp':
         specifier: ^0.1.4
         version: 0.1.4
@@ -595,8 +595,8 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
-  '@mxalbert/context-mode@2.0.2':
-    resolution: {integrity: sha512-zUXC83VavAz0jrBME9dz08aXm+cyPb85CZAqALe3cwcIS1Bysw/Es+mpKS1gtnlFYkLS1sqSZSjg8es1WZQO5Q==}
+  '@mxalbert/context-mode@2.0.4':
+    resolution: {integrity: sha512-AmHAxuiMtuY+NvqlA5P7NfPD25L/Zrx3Vnl0aYs6yi7rcHU0+7xSBQPpvtTXMtfMbU6YT2FcE+036nPSrhji7A==}
     engines: {node: '>=22.5.0'}
     hasBin: true
 
@@ -3167,7 +3167,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@mxalbert/context-mode@2.0.2(supports-color@7.2.0)':
+  '@mxalbert/context-mode@2.0.4(supports-color@7.2.0)':
     dependencies:
       '@clack/prompts': 1.8.0
       '@mixmark-io/domino': 2.2.0

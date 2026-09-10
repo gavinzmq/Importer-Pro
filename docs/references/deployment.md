@@ -56,8 +56,10 @@ ctxslim 首轮报 5 个元工具（`list_servers` / `slim_stats` / `search_tools
 - `auto` 下 `selected = ranked.slice(0, maxTools)`，pinned 只加 1000 分。pin 只保证入选，不突破 `maxTools` —— 总数恒为 8，挤掉排名最低者。想扩工具面只能改 `mode`。
 - 名字可用暴露名（`codegraph_explore`）或内部键 `服务器::工具名`；写错静默忽略，返回里列 `not found (ignored):`。
 - 应用点在首次 `tools/list` 前，不触发 `list_changed`，不必回 Tools 面板重勾。
-- 软肋：解析对象是那一刻已注册的工具。3 后端冷启动约 11.5 s，若首次 `tools/list` 时 codegraph 仍在 `connecting`（0 工具），名字解析不到 → pin 静默丢弃；后端就绪后的 `list_changed` 不重试解析，该会话永久缺席。症状与对策见第六节。
-- 哪些必须 pin：取决于 `adaptive` 实时排序，无法预先写死。`search_tools` 看暴露集缺谁就加进 `pins`。
+- 理论上存在冷启动竞态：解析对象是那一刻已注册的工具，若首次 `tools/list` 时后端仍在 `connecting`，pin 可能解析不到。
+  实测（2026-09-10，重载后 uptime 0.1 min）未能复现 —— `codegraph_explore` 虽未出现在 `search_tools` 结果里，直接调用仍成功。故该竞态未证实，勿据此排障。
+- 判断某工具是否已暴露：直接调用。能进入执行（即使报参数错误）即已暴露；报 `Unknown tool` 才是未暴露。
+  `search_tools` 按查询相关性返回 top-K，不是暴露集完整清单，不能用作判据。
 
 > `slim` 是给 ctxslim 进程读的。写进 `.vscode/settings.json` 的 `ctxslim.*` 完全不被读取（见 3.3）。
 
@@ -90,6 +92,7 @@ ctxslim 首轮报 5 个元工具（`list_servers` / `slim_stats` / `search_tools
 - `"ctxslim:doctor": "npx ctxslim --config scripts/mcp/ctxslim.json doctor"`
 - `"ctxslim:tune": "npx ctxslim --config scripts/mcp/ctxslim.json doctor --tune"` —— 读真实用量给出 pins / maxTools / output caps 建议，只建议不写盘（需 ≥5 次调用才有数据）
 - `"ctxslim:stats": "npx ctxslim --config scripts/mcp/ctxslim.json stats --json"`
+- `"ci:mcp-check": "npx ctxslim --config scripts/mcp/ctxslim.json doctor"` —— CI 门禁
 - 旁路：`"mcp"`、`"mcp:inspect"`（针对 gatekeeper，日常不用）
 
 ## 四、配置生成与重建环境
@@ -130,7 +133,11 @@ ctxslim 首轮报 5 个元工具（`list_servers` / `slim_stats` / `search_tools
 - `pnpm ctxslim:tune` – 基于真实用量给调优建议（只建议不写盘）
 - `pnpm ctxslim:stats` – 累计节省（`sessions` / `totalCalls` / `avgSavingsPct`，按工具拆分）
 - `npx ctxslim --config scripts/mcp/ctxslim.json audit --json` – 按任务折算花费，含重复调用与报错浪费
-- `npx mcp-context-cost audit` – token 成本审计
+
+CI 门禁：`pnpm ci:mcp-check`（`ctxslim doctor`，校验配置可加载并回显生效参数），已接入 `ci.yml`。
+
+> `mcp-context-cost audit` 在本机不可用：Windows 下 `spawn npx ENOENT`（Node 不识别 `npx.cmd`），
+> 且不解析 VS Code 的 `${workspaceFolder}` 占位符。保留依赖但勿接入 CI。
 
 知识库索引（`ctx_search` 前置）：
 - 建立 / 重建：`ctx_index({ path: 'docs', source: '<标签>' })`（AI 侧调用，无需 CLI）
@@ -144,7 +151,9 @@ ctxslim 首轮报 5 个元工具（`list_servers` / `slim_stats` / `search_tools
 ## 七、故障排除
 
 pin 与工具暴露
-- pin 了却拿不到：冷启动竞态（3.1）。症状是暴露集完整包含 `maxTools` 全部名额、一个都没被挤掉。对策：等后端全 `ready` 后重启 ctxslim（六-7）。
+- 判断工具是否已暴露：直接调用。进入执行（含参数错误）即已暴露；报 `Unknown tool` 才是未暴露。
+  勿用 `search_tools` 结果判断 —— 它按相关性返回 top-K，非完整清单（2026-09-10 实测教训）。
+- `Unknown tool` 也可能只是工具表未就绪：重载后 uptime 极短时（<1 min）先等待再试。
 - pin 了总数没变：`auto` 下 pin 只保证入选、不突破上限，挤掉排名最低者。预期行为。
 - `enable_tools` 返回 `not found (ignored): xxx`：名字拼错或不在 `resolved` 表；静默跳过。
 

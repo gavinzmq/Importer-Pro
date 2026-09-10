@@ -24,6 +24,8 @@ jobs:
         run: pnpm install
       - name: Run Lint
         run: pnpm run ci:lint
+      - name: Validate MCP config
+        run: pnpm run ci:mcp-check
       - name: Run Tests
         run: pnpm run ci:test
       - name: Upload coverage

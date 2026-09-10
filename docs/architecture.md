@@ -1,16 +1,16 @@
 # 系统架构
 
 ## 整体架构
-采用**管道-过滤器**模式，数据流经五阶段：
+采用管道-过滤器模式，数据流经五阶段：
 
 文件 → 解析 → 模板匹配 → 管道处理 → 生成 → 写入
 
-- **解析层**：识别格式，转统一记录结构（`parsers.md`）
-- **匹配层**：根据规则匹配目标模板（`engine.md`）
-- **管道层**：判定遍(过滤/分流) → 渲染遍(模板渲染)（`pipeline.md`）
-- **生成层**：冲突处理/增量写入/Dry Run（`generator.md`）
-- **UI层**：向导/设置界面，仅调用业务逻辑（`ui.md`）
-- **API门面**：`window.ImporterPro` 双端一致（`infrastructure.md`）
+- 解析层：识别格式，转统一记录结构（`parsers.md`）
+- 匹配层：根据规则匹配目标模板（`engine.md`）
+- 管道层：判定遍(过滤/分流) → 渲染遍(模板渲染)（`pipeline.md`）
+- 生成层：冲突处理/增量写入/Dry Run（`generator.md`）
+- UI层：向导/设置界面，仅调用业务逻辑（`ui.md`）
+- API门面：`window.ImporterPro` 双端一致（`infrastructure.md`）
 
 ---
 
@@ -29,10 +29,10 @@
 ---
 
 ## 关键设计决策
-- **模板引擎**：Handlebars（非JS变换），非技术人员可编辑
-- **值型管道**：≥2步变换强制 `pipe/stage`，数据流可追溯
-- **配置即模板**：模板自身携带配置，`readTemplateConfig/saveTemplateConfig` 唯一入口
-- **扩展点可插拔**：`IDataParser` / `ICacheProvider` / `IFileNamer` / `IConflictResolver` / `IExporter`
+- 模板引擎：Handlebars（非JS变换），非技术人员可编辑
+- 值型管道：≥2步变换强制 `pipe/stage`，数据流可追溯
+- 配置即模板：模板自身携带配置，`readTemplateConfig/saveTemplateConfig` 唯一入口
+- 扩展点可插拔：`IDataParser` / `ICacheProvider` / `IFileNamer` / `IConflictResolver` / `IExporter`
 
 ---
 

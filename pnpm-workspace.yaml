@@ -1,10 +1,11 @@
 packages:
   - '.'
 allowBuilds:
-  # D116：ArcMesh AI 协作环境——context-mode 依赖 better-sqlite3（FTS5 知识库）原生二进制，
-  # 需放行其构建脚本，否则语义检索不可用。见 references/deployment.md。
+  # context-mode 依赖 better-sqlite3（FTS5 知识库）原生二进制，需放行其构建脚本，
+  # 否则语义检索（ctx_search / ctx_index）不可用。见 docs/references/deployment.md。
   '@mxalbert/context-mode': true
   better-sqlite3: true
+  # esbuild 自带原生二进制（平台相关 optionalDependencies），放行其安装脚本。
   esbuild: true
-  # D109–D111：highlight.js 曾为 handlebars-helpers@0.10.0 传递构建依赖（D102–D104 引入 allowBuild），
-  # 迁移 fumanchu 后已无该传递依赖，allowBuild 一并移除。
+minimumReleaseAgeExclude:
+  - '@mxalbert/context-mode@2.0.4'
