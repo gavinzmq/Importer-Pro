@@ -1,16 +1,8 @@
 # 本地 AI 协作环境部署文档（ctxslim 直连）
 
-> 版本 3.11 | 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
->
-> v3.7 变更：拓扑由「Copilot → gatekeeper → ctxslim」改为「Copilot → ctxslim」直连，
-> gatekeeper 退为可选旁路。依据见 `decisions/mcp-gating-and-token-posture.md`（D-MCP-003）。
-> v3.8 变更：`slim.pins` 正式入册（`codegraph_explore`），并说明 pin 与 `maxTools` 的关系；
-> 依据 D-MCP-004。本文数字为 ctxslim 0.5.0 实测采样，非推算。
-> v3.9 变更：新增第七节第 9 条「工具调用约定」，把任务内往返压成常数；依据 D-MCP-005。
-> v3.10 变更：修正第七节第 8 条的重启入口（`MCP: Restart Server` 不进命令面板），
-> 并补记 `pins` 的冷启动竞态（4.1 与第九节）；依据 D-MCP-006。
-> v3.11 变更：记录 ArcMesh 扩展惰性激活与「点状态栏即覆写 `.vscode/mcp.json`」陷阱
-> （4.3 / 第七节第 7 条 / 第九节 / 第十节）；依据 D-MCP-007。
+> 全本地，无三方 API。配置由 AI 生成，统一存于 `.arcmesh/mcp/`。
+> 本文只写**当前有效**做法；变更理由与历史见 `decisions/mcp-gating-and-token-posture.md`。
+> 数据为 ctxslim 0.5.0 实测采样，非推算。文档与工具调用纪律见 `STANDARDS.md`「AI协作」。
 
 ## 一、拓扑
 
@@ -27,20 +19,8 @@ ctxslim 首轮只报 5 个元工具（`list_servers` / `slim_stats` / `search_to
 - 单次业务输出量级：`codegraph_explore` ≈ 4.4k tokens、`ctx_search` ≈ 155 tokens。
   即省下的 7.3k 定义开销约等于 1.7 次 codegraph 调用 —— 工具输出才是 token 主体。
 
-### 为何不再经过 gatekeeper
-
-`mcp-gatekeeper@0.1.5` 的 re-export 表在启动时一次性确定，源码中无任何
-`notifications/tools/list_changed` 处理逻辑。实测后果：
-
-- 它只看到 ctxslim 的 5 个元工具，`backendToolCount` 恒为 5。
-- 上游 15 个业务工具全部不可达，调用任何后端工具报 `does not exist`。
-- 即使在 `tools/call` 阶段按名调用，它也以 `final: true` 硬拒绝（不可经 elicitation 覆盖）。
-- 因此 ctxslim 的 `search_tools` / `describe_tools` / `enable_tools` 全部空转：能看到定义，无处可调。
-- 另一个假象：`slim_stats` 的 `tokensAfter` 恒为 0、`savingsPct` 恒为 100% ——
-  那不是省了 100%，而是「什么都没剩下」。
-
-gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可手动启动。
-但注册它 = 业务工具不可用，且其门控与审计只覆盖 5 个元工具，对业务工具无约束力。
+> gatekeeper 已退为**可选旁路**（配置仍由脚本生成，`pnpm mcp` 可手动启动）。
+> 注册它的后果 —— 业务工具全部不可用、`savingsPct` 恒 100% 的假象 —— 见 D-MCP-003，此处不复述。
 
 ## 二、组件与启动命令
 
@@ -56,23 +36,13 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
 仅 ctxslim 与上述 3 个组件支持 stdio。生成 `ctxslim.json` 时只写**已安装且实测支持 stdio** 的组件，
 `args` 以各包实际 CLI 为准 —— 通用模板 `<包名> serve --stdio` 对其中两个包并不成立。
 
-## 三、目录结构
+## 三、关键文件
 
-```
-项目根/
-├─ .arcmesh/
-│  ├─ mcp/
-│  │  ├─ ctxslim.json      # 后端列表 + slim 开关（核心）
-│  │  └─ mcp.json          # gatekeeper 旁路配置（默认不注册）
-│  ├─ logs/gatekeeper-audit.log
-│  └─ system-repo/         # ArcMesh 系统仓库，提交版本库
-├─ .vscode/
-│  ├─ settings.json        # 扩展 + Copilot 配置
-│  └─ mcp.json             # Copilot MCP 服务器注册
-├─ scripts/
-│  └─ setup-mcp.js         # 自动生成配置
-└─ package.json
-```
+- `.arcmesh/mcp/ctxslim.json` —— 后端列表 + `slim` 开关（核心）
+- `.arcmesh/mcp/mcp.json` —— gatekeeper 旁路（默认不注册）
+- `.arcmesh/system-repo/` —— ArcMesh 文档仓库（入库）
+- `.vscode/mcp.json` + `.vscode/settings.json` —— Copilot MCP 注册与设置（入库）
+- `scripts/setup-mcp.js` —— 配置生成脚本
 
 ## 四、服务端配置生成规则（AI 必须遵循）
 
@@ -114,7 +84,7 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
 - ctxslim 条目：`type: "stdio"`, `command: "node"`,
   `args: ["${workspaceFolder}/node_modules/ctxslim/dist/index.js", "--config", "${workspaceFolder}/.arcmesh/mcp/ctxslim.json"]`
 - 用 `dist/index.js` 而非 `node_modules/.bin/ctxslim`：后者是 `.CMD`/`.ps1` 包装，stdio 下不如直接执行入口可靠
-- 脚本会主动移除注册表中残留的 `gatekeeper` 条目（见第一节：它会使业务工具全部不可用）
+- 脚本会主动移除残留的 `gatekeeper` 条目 —— 注册它会使业务工具全部不可用（见 D-MCP-003）
 
 ### 4.3 `.vscode/settings.json`（与已有配置合并）
 
@@ -124,25 +94,18 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
 - `chat.agent.enabled`: true
 - `chat.mcp.access`: "all"
 
-**不得写入以下历史遗留键**（已证实无任何进程读取）：
-- `mcp.gatekeeper.*` —— 属 3 个第三方扩展设置，本仓库未安装该类扩展
-- `context-mode.*` / `codegraph.*` / `ctxslim.*` / `context-cost.*` —— 这些组件以 `npx` 作 CLI 运行，读的是自己的参数
-- `chat.mcp.enabled` —— 当前构建已不存在该键
-- `chat.mcp.discovery.enabled` —— 当前构建为 **object** 类型，写 `true` 会报「预期为 object」
+**不得写入历史遗留键**（已证实无任何进程读取，生成脚本会主动清理）：
+`mcp.gatekeeper.*`（本仓库未装该类扩展）、`context-mode.*` / `codegraph.*` / `ctxslim.*` / `context-cost.*`
+（这些是 CLI，读自己的参数）、`chat.mcp.enabled`（当前构建无此键）、
+`chat.mcp.discovery.enabled`（object 类型，写 `true` 会报错）。
 
-> 危害不在占用，而在**制造错觉**：改一个 `ctxslim.maxTools: 4` 看上去在省 token，实际不产生任何效果。
-> 生成脚本（`scripts/setup-mcp.js`）会主动清理这些键。
+> 危害不在占用，而在**制造错觉**：改一个 `ctxslim.maxTools: 4` 看上去在省 token，实际毫无效果。
 
 ### 4.4 `.arcmesh/mcp/mcp.json`（gatekeeper 旁路，默认不注册）
 
-仅需手动启用加固时才关注。要点：
-- `backend`: `["npx", "ctxslim", "--config", ".arcmesh/mcp/ctxslim.json"]`
-- `tools.profile` 必须是 `full` —— `headless` 是**名称白名单**（只留 `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash`/`PowerShell`），
-  而 ctxslim 的 5 个元工具名一个都不在名单里，改回 headless 会导致**零工具导出**
-- `defaultAction: "ask"`（安全兜底，不得改回 `allow`）；`rules.allow` 写入 5 个元工具名（纯工具名即可命中，无需 `Bash(...)` 语法）
-- `denyPaths`、`rules.*` 是数组，会**整体替换**默认值，必须写全
-- `sandbox.enabled: true` 在 **Windows 上是空转**（gatekeeper 沙箱基于 macOS Seatbelt / Linux bubblewrap）
-- 已知局限：门控只覆盖 5 个元工具，且会使业务工具不可用（见第一节）
+**注册它 = 业务工具全部不可用**（D-MCP-003）。仅手动加硬边界时才关注，合规值见 D-MCP-001：
+`tools.profile` 必须 `full`（改 `headless` = 零工具导出）、`defaultAction: ask`（不得回 `allow`）、
+`rules.*` / `denyPaths` 是数组会**整体替换**、`sandbox.enabled` 在 Windows 上空转。
 
 ### 4.5 `package.json` 脚本（合并，不覆盖）
 
@@ -153,30 +116,21 @@ gatekeeper 保留为**可选旁路**，配置仍由脚本生成、`pnpm mcp` 可
 - `"ctxslim:stats": "npx ctxslim --config .arcmesh/mcp/ctxslim.json stats --json"`
 - 旁路：`"mcp"`、`"mcp:inspect"`（针对 gatekeeper，日常不用）
 
-## 五、自动化生成
+## 五、配置生成
 
-AI 生成 `scripts/setup-mcp.js`，运行后：
-1. 递归创建 `.arcmesh/mcp/`、`.arcmesh/logs/`
-2. 按第四节规则生成 `ctxslim.json` 与 `mcp.json`
-3. 生成或合并 `.vscode/settings.json`
-4. 生成或合并 `.vscode/mcp.json`（保留 ArcMesh 条目，移除残留的 gatekeeper 条目）
-5. 更新 `package.json` 的 `scripts`（合并，不覆盖）
-
-脚本动态获取 `process.cwd()` 与已安装组件，禁止硬编码。
-
-调用方式：`pnpm setup:mcp`。
+`pnpm setup:mcp` → `scripts/setup-mcp.js`：按第四节规则生成 `ctxslim.json` / `mcp.json`，
+合并写入 `.vscode/settings.json` 与 `.vscode/mcp.json`（保留 ArcMesh 条目、移除残留 gatekeeper），
+合并更新 `package.json` 的 `scripts`。脚本动态取 `process.cwd()` 与已装组件，禁止硬编码。
 
 > **不要用裸 `node scripts/setup-mcp.js`**：沙箱中 `process.cwd()` 可能是 `/app`，
-> 从而生成错误的 `roots` 与空后端。必要时用 `ARCMESH_ROOT=<绝对路径>` 显式纠正。
+> 会生成错误的 `roots` 与空后端。必要时用 `ARCMESH_ROOT=<绝对路径>` 纠正。
 
-## 六、部署步骤
+## 六、重建环境
 
-1. 环境：Node.js ≥18，pnpm ≥8
-2. 安装组件：`pnpm add -D ctxslim @perrylink/dsh-cert-mcp @mxalbert/context-mode @colbymchenry/codegraph mcp-gatekeeper mcp-context-cost mcp-fuse dmux`
-3. 生成配置：`pnpm setup:mcp`
-4. 初始化：`npx ctxslim` 无需预跑；可选 `npx @mxalbert/context-mode index <path>`（建语义索引）
-5. 安装 VS Code 扩展：`arcmesh`、`github.copilot`、`github.copilot-chat`、`deepseek-v4`
-6. 如用本地推理，在 `.vscode/settings.json` 或扩展设置中指定地址与模型名
+1. Node.js ≥18、pnpm ≥8；`pnpm add -D ctxslim @perrylink/dsh-cert-mcp @mxalbert/context-mode @colbymchenry/codegraph`
+2. `pnpm setup:mcp` 生成全部配置 → `Developer: Reload Window`
+3. VS Code 扩展：`arcmesh` + Copilot 系；可选 `npx @mxalbert/context-mode index <path>` 建语义索引
+4. ctxslim 无需预跑，由 Copilot 自动拉起
 
 ## 七、客户端接入（VS Code + Copilot）
 
@@ -188,42 +142,23 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
    - 工具名前缀为 `mcp_` + 服务器自报的 `serverInfo.name`，即 `mcp_ctxslim_<tool>`
 4. **首次连接有延迟**：冷启动约 11.5 s，之后 `list_changed` 才推送完整列表。**等十几秒再刷新工具面板**。
 5. **勾选会被重置**：ctxslim 每推一次 `list_changed`，VS Code 会重置该服务器全部工具的勾选状态，需重新勾选。
-6. **按需补工具**：初始仅暴露 `maxTools` 选出的 8 个上游工具。要用的不在其中时，两种办法：
-   - **改配置（推荐）**：把名字写进 `slim.pins`，重启 ctxslim 生效。在首次 `tools/list` 之前应用，
-     不发 `list_changed`，不必重新勾选，且重启后仍在。由 `scripts/setup-mcp.js` 的 `SLIM` 变量维护。
-   - **会话内临时**：调 `enable_tools`（先用 `search_tools` 取准确名字）。它会发 `list_changed`，
-     VS Code 随即重置该服务器全部工具的勾选状态，必须回 Tools 面板重新勾选；
-     且 pin 只活在当前 ctxslim 进程内，重启即失效。
-   - 两种方式名字均可使用暴露名或内部键 `服务器::工具名`，写错会被静默忽略。
-7. **与 ArcMesh 关系**：ArcMesh 提供 16 个工具（`list_files` / `read_file` / `write_file` /
-   `write_planning_doc` / `list_code_files` / `read_code_file` / `search_code` / `git_*` /
-   `system_repo_git_*`），与 ctxslim 互补。它有**两条互不相干**的启动路径：
-   - **我们使用的那条**：VS Code 依 `.vscode/mcp.json` 的 `arcmesh` 条目拉起
-     （日志 `mcpServer.mcp.config.ws0.arcmesh.log`），**与扩展是否激活无关**。
-   - 扩展自带的那条：`arcmesh.activate` 命令里 `cp.spawn` 的子进程（`deactivate()` 会 kill）。
-
-   扩展是**惰性激活**的：`activationEvents: onStartupFinished` 只创建一个状态栏项 ——
-   文案 `$(circle-slash) ArcMesh`（禁止图标）、tooltip `ArcMesh – click to activate`。
-   即**禁止图标 ≠ 故障**，它只是「等你点」。
-
-   **但不要点它**：`arcmesh.activate` 会调 `writeMcpJson()`，用 `fs.writeFileSync`
-   **整体覆写** `.vscode/mcp.json`，且它构造的 config 里**只有 arcmesh 一条** →
-   **ctxslim 条目被删除**，整条省 token 链断掉；同时 `ensureGitignore()` 会往 `.gitignore`
-   追加 `.arcmesh/`。详见第九节与 D-MCP-007。
-8. **重启服务器**：命令面板里**没有** `MCP: Restart Server`。该命令（内部 ID
-   `workbench.mcp.restartServer`，标题 `Restart Server`）在本机构建注册为 `f1:false`，**不进命令面板**，
-   只能从服务器列表菜单调用。路径：命令面板 `MCP: List Servers` → 选 `ctxslim` → 菜单里选 `Restart Server`
-   （同一菜单另有 `Start` / `Stop` / `Show Output`）。也可用 `MCP: Show Installed Servers`
-   打开扩展视图里的服务器列表。整体重载仍为 `Developer: Reload Window`。
-9. **工具调用约定（把任务内往返压成常数）** —— 依据 `decisions/mcp-gating-and-token-posture.md` D-MCP-005：
-   - 一次调用问全：`ctx_search.queries` 是数组，多个问题合并为一次调用；
-     `codegraph_explore.query` 可列多个符号，一次取回整片代码。
-   - 多步计算走 `ctx_execute`：把「读 N 个文件 → 过滤 → 统计」写成一段代码，
-     只有 `console.log` 的输出进上下文，中间过程零 token —— N 次往返压成 1 次。
-   - 不做工具发现：不用 `search_tools` / `describe_tools` 探路，必需工具已由 `pins` 就位；
-     这两个工具输出不可分页（实测单次 12 029 B），且 `enable_tools` 触发 `list_changed`
-     会打断已勾选状态（D-MCP-004）。
-   - 批量规模建议 ≤5：一次失败等于全部重试，过大反而抬高成本。
+6. **按需补工具**：初始只暴露 `maxTools` 选出的 8 个上游工具。
+   - **改配置（首选）**：写进 `slim.pins`（4.1），重启 ctxslim 生效；不触发 `list_changed`，不必重勾。
+   - **会话内临时**：`enable_tools`（名字先用 `search_tools` 取）。它发 `list_changed` → VS Code 重置该服务器全部勾选，且重启即失效。
+   - 名字可用暴露名或内部键 `服务器::工具名`，写错静默忽略。
+7. **与 ArcMesh 关系**：它的 16 个工具（`list_files` / `read_file` / `git_*` / `system_repo_git_*` 等）
+   与 ctxslim 互补。**我们用的是 `.vscode/mcp.json` 里那条**（VS Code 拉起，与扩展是否激活无关）；
+   扩展自带的 `arcmesh.activate` 子进程是另一条，且**不要点**它的状态栏图标 —— 会整体覆写
+   `.vscode/mcp.json`（只剩 arcmesh，ctxslim 条目丢失）并往 `.gitignore` 追加 `.arcmesh/`。
+   详见 D-MCP-007 与第九节。
+8. **重启服务器**：命令面板里**没有** `MCP: Restart Server`（该命令 `f1:false`，不进面板）。
+   路径：`MCP: List Servers` → 选服务器 → 菜单里 `Restart` / `Stop` / `Show Output`；
+   整体重载用 `Developer: Reload Window`。
+9. **工具调用约定**（依据 D-MCP-005，细则见 `STANDARDS.md`）：
+   - 一次调用问全：`ctx_search.queries` 传数组、`codegraph_explore.query` 列多个符号。
+   - 多步计算走 `ctx_execute`：只 `console.log` 结果，中间过程零 token。
+   - 不做工具发现（`search_tools` / `describe_tools`），不用 `enable_tools`（触发 `list_changed`）。
+   - 批量规模 ≤5。
 
 ## 八、维护命令
 
@@ -239,57 +174,32 @@ AI 生成 `scripts/setup-mcp.js`，运行后：
 
 ## 九、故障排除
 
-- `Connection closed`：后端命令不存在或立即退出，手动运行查看错误
-- `object is not iterable`：`backend` 必须为字符串数组
-- **业务工具报 `does not exist`**：检查 `.vscode/mcp.json` 是否仍注册着 gatekeeper。它会使业务工具全部不可用
-- **工具报 `disabled by the user`**：工具已在表里，只是未勾选 —— 去 Tools 面板勾选
-- **勾选后又变回未勾选**：`list_changed` 触发时 VS Code 重置勾选，重新勾选即可
-- **`enable_tools` 返回 `not found (ignored): xxx`**：名字拼错，或该名不在 `resolved` 表里。
-  先用 `search_tools` 取准确名字；注意写错不会报错，只会静默跳过
-- **pin 了工具但总数没变**：`auto` 模式下 `selected = ranked.slice(0, maxTools)`，pin 只保证入选、
-  不突破上限 —— 挤掉的是排名最低的工具。这是预期行为，不是失效
-- **pin 了 `codegraph_explore` 却拿不到该工具**：冷启动竞态（见 4.1）。首次 `tools/list` 时 codegraph
-  仍在 `connecting`（0 工具），名字解析不到被静默丢弃，后续 `list_changed` 不会重试。
-  判定：暴露集**完整包含**基线 8 个（dsh-cert 3 + context-mode 5）、一个都没被挤掉 → pin 落空；
-  若 pin 生效，被挤掉的那个基线工具必然缺席（总数仍是 8）。
-  **不要**用「模型看不到该工具」直接判定未暴露 —— 已暴露但未勾选的工具同样不可见。
-  对策：等 `list_servers` 三个后端全部 `ready` 后重启 ctxslim（入口见第七节第 8 条）；实测一次重启即命中
-- **`codegraph_explore` 的返回里推荐 `codegraph_node`**：codegraph 后端只报 1 个工具，`codegraph_node`
-  在本环境不存在，勿照做
-- **状态栏出现禁止图标 `$(circle-slash) ArcMesh`**：不是故障，是扩展的惰性激活标记（见 7.7）。**不要点**：
-  点击 = `arcmesh.activate` → 覆写 `.vscode/mcp.json`（只剩 arcmesh 一条，ctxslim 条目丢失）
-  + 往 `.gitignore` 追加 `.arcmesh/`。根治：在工作区禁用 arcmesh 扩展（`Extensions: Disable (Workspace)`），
-  `.vscode/mcp.json` 的条目仍由 VS Code 启动，16 个工具不受影响
-- **`.gitignore` 末尾莫名多出 `.arcmesh/`**：同源（见上条）。它与「蓝图文档入库」策略冲突 ——
-  已跟踪文件不受影响，但 `git add -A` **不会**纳入 `.arcmesh/` 下的**新**文件。删掉该行即可
-- **`MCP: List Servers` 里 arcmesh 显示「已停止」但工具可用**：窗口重载时扩展宿主会写一次
-  `Extension host shut down, server will stop`（连接状态: 已停止），随后自动重启。
-  面板可能读到旧状态 —— 以日志末行是否为 `Discovered 16 tools` 为准，不必为此手动 Start
-- 无工具导出：`tools.profile` 应为 `"full"`（仅旁路场景）
-- 语义检索返回「知识库为空」：执行 `npx @mxalbert/context-mode index <path>`
-- **误以为 `savingsPct: 100%` 很赚**：经 gatekeeper 时的 100% 是零工具导出的假象；
-  真实水平是 95.1%（7688 → 374）
-- **误以为有沙箱保护**：`sandbox.enabled: true` 在 Windows 上为空转。
-  直连拓扑下不存在沙箱与门控，唯一的边界是 ctxslim 的工具白名单
+- **pin 了 `codegraph_explore` 却拿不到该工具**：冷启动竞态（4.1）。症状是暴露集**完整包含**基线 8 个
+  （dsh-cert 3 + context-mode 5）、一个都没被挤掉。**不要**用「模型看不到该工具」判定未暴露 ——
+  已暴露但未勾选的工具同样不可见。对策：等后端全 `ready` 后重启 ctxslim（第七节第 8 条）。
+- **pin 了工具但总数没变**：`auto` 下 `selected = ranked.slice(0, maxTools)`，pin 只保证入选、
+  不突破上限，挤掉的是排名最低者。预期行为，不是失效。
+- **工具报 `disabled by the user`**：已入表、未勾选 —— 去 Tools 面板勾。
+- **勾选后又变回未勾选**：`list_changed` 触发时 VS Code 重置该服务器全部勾选。
+- **`enable_tools` 返回 `not found (ignored): xxx`**：名字拼错或不在 `resolved` 表里；写错不报错，静默跳过。
+- **业务工具报 `does not exist`**：`.vscode/mcp.json` 里还注册着 gatekeeper（见 D-MCP-003）。
+- **无工具导出**：`tools.profile` 应为 `"full"`（仅旁路场景）。
+- **状态栏禁止图标 `$(circle-slash) ArcMesh`**：不是故障，是扩展惰性激活标记。**不要点**（会覆写
+  `.vscode/mcp.json` + 追加 `.gitignore`）。根治：工作区禁用 arcmesh 扩展，mcp.json 条目仍由 VS Code 启动。
+- **`.gitignore` 末尾多出 `.arcmesh/`**：同源。已跟踪文件不受影响，但 `git add -A` 不会纳入其下**新**文件。
+- **面板里 arcmesh 显示「已停止」但工具可用**：窗口重载时扩展宿主先停后启，面板可能读到旧状态；
+  以日志末行是否 `Discovered 16 tools` 为准，不必手动 Start。
+- **`codegraph_explore` 返回里推荐 `codegraph_node`**：该后端只报 1 个工具，这个名字不存在。
+- **语义检索返回「知识库为空」**：`npx @mxalbert/context-mode index <path>`。
+- **无沙箱保护**：`sandbox.enabled` 在 Windows 上空转；直连拓扑下唯一边界是 ctxslim 的工具白名单。
+- `Connection closed`：后端命令不存在或立即退出，手动运行看错误。
 
 ## 十、.gitignore
 
-```
-.arcmesh/logs/
-*.log
-.DS_Store
-node_modules/
-```
+以仓库根 `.gitignore` 为准（已入库）：忽略 `.arcmesh/logs/`、`*.log`、`node_modules/`；
+`.vscode/` 用「先排除再例外」写法 —— `.vscode/*` + `!.vscode/settings.json` + `!.vscode/mcp.json`（否则新增编辑器文件会被一并提交）。
 
 > ⚠ 该文件可能被 ArcMesh 扩展的 `ensureGitignore()` 追加一行 `.arcmesh/`（见第七节第 7 条）。
 > 该行与「`.arcmesh/mcp/`、`.arcmesh/system-repo/` 入库」直接冲突，必须删除。
 
-`.vscode/` 用「先排除再例外」写法，否则新增的编辑器文件会被一并提交：
-
-```
-.vscode/*
-!.vscode/settings.json
-!.vscode/mcp.json
-```
-
-`.arcmesh/mcp/`、`.arcmesh/system-repo/`、`.vscode/settings.json`、`.vscode/mcp.json`、`scripts/` 应提交版本库。生成由 AI 自动完成。
+入库范围：`.arcmesh/mcp/`、`.arcmesh/system-repo/`、`.vscode/settings.json`、`.vscode/mcp.json`、`scripts/`。

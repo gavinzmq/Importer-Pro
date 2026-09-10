@@ -38,16 +38,8 @@ parsers → engine(模板匹配) → [pipeline] → _notes: NoteSpec[] → gener
 
 ## 保留字段消费
 
-| 字段 | 消费方 | 说明 |
-| :--- | :--- | :--- |
-| `_skip` | pipeline | 该条跳过 |
-| `_status` | pipeline | 状态 |
-| `_warnings` | pipeline | 警告列表（D119 附言，不再由校验回填） |
-| `_index` | pipeline | 解析后原始行号（引擎注入只读，1-based） |
-| `_hash` | generator | 哈希/默认文件名 |
-| `_folder` | generator | 目标文件夹 |
-| `_link` | generator | 智能链接文本 |
-| `_notes` | generator | 多笔记清单 |
+- `_skip` / `_status` / `_warnings` / `_index` → **pipeline**；依次为：该条跳过、状态、警告列表（D119 附言，不再由校验回填）、解析后原始行号（引擎注入只读，1-based）
+- `_hash` / `_folder` / `_link` / `_notes` → **generator**；依次为：哈希/默认文件名、目标文件夹、智能链接文本、多笔记清单
 
 `noteType 'none'`（不输出）：照常产 `set` 但不进任何渲染数据（`ipro:none:` 标记持久化、`ctx.noneFields` 过滤）。
 

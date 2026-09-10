@@ -34,18 +34,15 @@ export interface ITemplateEngine {
 
 ### Frontmatter 字段（权威）
 
-| 字段 | 必需 | 说明 |
-| :--- | :--- | :--- |
-| `name` | ✅ | 模板显示名 |
-| `template_id` | ✅ | 唯一 ID（API/历史用） |
-| `version` |  | 模板自身版本 |
-| `description` |  | 描述 |
-| `match` |  | `{ enabled, patterns:[{type:regex\|glob\|exact, value, priority?}] }`；priority 默认 0，自动匹配优先级降序 + 先匹配先得（D121） |
-| `output` |  | `{ folder, note_name, conflict_strategy, incremental_mode }`；folder/note_name 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（用户表达式编译进 `output` 段） |
-| `row` |  | `{ clean }`：行清洗引擎开关 `{ remove_empty, remove_duplicate_header }`（现为编译段开关，见下） |
-| `columns`/`mapping`/`derived` |  | D98 起仅兼容旧模板读取 |
-| `validation` |  | D125 已废删（旧读忽略、不再写出） |
-| `notes` |  | 多笔记类型 `TemplateNoteSpec[]` |
+必需：`name`（模板显示名）、`template_id`（唯一 ID，API/历史用）。
+可选：
+- `version` 模板自身版本；`description` 描述
+- `match` = `{ enabled, patterns:[{type:regex|glob|exact, value, priority?}] }`；priority 默认 0，自动匹配优先级降序 + 先匹配先得（D121）
+- `output` = `{ folder, note_name, conflict_strategy, incremental_mode }`；folder/note_name 固定写 `"{{_folder}}"`/`"{{_fileName}}"`（用户表达式编译进 `output` 段）
+- `row` = `{ clean }`：行清洗引擎开关 `{ remove_empty, remove_duplicate_header }`（现为编译段开关，见下）
+- `notes` 多笔记类型 `TemplateNoteSpec[]`
+- `columns` / `mapping` / `derived` —— D98 起仅兼容旧模板读取
+- `validation` —— D125 已废删（旧读忽略、不再写出）
 
 > 实际 `TemplateFrontmatter` 仅含少量字段，`match/output/row` 由 scanner 提升为配置。
 
@@ -79,18 +76,16 @@ export interface ITemplateEngine {
 
 ## 内置 Helper 权威清单（8 类 38 个）
 
-类别顺序全库统一：**身份证→哈希→字符串→数学→集合→逻辑→校验→链接**。权威签名见 `references/builtin-helpers.md`。
+类别顺序全库统一：**身份证→哈希→字符串→数学→集合→逻辑→校验→链接**（8 类 38 个）；权威签名见 `references/builtin-helpers.md`。
 
-| 类别 | Helper |
-| :--- | :--- |
-| 身份证 | genderFromID / birthFromID / validateID |
-| 哈希 | md5 / sha256 / hashShort |
-| 字符串 | split / join / trim / uppercase / lowercase / replace / substring / concat / isEmpty |
-| 数学 | add / subtract / multiply / divide / sum / avg / round / toFixed / formatNumber |
-| 集合 | itemAt |
-| 逻辑 | ifEquals / contains / default / or / and |
-| 校验 | isEmail / isPhone / isNumber / isDate / inRange / matchesRegex |
-| 链接 | wikilink / smartLink |
+- 身份证：genderFromID / birthFromID / validateID
+- 哈希：md5 / sha256 / hashShort
+- 字符串：split / join / trim / uppercase / lowercase / replace / substring / concat / isEmpty
+- 数学：add / subtract / multiply / divide / sum / avg / round / toFixed / formatNumber
+- 集合：itemAt
+- 逻辑：ifEquals / contains / default / or / and
+- 校验：isEmail / isPhone / isNumber / isDate / inRange / matchesRegex
+- 链接：wikilink / smartLink
 
 `smartLink` 为同步 Helper，依赖 `warmCache()` 内存链接索引，未命中回退 fallbackFolder「待建」链接。
 

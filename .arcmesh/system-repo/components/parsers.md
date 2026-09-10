@@ -22,26 +22,22 @@ export interface IDataParser {
 
 ## 实现类（7 类）
 
-| 实现类 | 格式 |
-| :--- | :--- |
-| `ExcelParser` | .xlsx / .xls（`getSheetNames()` 供向导表单下拉） |
-| `CSVParser` | .csv / .tsv |
-| `JSONParser` | .json |
-| `HTMLParser` | .html |
-| `EnexParser` | .enex |
-| `NotionParser` | .zip（Notion 导出） |
-| `AppleNotesParser` | .notes（Apple Notes 导出） |
+- `ExcelParser` —— .xlsx / .xls（`getSheetNames()` 供向导表单下拉）
+- `CSVParser` —— .csv / .tsv
+- `JSONParser` —— .json
+- `HTMLParser` —— .html
+- `EnexParser` —— .enex
+- `NotionParser` —— .zip（Notion 导出）
+- `AppleNotesParser` —— .notes（Apple Notes 导出）
 
 **依赖**：SheetJS（xlsx）、Papaparse（CSV/TSV）、js-yaml（Frontmatter/设置）、JSZip（Notion .zip）、内置 DOMParser（Apple Notes / HTML）。
 
 ## 表格类解析选项（Excel/CSV）
 
-| 选项 | 语义 | 默认 |
-| :--- | :--- | :--- |
-| `maxRows` | 最大解析行数，超出截断（控峰值内存） | 10000 |
-| `sheetName` | 指定工作表；不存在 → 抛 `PARSE_002` | 第一个 sheet |
-| `headerRow` | 表头物理行索引（0-based，`sheet_to_json({range})` / CSV 切行跳过） | 0 |
-| `startRow` | 跳过表头之后前 N 个数据行 | 0 |
+- `maxRows` —— 最大解析行数，超出截断（控峰值内存）；默认 10000
+- `sheetName` —— 指定工作表；不存在 → 抛 `PARSE_002`；默认第一个 sheet
+- `headerRow` —— 表头物理行索引（0-based，`sheet_to_json({range})` / CSV 切行跳过）；默认 0
+- `startRow` —— 跳过表头之后前 N 个数据行；默认 0
 
 > 表头语义（D123 起）：模板/向导层废弃「表头行控件」，表格类按 `rawRows` 原始行解析（占位列名 `列1..N`）→ 行清洗 → 行筛选 → `promoteHeaderRow` 表头提升。解析层 `headerRow`/`startRow`/`sheetName` 作为**解析参数**仍保留。
 

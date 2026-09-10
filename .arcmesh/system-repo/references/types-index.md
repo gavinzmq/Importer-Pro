@@ -1,20 +1,10 @@
 ## 快速定位
-| 类型 | 定义所在 |
-| :--- | :--- |
-| `DataRecord` | `components/parsers.md`（L2） |
-| `FileInfo` | `components/parsers.md`（L2） |
-| `ParseOptions` | `components/parsers.md`（L2） |
-| `TemplateInfo` | `components/engine.md`（L2） |
-| `MatchRule` | `components/engine.md`（L2） |
-| `RowFilterRule` | `components/pipeline.md`（L2） |
-| `NoteSpec` | `components/generator.md`（L2） |
-| `OutputConfig` | `components/generator.md`（L2） |
-| `BatchConfig` | `components/generator.md`（L2） |
-| `PauseToken` | `components/generator.md`（L2） |
-| `BatchResult` | `components/generator.md`（L2） |
-| `DryRunResult` | `components/generator.md`（L2） |
-| `PluginSettings` | `references/plugin-settings.md`（L4） |
-| `Step3TemplateSnapshot` | `components/ui.md`（L2） |
+- `DataRecord` / `FileInfo` / `ParseOptions` → `components/parsers.md`（L2）
+- `TemplateInfo` / `MatchRule` → `components/engine.md`（L2）
+- `RowFilterRule` → `components/pipeline.md`（L2）
+- `NoteSpec` / `OutputConfig` / `BatchConfig` / `PauseToken` / `BatchResult` / `DryRunResult` → `components/generator.md`（L2）
+- `PluginSettings` → `references/plugin-settings.md`（L4）
+- `Step3TemplateSnapshot` → `components/ui.md`（L2）
 
 ## 详细定义
 ### DataRecord
