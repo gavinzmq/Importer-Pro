@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /**
- * 从 .specify/references/standards.md 生成所有配置文件。
+ * 从 .specify/references/ 下的四个源文件生成所有配置。
+ *
+ * 源文件：
+ *   standards.md      → .eslintrc.json, .prettierrc.json, .prettierignore,
+ *                       .editorconfig, tsconfig.json, jest.config.js, .gitignore
+ *   package.md        → package.json
+ *   vscode.md         → .vscode/settings.json, .vscode/extensions.json
+ *   claude-config.md  → .claude/settings.json, .claude/hooks/*.mjs
  *
  * 使用纯 Node 内置模块，不依赖 node_modules。
  * 可以在 pnpm install 之前运行。
- *
- * 用法：node scripts/generate-configs.mjs
  */
 
 import fs from 'fs';
@@ -14,236 +19,242 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
-const standardsPath = path.join(rootDir, '.specify', 'references', 'standards.md');
+const refsDir = path.join(rootDir, '.specify', 'references');
+
+// 生成产物列表，用于 VS Code 的只读标记
+const GENERATED_FILES = [
+  '.eslintrc.json',
+  '.prettierrc.json',
+  '.prettierignore',
+  '.editorconfig',
+  'tsconfig.json',
+  'jest.config.js',
+  '.gitignore',
+  '.vscode/settings.json',
+  '.vscode/extensions.json',
+  '.claude/settings.json',
+  '.claude/.mcp.json',
+];
 
 // ============================================
 // 解析器
 // ============================================
 
-/**
- * 解析 standards.md，返回 { 节名: [ { key, value, note } ] }
- */
-function parseStandards(markdown) {
+function parseFile(markdown) {
   const sections = {};
-  let currentSection = null;
+  let current = null;
 
-  for (const rawLine of markdown.split('\n')) {
-    const line = rawLine.trim();
-
-    // 跳过空行和注释
+  for (const raw of markdown.split('\n')) {
+    const line = raw.trim();
     if (!line) continue;
 
-    // 检测节标题
-    const headingMatch = line.match(/^##\s+(.+)$/);
-    if (headingMatch) {
-      currentSection = headingMatch[1].trim();
-      sections[currentSection] = [];
+    const heading = line.match(/^##\s+(.+)$/);
+    if (heading) {
+      current = heading[1].trim();
+      sections[current] = [];
       continue;
     }
 
-    // 跳过一级标题和说明文字
     if (line.startsWith('#')) continue;
-    if (!currentSection) continue;
+    if (!current) continue;
+    if (line.startsWith('**')) continue;
 
-    // 解析配置行：键 = 值 | 说明
+    // GitIgnore 节：整行是逗号分隔的模式列表
+    if (current === 'GitIgnore') {
+      sections[current].push({ raw: line });
+      continue;
+    }
+
     const pipeIdx = line.indexOf(' | ');
-    const configPart = pipeIdx >= 0 ? line.slice(0, pipeIdx) : line;
+    const configPart = pipeIdx >= 0 ? line.slice(0, pipeIdx).trim() : line;
     const note = pipeIdx >= 0 ? line.slice(pipeIdx + 3).trim() : '';
 
     const eqIdx = configPart.indexOf(' = ');
-    if (eqIdx < 0) {
-      // 没有等号，可能是 GitIgnore 节的纯模式行
-      sections[currentSection].push({ raw: configPart.trim(), note });
-      continue;
-    }
+    if (eqIdx < 0) continue;
 
     const key = configPart.slice(0, eqIdx).trim();
     const value = configPart.slice(eqIdx + 3).trim();
-    sections[currentSection].push({ key, value, note });
+    sections[current].push({ key, value, note });
   }
 
   return sections;
+}
+
+function loadAllSections() {
+  const files = ['standards.md', 'package.md', 'vscode.md', 'claude-config.md'];
+  const all = {};
+  for (const file of files) {
+    const p = path.join(refsDir, file);
+    if (!fs.existsSync(p)) {
+      console.warn(`⚠️  缺少 ${file}，跳过`);
+      continue;
+    }
+    const sections = parseFile(fs.readFileSync(p, 'utf-8'));
+    Object.assign(all, sections);
+  }
+  return all;
 }
 
 // ============================================
 // 工具函数
 // ============================================
 
-/**
- * 将值解析为 JSON 字面量。失败时返回字符串。
- */
-function parseValue(value) {
-  const v = value.trim();
-
-  if (v === 'true') return true;
-  if (v === 'false') return false;
-  if (v === 'null') return null;
-  if (/^-?\d+$/.test(v)) return parseInt(v, 10);
-  if (/^-?\d+\.\d+$/.test(v)) return parseFloat(v);
-
-  // 引号包裹的字符串
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-    return v.slice(1, -1);
+function parseValue(v) {
+  const s = v.trim();
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  if (s === 'null') return null;
+  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+  if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
   }
-
-  // 数组字面量
-  if (v.startsWith('[') && v.endsWith(']')) {
-    try { return JSON.parse(v); } catch { /* 按字符串处理 */ }
+  if (s.startsWith('[') && s.endsWith(']')) {
+    try { return JSON.parse(s); } catch { /* 按字符串处理 */ }
   }
-
-  return v;
+  return s;
 }
 
-/**
- * 按逗号拆分值，如果只有一个元素则返回单值。
- */
-function parseMaybeArray(value) {
-  if (!value.includes(',')) return parseValue(value);
-  return value.split(',').map(s => parseValue(s.trim()));
+function parseMaybeArray(v) {
+  if (!v.includes(',')) return parseValue(v);
+  return v.split(',').map(s => parseValue(s.trim()));
 }
 
-/**
- * 将点号路径展开为嵌套对象。重复键合并为数组。
- */
 function setNested(obj, dottedKey, value) {
   const parts = dottedKey.split('.');
-  let current = obj;
-
+  let cur = obj;
   for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i];
-    if (!(part in current)) current[part] = {};
-    current = current[part];
+    const p = parts[i];
+    if (!(p in cur)) cur[p] = {};
+    cur = cur[p];
   }
-
   const last = parts[parts.length - 1];
-  if (last in current) {
-    // 重复键合并为数组
-    if (!Array.isArray(current[last])) current[last] = [current[last]];
-    if (Array.isArray(value)) current[last].push(...value);
-    else current[last].push(value);
+  if (last in cur) {
+    if (!Array.isArray(cur[last])) cur[last] = [cur[last]];
+    if (Array.isArray(value)) cur[last].push(...value);
+    else cur[last].push(value);
   } else {
-    current[last] = value;
+    cur[last] = value;
   }
 }
 
 // ============================================
-// 各生成器
+// 生成器：standards.md
 // ============================================
 
 function buildESLint(entries) {
-  const config = {};
-  for (const { key, value } of entries) {
-    setNested(config, key, parseMaybeArray(value));
-  }
-  return JSON.stringify(config, null, 2) + '\n';
+  const c = {};
+  for (const { key, value } of entries) setNested(c, key, parseMaybeArray(value));
+  return JSON.stringify(c, null, 2) + '\n';
 }
 
 function buildPrettier(entries) {
-  const config = {};
-  const ignoreLines = [];
+  const c = {};
+  const ignore = [];
   for (const { key, value } of entries) {
     if (key === 'ignore') {
-      if (Array.isArray(parseMaybeArray(value))) {
-        ignoreLines.push(...parseMaybeArray(value));
-      } else {
-        ignoreLines.push(parseMaybeArray(value));
-      }
+      const arr = parseMaybeArray(value);
+      ignore.push(...(Array.isArray(arr) ? arr : [arr]));
       continue;
     }
-    setNested(config, key, parseMaybeArray(value));
+    setNested(c, key, parseMaybeArray(value));
   }
   return {
-    prettierrc: JSON.stringify(config, null, 2) + '\n',
-    prettierignore: ignoreLines.join('\n') + '\n',
+    prettierrc: JSON.stringify(c, null, 2) + '\n',
+    prettierignore: ignore.join('\n') + '\n',
   };
 }
 
 function buildEditorConfig(entries) {
-  const globalLines = [];
+  const global = [];
   const overrides = {};
-
   for (const { key, value } of entries) {
     if (key.startsWith('override.')) {
       const rest = key.slice('override.'.length);
-      const lastDot = rest.lastIndexOf('.');
-      const pattern = rest.slice(0, lastDot);
-      const field = rest.slice(lastDot + 1);
+      const i = rest.lastIndexOf('.');
+      const pattern = rest.slice(0, i);
+      const field = rest.slice(i + 1);
       if (!overrides[pattern]) overrides[pattern] = [];
       overrides[pattern].push(`${field} = ${value}`);
     } else {
-      globalLines.push(`${key} = ${value}`);
+      global.push(`${key} = ${value}`);
     }
   }
-
-  const lines = ['root = true', '', '[*]', ...globalLines, ''];
-  for (const [pattern, fieldLines] of Object.entries(overrides)) {
-    lines.push(`[${pattern}]`, ...fieldLines, '');
+  const lines = ['root = true', '', '[*]', ...global, ''];
+  for (const [pat, fields] of Object.entries(overrides)) {
+    lines.push(`[${pat}]`, ...fields, '');
   }
   return lines.join('\n');
 }
 
 function buildTypeScript(entries) {
-  const config = {};
-  for (const { key, value } of entries) {
-    setNested(config, key, parseMaybeArray(value));
-  }
-  return JSON.stringify(config, null, 2) + '\n';
+  const c = {};
+  for (const { key, value } of entries) setNested(c, key, parseMaybeArray(value));
+  return JSON.stringify(c, null, 2) + '\n';
 }
 
 function buildJest(entries) {
-  const config = {};
-  for (const { key, value } of entries) {
-    setNested(config, key, parseMaybeArray(value));
-  }
-  return 'module.exports = ' + JSON.stringify(config, null, 2) + ';\n';
+  const c = {};
+  for (const { key, value } of entries) setNested(c, key, parseMaybeArray(value));
+  return 'module.exports = ' + JSON.stringify(c, null, 2) + ';\n';
 }
 
 function buildGitignore(entries) {
   const patterns = [];
-  for (const entry of entries) {
-    if (entry.raw) {
-      patterns.push(entry.raw);
-    } else if (entry.value) {
-      const v = parseMaybeArray(entry.value);
-      if (Array.isArray(v)) patterns.push(...v);
-      else patterns.push(v);
+  for (const e of entries) {
+    if (e.raw) {
+      patterns.push(...e.raw.split(',').map(s => s.trim()));
     }
   }
   return patterns.join('\n') + '\n';
 }
 
-function buildPackageJson(entries) {
+// ============================================
+// 生成器：package.md
+// ============================================
+
+function buildPackageJson(sections) {
   const pkgPath = path.join(rootDir, 'package.json');
   const existing = fs.existsSync(pkgPath)
     ? JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
     : {};
 
   // 从 manifest.json 同步 version
-  const manifestPath = path.join(rootDir, 'manifest.json');
   let version = existing.version || '0.0.0';
+  const manifestPath = path.join(rootDir, 'manifest.json');
   if (fs.existsSync(manifestPath)) {
     try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-      version = manifest.version || version;
-    } catch { /* 保留现有版本 */ }
+      const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      version = m.version || version;
+    } catch { /* 保留现有 */ }
   }
 
   const meta = {};
   const scripts = {};
   const devDependencies = { ...(existing.devDependencies || {}) };
+  const lintStaged = {};
 
-  for (const { key, value } of entries) {
-    if (key.startsWith('meta.')) {
-      setNested(meta, key.slice(5), parseValue(value));
-    } else if (key.startsWith('script.')) {
-      scripts[key.slice(7)] = value;
-    } else if (key.startsWith('devDep.')) {
-      const name = key.slice(7);
-      // 已安装的保留实际版本，未安装的用 standards 中的版本
-      if (!devDependencies[name]) {
-        devDependencies[name] = value;
-      }
-    }
+  for (const { key, value } of sections['Metadata'] || []) {
+    if (!key.startsWith('meta.')) continue;
+    setNested(meta, key.slice(5), parseValue(value));
+  }
+
+  for (const { key, value } of sections['Scripts'] || []) {
+    if (!key.startsWith('script.')) continue;
+    scripts[key.slice(7)] = value;
+  }
+
+  for (const { key, value } of sections['DevDependencies'] || []) {
+    if (!key.startsWith('devDep.')) continue;
+    const name = key.slice(7);
+    if (!devDependencies[name]) devDependencies[name] = value;
+  }
+
+  for (const { key, value } of sections['LintStaged'] || []) {
+    if (!key.startsWith('lintstaged.')) continue;
+    const pattern = key.slice('lintstaged.'.length);
+    const cmds = value.split(',').map(s => s.trim());
+    lintStaged[pattern] = cmds;
   }
 
   const pkg = {
@@ -258,25 +269,37 @@ function buildPackageJson(entries) {
     devDependencies,
   };
 
+  if (Object.keys(lintStaged).length) pkg['lint-staged'] = lintStaged;
+
   return JSON.stringify(pkg, null, 2) + '\n';
 }
 
-function buildVSCode(entries) {
-  const settings = {};
-  const recommendations = [];
+// ============================================
+// 生成器：vscode.md
+// ============================================
 
-  for (const { key, value } of entries) {
-    if (key === 'ext') {
-      // ext = id | 名称 | 必需性
-      const parts = value.split('|').map(s => s.trim());
-      const id = parts[0];
-      const necessity = parts[2] || '';
-      if (necessity === '必需') recommendations.push(id);
-      continue;
-    }
-    if (key.startsWith('vscode.')) {
-      setNested(settings, key.slice(7), parseMaybeArray(value));
-    }
+function buildVSCode(sections) {
+  const settings = {};
+
+  for (const { key, value } of sections['Settings'] || []) {
+    if (!key.startsWith('vscode.')) continue;
+    setNested(settings, key.slice(7), parseMaybeArray(value));
+  }
+
+  // 自动添加只读标记
+  settings.files = settings.files || {};
+  settings.files.readonlyInclude = settings.files.readonlyInclude || {};
+  for (const f of GENERATED_FILES) {
+    settings.files.readonlyInclude[f] = true;
+  }
+
+  const recommendations = [];
+  for (const { key, value } of sections['Extensions'] || []) {
+    if (key !== 'ext') continue;
+    const parts = value.split('|').map(s => s.trim());
+    const id = parts[0];
+    const necessity = parts[2] || '';
+    if (necessity === '必需') recommendations.push(id);
   }
 
   return {
@@ -285,100 +308,240 @@ function buildVSCode(entries) {
   };
 }
 
-function buildClaudeSettings(entries) {
+// ============================================
+// 生成器：claude-config.md
+// ============================================
+
+function buildClaudeSettings(sections) {
   const settings = {};
 
-  for (const { key, value } of entries) {
+  for (const { key, value } of sections['ClaudeSettings'] || []) {
     if (!key.startsWith('claude.')) continue;
-    const stripped = key.slice(7);
-    setNested(settings, stripped, parseMaybeArray(value));
+    setNested(settings, key.slice(7), parseMaybeArray(value));
   }
 
-  return JSON.stringify(settings, null, 2) + '\n';
+  return settings;
+}
+
+function buildHooksConfig(sections) {
+  const hooks = {};
+
+  for (const { key, value } of sections['ClaudeHooks'] || []) {
+    if (!key.startsWith('hook.')) continue;
+    const parts = key.split('.');
+    const event = parts[1];
+    const field = parts[2];
+
+    if (!hooks[event]) hooks[event] = [];
+
+    if (field === 'matcher') {
+      hooks[event].push({ matcher: value, hooks: [] });
+    } else if (field === 'command') {
+      const last = hooks[event][hooks[event].length - 1];
+      if (last) last.hooks.push({ type: 'command', command: value });
+    } else if (field === 'timeout') {
+      const last = hooks[event][hooks[event].length - 1];
+      if (last && last.hooks.length) {
+        last.hooks[last.hooks.length - 1].timeout = parseInt(value, 10);
+      }
+    }
+  }
+
+  return hooks;
+}
+
+function extractGuardRules(sections) {
+  const rules = { dirs: [], files: [], allowFiles: [], cmds: [], patterns: [] };
+  for (const { key, value } of sections['ClaudeHooks'] || []) {
+    const arr = value.split(',').map(s => s.trim());
+    if (key === 'block.dir') rules.dirs = arr;
+    else if (key === 'block.file') rules.files = arr;
+    else if (key === 'allow.file') rules.allowFiles = arr;
+    else if (key === 'block.cmd') rules.cmds = arr;
+    else if (key === 'block.pattern') rules.patterns = arr;
+  }
+  return rules;
+}
+
+function buildGuardScript(rules) {
+  return `#!/usr/bin/env node
+// PreToolUse 守卫脚本，由 generate-configs.mjs 从 claude-config.md 生成
+// 禁止手动修改
+
+import fs from 'fs';
+
+const input = JSON.parse(fs.readFileSync(0, 'utf-8'));
+const toolName = input.tool_name || '';
+
+const BLOCK_DIRS = ${JSON.stringify(rules.dirs)};
+const BLOCK_FILES = ${JSON.stringify(rules.files)};
+const ALLOW_FILES = ${JSON.stringify(rules.allowFiles)};
+const BLOCK_CMDS = ${JSON.stringify(rules.cmds)};
+const BLOCK_PATTERNS = ${JSON.stringify(rules.patterns)};
+
+function normalize(p) {
+  return (p || '').replace(/\\\\/g, '/');
+}
+
+function matchesGlob(filePath, pattern) {
+  const f = normalize(filePath);
+  const p = normalize(pattern);
+  if (p.startsWith('*.')) return f.endsWith(p.slice(1));
+  return f.includes(p);
+}
+
+function checkFile(filePath) {
+  for (const allow of ALLOW_FILES) {
+    if (matchesGlob(filePath, allow)) return 0;
+  }
+  for (const dir of BLOCK_DIRS) {
+    if (matchesGlob(filePath, dir)) {
+      console.error('❌ 禁止访问目录: ' + dir + ' (文件: ' + filePath + ')');
+      return 2;
+    }
+  }
+  for (const pattern of BLOCK_FILES) {
+    if (matchesGlob(filePath, pattern)) {
+      console.error('❌ 禁止访问文件: ' + pattern + ' (文件: ' + filePath + ')');
+      return 2;
+    }
+  }
+  return 0;
+}
+
+function checkCommand(cmd) {
+  for (const blocked of BLOCK_CMDS) {
+    if (cmd.includes(blocked)) {
+      console.error('❌ 安全策略阻止了危险命令: ' + blocked);
+      return 2;
+    }
+  }
+  for (const pattern of BLOCK_PATTERNS) {
+    try {
+      if (new RegExp(pattern).test(cmd)) {
+        console.error('❌ 安全策略阻止了危险模式: ' + pattern);
+        return 2;
+      }
+    } catch { /* 忽略无效正则 */ }
+  }
+  return 0;
+}
+
+let exitCode = 0;
+if (toolName === 'Bash') {
+  exitCode = checkCommand(input.tool_input?.command || '');
+} else if (['Read', 'Edit', 'Write'].includes(toolName)) {
+  exitCode = checkFile(input.tool_input?.file_path || '');
+}
+process.exit(exitCode);
+`;
+}
+
+function buildFormatScript() {
+  return `#!/usr/bin/env node
+// PostToolUse 格式化脚本，由 generate-configs.mjs 生成
+// 禁止手动修改
+
+import fs from 'fs';
+import { execSync } from 'child_process';
+
+const input = JSON.parse(fs.readFileSync(0, 'utf-8'));
+const file = input.tool_input?.file_path || '';
+
+if (!file || !fs.existsSync(file)) process.exit(0);
+
+const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+try { process.chdir(projectDir); } catch { process.exit(0); }
+
+try {
+  if (/\\.(ts|tsx|js|jsx)$/.test(file)) {
+    execSync('pnpm exec prettier --write ' + JSON.stringify(file), { stdio: 'ignore' });
+    execSync('pnpm exec eslint --fix ' + JSON.stringify(file), { stdio: 'ignore' });
+  } else if (/\\.(css|json|md|ya?ml)$/.test(file)) {
+    execSync('pnpm exec prettier --write ' + JSON.stringify(file), { stdio: 'ignore' });
+  }
+} catch { /* 格式化失败不阻断 */ }
+
+process.exit(0);
+`;
 }
 
 // ============================================
 // 主流程
 // ============================================
 
-if (!fs.existsSync(standardsPath)) {
-  console.error(`❌ 找不到规范文件: ${standardsPath}`);
-  process.exit(1);
-}
+const sections = loadAllSections();
 
-const markdown = fs.readFileSync(standardsPath, 'utf-8');
-const sections = parseStandards(markdown);
+console.log('=== 从 .specify/references/ 生成配置 ===\n');
 
-console.log('=== 从 standards.md 生成配置 ===\n');
-
-let generated = 0;
+let count = 0;
 const outputs = [];
 
-function write(relPath, content) {
-  const fullPath = path.join(rootDir, relPath);
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, content);
+function write(relPath, content, { executable = false } = {}) {
+  const full = path.join(rootDir, relPath);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, content);
+  if (executable) fs.chmodSync(full, 0o755);
   console.log(`✅ ${relPath}`);
   outputs.push(relPath);
-  generated++;
+  count++;
 }
 
-// ESLint
+// standards.md 的输出
 if (sections.ESLint) {
   write('.eslintrc.json', buildESLint(sections.ESLint));
 }
-
-// Prettier
 if (sections.Prettier) {
   const { prettierrc, prettierignore } = buildPrettier(sections.Prettier);
   write('.prettierrc.json', prettierrc);
   write('.prettierignore', prettierignore);
 }
-
-// EditorConfig
 if (sections.EditorConfig) {
   write('.editorconfig', buildEditorConfig(sections.EditorConfig));
 }
-
-// TypeScript
 if (sections.TypeScript) {
   write('tsconfig.json', buildTypeScript(sections.TypeScript));
 }
-
-// Jest
 if (sections.Jest) {
   write('jest.config.js', buildJest(sections.Jest));
 }
-
-// GitIgnore
 if (sections.GitIgnore) {
   write('.gitignore', buildGitignore(sections.GitIgnore));
 }
 
-// package.json
-if (sections['package.json']) {
-  write('package.json', buildPackageJson(sections['package.json']));
+// package.md 的输出
+if (sections.Metadata || sections.Scripts || sections.DevDependencies) {
+  write('package.json', buildPackageJson(sections));
 }
 
-// VSCode
-if (sections.VSCode) {
-  const { settings, extensions } = buildVSCode(sections.VSCode);
+// vscode.md 的输出
+if (sections.Settings || sections.Extensions) {
+  const { settings, extensions } = buildVSCode(sections);
   write('.vscode/settings.json', settings);
   write('.vscode/extensions.json', extensions);
 }
 
-// ClaudeSettings
-if (sections.ClaudeSettings) {
-  write('.claude/settings.json', buildClaudeSettings(sections.ClaudeSettings));
+// claude-config.md 的输出
+if (sections.ClaudeSettings || sections.ClaudeHooks) {
+  const claudeSettings = buildClaudeSettings(sections);
+  const hooks = buildHooksConfig(sections);
+  if (Object.keys(hooks).length) claudeSettings.hooks = hooks;
+  write('.claude/settings.json', JSON.stringify(claudeSettings, null, 2) + '\n');
+
+  const guardRules = extractGuardRules(sections);
+  if (guardRules.dirs.length || guardRules.cmds.length) {
+    write('.claude/hooks/guard.mjs', buildGuardScript(guardRules), { executable: true });
+    write('.claude/hooks/format.mjs', buildFormatScript(), { executable: true });
+  }
 }
 
-// 生成标记文件
+// 生成标记
 const markerPath = path.join(rootDir, '.specify', '.config-generated');
 fs.mkdirSync(path.dirname(markerPath), { recursive: true });
 fs.writeFileSync(markerPath, JSON.stringify({
   generatedAt: new Date().toISOString(),
-  source: '.specify/references/standards.md',
+  sources: ['standards.md', 'package.md', 'vscode.md', 'claude-config.md'],
   outputs,
 }, null, 2));
 
-console.log(`\n=== ✅ 共生成 ${generated} 个文件 ===`);
+console.log(`\n=== ✅ 共生成 ${count} 个文件 ===`);
