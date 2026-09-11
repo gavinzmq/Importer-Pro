@@ -1,12 +1,71 @@
-import esbuild from 'esbuild';
-import process from 'process';
+#!/usr/bin/env node
+/**
+ * esbuild 构建配置。
+ *
+ * 用法：
+ *   node scripts/esbuild.config.mjs            # 开发模式（watch）
+ *   node scripts/esbuild.config.mjs production # 生产构建（minify）
+ *
+ * 输出到 dist/，并将 manifest.json、versions.json、styles.css 复制到 dist/ 和根目录。
+ */
 
-// 注意：本文件位于 scripts/，但所有相对路径（entryPoints / outfile / alias）均由esbuild 相对 **cwd**（仓库根）解析，故保持仓库根执行（package.json 脚本）时无需加前缀。
-const production = process.argv[2] === 'production';
+import esbuild from 'esbuild';
+import fs from 'fs';
+import path from 'path';
+import process from 'process';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, '..');
+const prod = process.argv[2] === 'production';
+
+// ============================================
+// 复制静态资源
+// ============================================
+
+/**
+ * 将根目录的 manifest.json 和 versions.json，以及 src/styles.css
+ * 复制到 dist/。styles.css 额外复制到根目录供 Obsidian 加载。
+ */
+function copyAssets() {
+  const distDir = path.join(rootDir, 'dist');
+  fs.mkdirSync(distDir, { recursive: true });
+
+  const assets = [
+    { src: path.join(rootDir, 'manifest.json'), dist: 'manifest.json', root: null },
+    { src: path.join(rootDir, 'versions.json'), dist: 'versions.json', root: null },
+    { src: path.join(rootDir, 'src', 'styles.css'), dist: 'styles.css', root: 'styles.css' },
+  ];
+
+  for (const { src, dist, root } of assets) {
+    if (!fs.existsSync(src)) {
+      if (dist === 'styles.css') continue; // styles.css 可选
+      console.error(`❌ 缺少源文件: ${path.relative(rootDir, src)}`);
+      process.exit(1);
+    }
+    fs.copyFileSync(src, path.join(distDir, dist));
+    if (root) {
+      fs.copyFileSync(src, path.join(rootDir, root));
+    }
+    console.log(`📦 ${path.relative(rootDir, src)} → dist/${dist}`);
+  }
+}
+
+// ============================================
+// 构建配置
+// ============================================
 
 const context = await esbuild.context({
-  entryPoints: ['src/main.ts'],
+  entryPoints: [path.join(rootDir, 'src', 'main.ts')],
   bundle: true,
+  outfile: path.join(rootDir, 'dist', 'main.js'),
+  format: 'cjs',
+  platform: 'browser',
+  target: 'es2018',
+  logLevel: 'info',
+  sourcemap: prod ? false : 'inline',
+  treeShaking: true,
+  minify: prod,
   external: [
     'obsidian',
     'electron',
@@ -20,43 +79,25 @@ const context = await esbuild.context({
     '@codemirror/view',
     '@lezer/common',
     '@lezer/highlight',
-    '@lezer/lr'
+    '@lezer/lr',
   ],
-  // D109–D111：显式声明 browser 平台。@jaredwray/fumanchu 主入口按 package.json exports 的 browser
-  // 条件指向浏览器安全构建（dist/index.browser.*，已剔除 Node-only helper：fs/path/logging/embed/css/js/
-  // escape/urlResolve/urlParse/stripProtocol，且无 node:* 内建引用）；源码侧亦统一 `.../browser` 子路径导入
-  // （见 handlebars-helpers.ts / engine.ts），双保险确保 Node.js 助手不入包。勿移除 platform 或改回 node。
-  platform: 'browser',
-  format: 'cjs',
-  target: 'es2018',
-  logLevel: 'info',
-  sourcemap: production ? false : 'inline',
-  treeShaking: true,
-  outfile: 'main.js',
-  minify: production,
-  // D110：fumanchu 浏览器构建为单文件 monolith，仍无条件 import micromatch（→ util/path）与
-  // @cacheable/memory（→ buffer）等重依赖——其在 esbuild browser 平台解析 node 内建会失败。本仓库仅注册
-  // 受控白名单 26 个环境无关 helper（从不注册 match/caching/date 类），上述依赖运行期永不触达，故以
-  // alias 空壳替代（见 scripts/shims/fumanchu-node-deps-empty.mjs）。勿移除/勿扩用到 dayjs、markdown-it
-  // （fumanchu 模块顶层执行其构造，必须保留真实实现）。
-  alias: {
-    micromatch: './scripts/shims/fumanchu-node-deps-empty.mjs',
-    '@cacheable/memory': './scripts/shims/fumanchu-node-deps-empty.mjs',
-    'chrono-node': './scripts/shims/fumanchu-node-deps-empty.mjs'
-  },
-  // 修复：Obsidian（Electron renderer）同时暴露 window 与 Node process，js-md5 会误判为
-  // Node 环境走 nodeWrap（js-sha256 有 process.type!='renderer' 防护，js-md5 0.8.x 没有）。
-  // 而浏览器平台下 esbuild 按其 package.json 的 browser 字段把 require('buffer'/'crypto')
-  // stub 成空模块，导致 require('buffer').Buffer 为 undefined → 读取 .from 崩溃。
-  // 在模块求值前强制走纯 JS 实现（这两个库官方支持 *_NO_NODE_JS 开关，桌面/移动端均可用）。
   banner: {
-    js: 'window.JS_MD5_NO_NODE_JS=true;window.JS_SHA256_NO_NODE_JS=true;'
-  }
+    js: '/* Obsidian 双端插件 - 构建产物，禁止手动修改 */',
+  },
 });
 
-if (production) {
+// ============================================
+// 执行
+// ============================================
+
+copyAssets();
+
+if (prod) {
   await context.rebuild();
+  await context.dispose();
+  console.log('\n✅ 生产构建完成 → dist/main.js');
   process.exit(0);
 } else {
   await context.watch();
+  console.log('\n👀 开发模式，监听文件变化...');
 }
